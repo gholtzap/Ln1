@@ -201,6 +201,7 @@ struct FilesystemSearchResult: Codable {
     let includeHidden: Bool
     let maxFileBytes: Int
     let maxSnippetCharacters: Int
+    let maxMatchesPerFile: Int
     let matches: [FileSearchMatch]
     let scannedFiles: Int
     let skippedUnreadable: Int
@@ -595,6 +596,7 @@ final class ZeroThreeCLI {
             let caseSensitive = flag("--case-sensitive")
             let maxFileBytes = max(0, option("--max-file-bytes").flatMap(Int.init) ?? 1_048_576)
             let maxSnippetCharacters = max(20, option("--max-snippet-characters").flatMap(Int.init) ?? 240)
+            let maxMatchesPerFile = max(1, option("--max-matches-per-file").flatMap(Int.init) ?? 20)
             let result = try filesystemSearchResult(
                 rootURL: rootURL,
                 query: query,
@@ -603,7 +605,8 @@ final class ZeroThreeCLI {
                 limit: limit,
                 includeHidden: includeHidden,
                 maxFileBytes: maxFileBytes,
-                maxSnippetCharacters: maxSnippetCharacters
+                maxSnippetCharacters: maxSnippetCharacters,
+                maxMatchesPerFile: maxMatchesPerFile
             )
             try writeJSON(result)
         case "wait":
@@ -1477,6 +1480,7 @@ final class ZeroThreeCLI {
           },
           "fileSearch": {
             "command": "03 files search --path ~/Documents --query invoice --depth 4 --limit 50",
+            "maxMatchesPerFile": 20,
             "match": {
               "file": {
                 "path": "/Users/example/Documents/Invoice.txt",
@@ -1590,7 +1594,7 @@ final class ZeroThreeCLI {
           03 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
-          03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
+          03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
           03 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
           03 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
           03 files compare --path LEFT --to RIGHT [--algorithm sha256] [--max-file-bytes N]
@@ -1655,7 +1659,8 @@ final class ZeroThreeCLI {
         limit: Int,
         includeHidden: Bool,
         maxFileBytes: Int,
-        maxSnippetCharacters: Int
+        maxSnippetCharacters: Int,
+        maxMatchesPerFile: Int
     ) throws -> FilesystemSearchResult {
         let root = try fileRecord(for: rootURL)
         var matches: [FileSearchMatch] = []
@@ -1672,6 +1677,7 @@ final class ZeroThreeCLI {
             caseSensitive: caseSensitive,
             maxFileBytes: maxFileBytes,
             maxSnippetCharacters: maxSnippetCharacters,
+            maxMatchesPerFile: maxMatchesPerFile,
             matches: &matches,
             stats: &stats,
             truncated: &truncated
@@ -1688,6 +1694,7 @@ final class ZeroThreeCLI {
             includeHidden: includeHidden,
             maxFileBytes: maxFileBytes,
             maxSnippetCharacters: maxSnippetCharacters,
+            maxMatchesPerFile: maxMatchesPerFile,
             matches: matches,
             scannedFiles: stats.scannedFiles,
             skippedUnreadable: stats.skippedUnreadable,
@@ -1714,6 +1721,7 @@ final class ZeroThreeCLI {
         caseSensitive: Bool,
         maxFileBytes: Int,
         maxSnippetCharacters: Int,
+        maxMatchesPerFile: Int,
         matches: inout [FileSearchMatch],
         stats: inout FileSearchStats,
         truncated: inout Bool
@@ -1730,6 +1738,7 @@ final class ZeroThreeCLI {
                 caseSensitive: caseSensitive,
                 maxFileBytes: maxFileBytes,
                 maxSnippetCharacters: maxSnippetCharacters,
+                maxMatchesPerFile: maxMatchesPerFile,
                 stats: &stats
             ) {
                 if matches.count >= limit {
@@ -1762,6 +1771,7 @@ final class ZeroThreeCLI {
                 caseSensitive: caseSensitive,
                 maxFileBytes: maxFileBytes,
                 maxSnippetCharacters: maxSnippetCharacters,
+                maxMatchesPerFile: maxMatchesPerFile,
                 matches: &matches,
                 stats: &stats,
                 truncated: &truncated
@@ -1783,6 +1793,7 @@ final class ZeroThreeCLI {
         caseSensitive: Bool,
         maxFileBytes: Int,
         maxSnippetCharacters: Int,
+        maxMatchesPerFile: Int,
         stats: inout FileSearchStats
     ) throws -> FileSearchMatch? {
         let matchedName = contains(query, in: record.name, caseSensitive: caseSensitive)
@@ -1805,7 +1816,8 @@ final class ZeroThreeCLI {
                         in: contents,
                         query: query,
                         caseSensitive: caseSensitive,
-                        maxSnippetCharacters: maxSnippetCharacters
+                        maxSnippetCharacters: maxSnippetCharacters,
+                        maxMatchesPerFile: maxMatchesPerFile
                     )
                 } else {
                     stats.skippedBinary += 1
@@ -1828,12 +1840,16 @@ final class ZeroThreeCLI {
         in contents: String,
         query: String,
         caseSensitive: Bool,
-        maxSnippetCharacters: Int
+        maxSnippetCharacters: Int,
+        maxMatchesPerFile: Int
     ) -> [FileLineMatch] {
         var matches: [FileLineMatch] = []
         let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
 
         for (index, line) in lines.enumerated() {
+            guard matches.count < maxMatchesPerFile else {
+                break
+            }
             let text = String(line)
             guard contains(query, in: text, caseSensitive: caseSensitive) else {
                 continue

@@ -156,7 +156,7 @@ Search file names and bounded UTF-8 text content without using Finder:
 .build/debug/03 files search --path ~/Documents --query invoice --depth 4 --limit 50
 ```
 
-Search is case-insensitive by default, skips hidden files unless `--include-hidden` is passed, and avoids unbounded reads with `--max-file-bytes` and `--max-snippet-characters`. Results include file metadata, whether the name matched, matching line numbers, short line snippets, scan counts, and skip counts for unreadable, binary, or oversized files.
+Search is case-insensitive by default, skips hidden files unless `--include-hidden` is passed, and avoids unbounded reads with `--max-file-bytes`, `--max-snippet-characters`, and `--max-matches-per-file`. Results include file metadata, whether the name matched, matching line numbers, short line snippets, scan counts, and skip counts for unreadable, binary, or oversized files.
 
 Wait for a path to appear or disappear with bounded polling:
 

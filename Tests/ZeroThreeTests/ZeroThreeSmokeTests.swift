@@ -121,6 +121,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertEqual(object["query"] as? String, "needle")
         XCTAssertEqual(object["caseSensitive"] as? Bool, false)
+        XCTAssertEqual(object["maxMatchesPerFile"] as? Int, 20)
         XCTAssertEqual(object["truncated"] as? Bool, false)
         XCTAssertTrue(names.contains("alpha.txt"))
         XCTAssertTrue(names.contains("needle-name.txt"))
@@ -143,6 +144,34 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertEqual(nameEntry["matchedName"] as? Bool, true)
         XCTAssertEqual((nameEntry["contentMatches"] as? [Any])?.count, 0)
+    }
+
+    func testFilesSearchLimitsContentMatchesPerFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-search-limit-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("many.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "needle one\nneedle two\nneedle three".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "search",
+            "--path", directory.path,
+            "--query", "needle",
+            "--max-matches-per-file", "2"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let matches = try XCTUnwrap(object["matches"] as? [[String: Any]])
+        let match = try XCTUnwrap(matches.first)
+        let lines = try XCTUnwrap(match["contentMatches"] as? [[String: Any]])
+
+        XCTAssertEqual(object["maxMatchesPerFile"] as? Int, 2)
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertEqual(lines.first?["lineNumber"] as? Int, 1)
+        XCTAssertEqual(lines.last?["lineNumber"] as? Int, 2)
     }
 
     func testFilesWaitReturnsMatchedExistingFileMetadata() throws {
