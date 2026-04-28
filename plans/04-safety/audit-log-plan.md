@@ -24,6 +24,7 @@ The system should keep a structured history of task intent, actions taken, permi
 
 - Accessibility action audit: `03 perform` records requested actions, policy decisions, target element summaries, and outcomes.
 - Filesystem mutation audit: `03 files duplicate`, `03 files move`, and `03 files mkdir` record source and destination metadata where applicable, medium-risk policy decisions, verification results, and success or failure outcomes without storing file contents.
+- Structured audit review: `03 audit` can filter records by command and outcome code before applying the result limit.
 
 ## Relationship To The Product
 

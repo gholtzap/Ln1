@@ -127,6 +127,9 @@ struct ActionAuditRecord: Codable {
 
 struct AuditEntries: Codable {
     let path: String
+    let command: String?
+    let code: String?
+    let limit: Int
     let entries: [ActionAuditRecord]
 }
 
@@ -472,8 +475,21 @@ final class ZeroThreeCLI {
     private func audit() throws {
         let auditURL = try auditLogURL()
         let limit = option("--limit").flatMap(Int.init) ?? 20
-        let records = try readAuditRecords(from: auditURL, limit: max(0, limit))
-        try writeJSON(AuditEntries(path: auditURL.path, entries: records))
+        let command = option("--command")
+        let code = option("--code")
+        let records = try readAuditRecords(
+            from: auditURL,
+            limit: max(0, limit),
+            command: command,
+            code: code
+        )
+        try writeJSON(AuditEntries(
+            path: auditURL.path,
+            command: command,
+            code: code,
+            limit: max(0, limit),
+            entries: records
+        ))
     }
 
     private func files() throws {
@@ -1014,7 +1030,12 @@ final class ZeroThreeCLI {
         }
     }
 
-    private func readAuditRecords(from url: URL, limit: Int) throws -> [ActionAuditRecord] {
+    private func readAuditRecords(
+        from url: URL,
+        limit: Int,
+        command: String? = nil,
+        code: String? = nil
+    ) throws -> [ActionAuditRecord] {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return []
         }
@@ -1025,14 +1046,23 @@ final class ZeroThreeCLI {
         }
 
         let decoder = JSONDecoder()
-        let lines = contents
+        let records = try contents
             .split(separator: "\n", omittingEmptySubsequences: true)
-            .suffix(limit)
+            .map { line in
+                let data = Data(line.utf8)
+                return try decoder.decode(ActionAuditRecord.self, from: data)
+            }
+            .filter { record in
+                if let command, record.command != command {
+                    return false
+                }
+                if let code, record.outcome.code != code {
+                    return false
+                }
+                return true
+            }
 
-        return try lines.map { line in
-            let data = Data(line.utf8)
-            return try decoder.decode(ActionAuditRecord.self, from: data)
-        }
+        return Array(records.suffix(limit))
     }
 
     private func auditLogURL() throws -> URL {
@@ -1175,7 +1205,7 @@ final class ZeroThreeCLI {
             }
           },
           "audit": {
-            "command": "03 audit --limit 20",
+            "command": "03 audit --command files.move --code moved --limit 20",
             "entry": {
               "id": "UUID",
               "timestamp": "ISO-8601 timestamp",
@@ -1298,7 +1328,7 @@ final class ZeroThreeCLI {
           03 apps [--all]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
-          03 audit [--limit N] [--audit-log PATH]
+          03 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
@@ -1314,6 +1344,7 @@ final class ZeroThreeCLI {
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
+          - `audit` can filter records by command name and outcome code before applying the limit.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.

@@ -112,6 +112,14 @@ Read from a custom audit file:
 .build/debug/03 audit --audit-log /tmp/03-audit.jsonl --limit 5
 ```
 
+Filter audit records before applying the limit:
+
+```sh
+.build/debug/03 audit --command files.move --code moved --limit 10
+```
+
+`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, or `files.mkdir`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, or `created_directory`.
+
 ## Inspect Filesystem State
 
 Inspect one file or folder without reading file contents:

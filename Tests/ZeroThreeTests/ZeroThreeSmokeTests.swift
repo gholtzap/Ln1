@@ -468,6 +468,71 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual((object["entries"] as? [Any])?.count, 0)
     }
 
+    func testAuditCommandFiltersByCommandAndOutcomeCodeBeforeLimit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-audit-filter-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source.txt")
+        let created = directory.appendingPathComponent("archive")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "copy".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        _ = try runZeroThree([
+            "files",
+            "duplicate",
+            "--path", source.path,
+            "--to", directory.appendingPathComponent("copy.txt").path,
+            "--reason", "policy duplicate",
+            "--audit-log", auditLog.path
+        ])
+        _ = try runZeroThree([
+            "files",
+            "mkdir",
+            "--path", created.path,
+            "--allow-risk", "medium",
+            "--reason", "allowed mkdir",
+            "--audit-log", auditLog.path
+        ])
+
+        let commandFiltered = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.mkdir",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(commandFiltered.status, 0, commandFiltered.stderr)
+        let commandObject = try decodeJSONObject(commandFiltered.stdout)
+        let commandEntries = try XCTUnwrap(commandObject["entries"] as? [[String: Any]])
+        let commandEntry = try XCTUnwrap(commandEntries.first)
+        let commandOutcome = try XCTUnwrap(commandEntry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(commandObject["command"] as? String, "files.mkdir")
+        XCTAssertEqual(commandObject["limit"] as? Int, 1)
+        XCTAssertEqual(commandEntries.count, 1)
+        XCTAssertEqual(commandEntry["command"] as? String, "files.mkdir")
+        XCTAssertEqual(commandOutcome["code"] as? String, "created_directory")
+
+        let codeFiltered = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--code", "policy_denied",
+            "--limit", "5"
+        ])
+
+        XCTAssertEqual(codeFiltered.status, 0, codeFiltered.stderr)
+        let codeObject = try decodeJSONObject(codeFiltered.stdout)
+        let codeEntries = try XCTUnwrap(codeObject["entries"] as? [[String: Any]])
+        let codeEntry = try XCTUnwrap(codeEntries.first)
+        let codeOutcome = try XCTUnwrap(codeEntry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(codeObject["code"] as? String, "policy_denied")
+        XCTAssertEqual(codeEntries.count, 1)
+        XCTAssertEqual(codeEntry["command"] as? String, "files.duplicate")
+        XCTAssertEqual(codeOutcome["code"] as? String, "policy_denied")
+    }
+
     func testRejectedPerformWritesAuditRecord() throws {
         let auditLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-audit-\(UUID().uuidString).jsonl")
