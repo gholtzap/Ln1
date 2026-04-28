@@ -23,6 +23,7 @@ The system should understand which actions are reversible, which require backups
 ## Implemented Increments
 
 - Audited file move rollback: `03 files rollback --audit-id` restores a successful audited `files.move` operation after policy approval, metadata validation, overwrite prevention, and verification that the original path is restored.
+- Rollback preflight: `03 files plan --operation rollback --audit-id` reports whether a move rollback is currently possible without restoring the file.
 
 ## Relationship To The Product
 

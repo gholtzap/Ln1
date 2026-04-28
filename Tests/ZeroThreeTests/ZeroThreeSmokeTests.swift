@@ -20,6 +20,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(riskLevels, ["low", "medium", "high", "unknown"])
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.plan"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["filesystem.plan"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.move"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.move"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.createDirectory"]?["domain"] as? String, "filesystem")
@@ -312,6 +314,153 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["sameDigest"] as? Bool, false)
         XCTAssertEqual(object["matched"] as? Bool, false)
         XCTAssertNotEqual(object["leftDigest"] as? String, object["rightDigest"] as? String)
+    }
+
+    func testFilesPlanPreflightsMoveWithoutMutating() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-plan-move-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("draft.txt")
+        let destination = directory.appendingPathComponent("archive.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "plan me".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "plan",
+            "--operation", "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+
+        let object = try decodeJSONObject(result.stdout)
+        let policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        let sourceTarget = try XCTUnwrap(object["source"] as? [String: Any])
+        let destinationTarget = try XCTUnwrap(object["destination"] as? [String: Any])
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+        let checkByName = Dictionary(uniqueKeysWithValues: checks.compactMap { check -> (String, [String: Any])? in
+            guard let name = check["name"] as? String else {
+                return nil
+            }
+            return (name, check)
+        })
+
+        XCTAssertEqual(object["operation"] as? String, "move")
+        XCTAssertEqual(object["action"] as? String, "filesystem.move")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["actionMutates"] as? Bool, true)
+        XCTAssertEqual(object["canExecute"] as? Bool, true)
+        XCTAssertEqual(object["requiredAllowRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(sourceTarget["path"] as? String, source.path)
+        XCTAssertEqual(sourceTarget["exists"] as? Bool, true)
+        XCTAssertEqual(destinationTarget["path"] as? String, destination.path)
+        XCTAssertEqual(destinationTarget["exists"] as? Bool, false)
+        XCTAssertEqual(checkByName["sourceExists"]?["ok"] as? Bool, true)
+        XCTAssertEqual(checkByName["destinationMissing"]?["ok"] as? Bool, true)
+        XCTAssertEqual(checkByName["sourceParentWritable"]?["ok"] as? Bool, true)
+    }
+
+    func testFilesPlanReportsPolicyDenialWithoutMutating() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-plan-policy-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source.txt")
+        let destination = directory.appendingPathComponent("copy.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "stay".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "plan",
+            "--operation", "duplicate",
+            "--path", source.path,
+            "--to", destination.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+
+        let object = try decodeJSONObject(result.stdout)
+        let policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+        let policyCheck = try XCTUnwrap(checks.first { $0["name"] as? String == "policyAllows" })
+
+        XCTAssertEqual(object["operation"] as? String, "duplicate")
+        XCTAssertEqual(object["action"] as? String, "filesystem.duplicate")
+        XCTAssertEqual(object["canExecute"] as? Bool, false)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(policyCheck["ok"] as? Bool, false)
+        XCTAssertEqual(policyCheck["code"] as? String, "denied")
+    }
+
+    func testFilesPlanPreflightsRollbackWithoutRestoring() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-plan-rollback-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("draft.txt")
+        let destination = directory.appendingPathComponent("archive.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "rollback plan".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let move = try runZeroThree([
+            "files",
+            "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "move before rollback plan",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(move.status, 0, move.stderr)
+        let moveObject = try decodeJSONObject(move.stdout)
+        let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
+
+        let result = try runZeroThree([
+            "files",
+            "plan",
+            "--operation", "rollback",
+            "--audit-id", moveAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+
+        let object = try decodeJSONObject(result.stdout)
+        let sourceTarget = try XCTUnwrap(object["source"] as? [String: Any])
+        let destinationTarget = try XCTUnwrap(object["destination"] as? [String: Any])
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+        let checkByName = Dictionary(uniqueKeysWithValues: checks.compactMap { check -> (String, [String: Any])? in
+            guard let name = check["name"] as? String else {
+                return nil
+            }
+            return (name, check)
+        })
+
+        XCTAssertEqual(object["operation"] as? String, "rollback")
+        XCTAssertEqual(object["action"] as? String, "filesystem.rollbackMove")
+        XCTAssertEqual(object["rollbackOfAuditID"] as? String, moveAuditID)
+        XCTAssertEqual(object["canExecute"] as? Bool, true)
+        XCTAssertEqual(sourceTarget["path"] as? String, destination.path)
+        XCTAssertEqual(sourceTarget["exists"] as? Bool, true)
+        XCTAssertEqual(destinationTarget["path"] as? String, source.path)
+        XCTAssertEqual(destinationTarget["exists"] as? Bool, false)
+        XCTAssertEqual(checkByName["auditRecordFound"]?["ok"] as? Bool, true)
+        XCTAssertEqual(checkByName["rollbackSourceMatchesAudit"]?["ok"] as? Bool, true)
+        XCTAssertEqual(checkByName["restoreDestinationMissing"]?["ok"] as? Bool, true)
     }
 
     func testFilesDuplicateCopiesRegularFileWithAuditAndVerification() throws {

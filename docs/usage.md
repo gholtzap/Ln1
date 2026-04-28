@@ -148,7 +148,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/03 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.plan`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -182,6 +182,17 @@ Compare two regular files by size and digest:
 ```
 
 `filesystem.compare` is a low-risk read action that computes bounded SHA-256 digests for both files and reports `sameSize`, `sameDigest`, and `matched`. This is useful after copy or generation workflows where the assistant needs evidence that two files are identical without reading contents into the prompt.
+
+Preview a mutating file operation before executing it:
+
+```sh
+.build/debug/03 files plan --operation move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium
+.build/debug/03 files plan --operation duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md
+.build/debug/03 files plan --operation mkdir --path ~/Documents/Archive --allow-risk medium
+.build/debug/03 files plan --operation rollback --audit-id AUDIT_ID --allow-risk medium
+```
+
+`filesystem.plan` is a low-risk read action that makes no filesystem changes. It returns the underlying typed action, action mutation flag, risk, policy decision, source and destination metadata where available, named preflight checks, `canExecute`, and the `requiredAllowRisk` needed by the matching mutation command. This lets a caller explain exactly what will be affected before copying, moving, creating, or rolling back a file operation.
 
 Duplicate one regular file through an audited typed action:
 

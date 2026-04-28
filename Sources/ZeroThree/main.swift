@@ -124,6 +124,30 @@ struct FileOperationVerification: Codable {
     let message: String
 }
 
+struct FilePreflightCheck: Codable {
+    let name: String
+    let ok: Bool
+    let code: String
+    let message: String
+}
+
+struct FileOperationPreflight: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let action: String
+    let risk: String
+    let actionMutates: Bool
+    let policy: AuditPolicyDecision
+    let source: FileAuditTarget?
+    let destination: FileAuditTarget?
+    let rollbackOfAuditID: String?
+    let checks: [FilePreflightCheck]
+    let canExecute: Bool
+    let requiredAllowRisk: String
+    let message: String
+}
+
 struct ActionAuditRecord: Codable {
     let id: String
     let timestamp: String
@@ -657,6 +681,10 @@ final class ZeroThreeCLI {
                 maxFileBytes: maxFileBytes
             )
             try writeJSON(result)
+        case "plan":
+            let operation = try requiredOption("--operation")
+            let result = try fileOperationPreflight(operation: operation)
+            try writeJSON(result)
         case "duplicate":
             let destinationPath = try requiredOption("--to")
             let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
@@ -687,6 +715,335 @@ final class ZeroThreeCLI {
             help: stringAttribute(element, kAXHelpAttribute),
             enabled: boolAttribute(element, kAXEnabledAttribute),
             actions: actionNames(element)
+        )
+    }
+
+    private func fileOperationPreflight(operation rawOperation: String) throws -> FileOperationPreflight {
+        let operation = rawOperation.lowercased()
+        switch operation {
+        case "duplicate":
+            let sourceURL = URL(fileURLWithPath: expandedPath(try requiredOption("--path"))).standardizedFileURL
+            let destinationURL = URL(fileURLWithPath: expandedPath(try requiredOption("--to"))).standardizedFileURL
+            return try preflightFileCopyLikeOperation(
+                operation: operation,
+                action: "filesystem.duplicate",
+                sourceURL: sourceURL,
+                destinationURL: destinationURL
+            )
+        case "move":
+            let sourceURL = URL(fileURLWithPath: expandedPath(try requiredOption("--path"))).standardizedFileURL
+            let destinationURL = URL(fileURLWithPath: expandedPath(try requiredOption("--to"))).standardizedFileURL
+            return try preflightFileCopyLikeOperation(
+                operation: operation,
+                action: "filesystem.move",
+                sourceURL: sourceURL,
+                destinationURL: destinationURL
+            )
+        case "mkdir":
+            let directoryURL = URL(fileURLWithPath: expandedPath(try requiredOption("--path"))).standardizedFileURL
+            return preflightDirectoryCreation(directoryURL)
+        case "rollback":
+            return try preflightMoveRollback(auditRecordID: try requiredOption("--audit-id"))
+        default:
+            throw CommandError(description: "unsupported files plan operation '\(rawOperation)'. Use duplicate, move, mkdir, or rollback.")
+        }
+    }
+
+    private func preflightFileCopyLikeOperation(
+        operation: String,
+        action: String,
+        sourceURL: URL,
+        destinationURL: URL
+    ) throws -> FileOperationPreflight {
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let sourceRecord = try? fileRecord(for: sourceURL)
+        let destinationRecord = try? fileRecord(for: destinationURL)
+        let sourceTarget = sourceRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: sourceURL)
+        let destinationTarget = destinationRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: destinationURL)
+        let destinationParentURL = destinationURL.deletingLastPathComponent()
+        let sourceParentURL = sourceURL.deletingLastPathComponent()
+        var checks: [FilePreflightCheck] = []
+
+        if operation == "move" {
+            checks.append(FilePreflightCheck(
+                name: "sourceDestinationDifferent",
+                ok: sourceURL.path != destinationURL.path,
+                code: sourceURL.path != destinationURL.path ? "different_paths" : "same_path",
+                message: sourceURL.path != destinationURL.path
+                    ? "source and destination are different paths"
+                    : "source and destination must be different paths"
+            ))
+        }
+
+        checks.append(contentsOf: [
+            FilePreflightCheck(
+                name: "policyAllows",
+                ok: policy.allowed,
+                code: policy.allowed ? "allowed" : "denied",
+                message: policy.message
+            ),
+            FilePreflightCheck(
+                name: "sourceExists",
+                ok: sourceRecord != nil,
+                code: sourceRecord == nil ? "missing" : "exists",
+                message: sourceRecord == nil
+                    ? "source does not exist at \(sourceURL.path)"
+                    : "source exists at \(sourceURL.path)"
+            ),
+            FilePreflightCheck(
+                name: "sourceRegularFile",
+                ok: sourceRecord?.kind == "regularFile",
+                code: sourceRecord?.kind == "regularFile" ? "regular_file" : "unsupported_kind",
+                message: sourceRecord.map { "source kind is \($0.kind)" } ?? "source kind is unavailable"
+            ),
+            FilePreflightCheck(
+                name: "sourceReadable",
+                ok: sourceRecord?.readable == true,
+                code: sourceRecord?.readable == true ? "readable" : "unreadable",
+                message: sourceRecord?.readable == true
+                    ? "source is readable"
+                    : "source is not readable"
+            ),
+            FilePreflightCheck(
+                name: "destinationMissing",
+                ok: destinationRecord == nil,
+                code: destinationRecord == nil ? "missing" : "exists",
+                message: destinationRecord == nil
+                    ? "destination does not exist at \(destinationURL.path)"
+                    : "destination already exists at \(destinationURL.path)"
+            ),
+            directoryExistsCheck(name: "destinationParentExists", url: destinationParentURL),
+            writableDirectoryCheck(name: "destinationParentWritable", url: destinationParentURL)
+        ])
+
+        if operation == "move" {
+            checks.append(writableDirectoryCheck(name: "sourceParentWritable", url: sourceParentURL))
+        }
+
+        return fileOperationPreflightResult(
+            operation: operation,
+            action: action,
+            risk: risk,
+            policy: policy,
+            source: sourceTarget,
+            destination: destinationTarget,
+            rollbackOfAuditID: nil,
+            checks: checks
+        )
+    }
+
+    private func preflightDirectoryCreation(_ directoryURL: URL) -> FileOperationPreflight {
+        let action = "filesystem.createDirectory"
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let directoryRecord = try? fileRecord(for: directoryURL)
+        let directoryTarget = directoryRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: directoryURL)
+        let parentURL = directoryURL.deletingLastPathComponent()
+        let checks = [
+            FilePreflightCheck(
+                name: "policyAllows",
+                ok: policy.allowed,
+                code: policy.allowed ? "allowed" : "denied",
+                message: policy.message
+            ),
+            FilePreflightCheck(
+                name: "destinationMissing",
+                ok: directoryRecord == nil,
+                code: directoryRecord == nil ? "missing" : "exists",
+                message: directoryRecord == nil
+                    ? "directory path is available at \(directoryURL.path)"
+                    : "directory path already exists at \(directoryURL.path)"
+            ),
+            directoryExistsCheck(name: "parentExists", url: parentURL),
+            writableDirectoryCheck(name: "parentWritable", url: parentURL)
+        ]
+
+        return fileOperationPreflightResult(
+            operation: "mkdir",
+            action: action,
+            risk: risk,
+            policy: policy,
+            source: nil,
+            destination: directoryTarget,
+            rollbackOfAuditID: nil,
+            checks: checks
+        )
+    }
+
+    private func preflightMoveRollback(auditRecordID: String) throws -> FileOperationPreflight {
+        let action = "filesystem.rollbackMove"
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditURL = try auditLogURL()
+        let records = try readAuditRecords(from: auditURL, limit: Int.max)
+        let originalRecord = records.first { $0.id == auditRecordID }
+        let originalSource = originalRecord?.fileSource
+        let movedDestination = originalRecord?.fileDestination
+        let rollbackSourceURL = movedDestination.map { URL(fileURLWithPath: $0.path).standardizedFileURL }
+        let restoreDestinationURL = originalSource.map { URL(fileURLWithPath: $0.path).standardizedFileURL }
+        let rollbackSourceRecord = rollbackSourceURL.flatMap { try? fileRecord(for: $0) }
+        let restoreDestinationRecord = restoreDestinationURL.flatMap { try? fileRecord(for: $0) }
+        let sourceTarget = rollbackSourceRecord.map { fileAuditTarget(record: $0, exists: true) }
+            ?? rollbackSourceURL.map(fileAuditTarget)
+        let destinationTarget = restoreDestinationRecord.map { fileAuditTarget(record: $0, exists: true) }
+            ?? restoreDestinationURL.map(fileAuditTarget)
+        var checks = [
+            FilePreflightCheck(
+                name: "policyAllows",
+                ok: policy.allowed,
+                code: policy.allowed ? "allowed" : "denied",
+                message: policy.message
+            ),
+            FilePreflightCheck(
+                name: "auditRecordFound",
+                ok: originalRecord != nil,
+                code: originalRecord == nil ? "missing" : "found",
+                message: originalRecord == nil
+                    ? "no audit record found with id \(auditRecordID)"
+                    : "audit record \(auditRecordID) was found"
+            ),
+            FilePreflightCheck(
+                name: "auditRecordSupportsRollback",
+                ok: originalRecord?.command == "files.move" && originalRecord?.outcome.ok == true && originalRecord?.outcome.code == "moved",
+                code: originalRecord?.command == "files.move" && originalRecord?.outcome.ok == true && originalRecord?.outcome.code == "moved"
+                    ? "supported"
+                    : "unsupported",
+                message: "rollback supports successful files.move audit records"
+            ),
+            FilePreflightCheck(
+                name: "rollbackMetadataPresent",
+                ok: originalSource != nil && movedDestination != nil,
+                code: originalSource != nil && movedDestination != nil ? "present" : "missing",
+                message: originalSource != nil && movedDestination != nil
+                    ? "move source and destination metadata are present"
+                    : "move source or destination metadata is missing"
+            ),
+            FilePreflightCheck(
+                name: "rollbackSourceExists",
+                ok: rollbackSourceRecord != nil,
+                code: rollbackSourceRecord == nil ? "missing" : "exists",
+                message: rollbackSourceURL.map { "moved file should exist at \($0.path)" } ?? "moved file path is unavailable"
+            ),
+            FilePreflightCheck(
+                name: "restoreDestinationMissing",
+                ok: restoreDestinationURL != nil && restoreDestinationRecord == nil,
+                code: restoreDestinationRecord == nil ? "missing" : "exists",
+                message: restoreDestinationURL.map { "original source path should be available at \($0.path)" } ?? "original source path is unavailable"
+            )
+        ]
+
+        if let rollbackSourceRecord, let movedDestination {
+            checks.append(FilePreflightCheck(
+                name: "rollbackSourceMatchesAudit",
+                ok: fileRecord(rollbackSourceRecord, matches: movedDestination),
+                code: fileRecord(rollbackSourceRecord, matches: movedDestination) ? "matched" : "mismatched",
+                message: fileRecord(rollbackSourceRecord, matches: movedDestination)
+                    ? "current moved file matches audit metadata"
+                    : "current moved file does not match audit metadata"
+            ))
+        } else {
+            checks.append(FilePreflightCheck(
+                name: "rollbackSourceMatchesAudit",
+                ok: false,
+                code: "unavailable",
+                message: "current moved file metadata is unavailable"
+            ))
+        }
+
+        if let restoreDestinationURL {
+            let restoreParentURL = restoreDestinationURL.deletingLastPathComponent()
+            checks.append(directoryExistsCheck(name: "restoreParentExists", url: restoreParentURL))
+            checks.append(writableDirectoryCheck(name: "restoreParentWritable", url: restoreParentURL))
+        } else {
+            checks.append(FilePreflightCheck(name: "restoreParentExists", ok: false, code: "unavailable", message: "restore parent path is unavailable"))
+            checks.append(FilePreflightCheck(name: "restoreParentWritable", ok: false, code: "unavailable", message: "restore parent path is unavailable"))
+        }
+
+        if let rollbackSourceURL {
+            checks.append(writableDirectoryCheck(name: "rollbackSourceParentWritable", url: rollbackSourceURL.deletingLastPathComponent()))
+        } else {
+            checks.append(FilePreflightCheck(name: "rollbackSourceParentWritable", ok: false, code: "unavailable", message: "rollback source parent path is unavailable"))
+        }
+
+        return fileOperationPreflightResult(
+            operation: "rollback",
+            action: action,
+            risk: risk,
+            policy: policy,
+            source: sourceTarget,
+            destination: destinationTarget,
+            rollbackOfAuditID: auditRecordID,
+            checks: checks
+        )
+    }
+
+    private func fileOperationPreflightResult(
+        operation: String,
+        action: String,
+        risk: String,
+        policy: AuditPolicyDecision,
+        source: FileAuditTarget?,
+        destination: FileAuditTarget?,
+        rollbackOfAuditID: String?,
+        checks: [FilePreflightCheck]
+    ) -> FileOperationPreflight {
+        let canExecute = checks.allSatisfy(\.ok)
+        let message = canExecute
+            ? "\(operation) can execute with --allow-risk \(policy.allowedRisk)."
+            : "\(operation) is not ready to execute; inspect failed checks."
+
+        return FileOperationPreflight(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: operation,
+            action: action,
+            risk: risk,
+            actionMutates: true,
+            policy: policy,
+            source: source,
+            destination: destination,
+            rollbackOfAuditID: rollbackOfAuditID,
+            checks: checks,
+            canExecute: canExecute,
+            requiredAllowRisk: risk,
+            message: message
+        )
+    }
+
+    private func fileAuditTarget(url: URL) -> FileAuditTarget {
+        FileAuditTarget(
+            path: url.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: url.path)
+        )
+    }
+
+    private func directoryExistsCheck(name: String, url: URL) -> FilePreflightCheck {
+        var isDirectory = ObjCBool(false)
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        let ok = exists && isDirectory.boolValue
+        return FilePreflightCheck(
+            name: name,
+            ok: ok,
+            code: ok ? "directory_exists" : "missing_or_not_directory",
+            message: ok
+                ? "directory exists at \(url.path)"
+                : "directory does not exist at \(url.path)"
+        )
+    }
+
+    private func writableDirectoryCheck(name: String, url: URL) -> FilePreflightCheck {
+        let writable = FileManager.default.isWritableFile(atPath: url.path)
+        return FilePreflightCheck(
+            name: name,
+            ok: writable,
+            code: writable ? "writable" : "unwritable",
+            message: writable
+                ? "directory is writable at \(url.path)"
+                : "directory is not writable at \(url.path)"
         )
     }
 
@@ -1542,7 +1899,7 @@ final class ZeroThreeCLI {
 
     private func fileActionRisk(for action: String) -> String {
         switch action {
-        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.checksum", "filesystem.compare":
+        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
         case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
@@ -1563,6 +1920,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.wait", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.checksum", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.compare", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.plan", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
@@ -1762,6 +2120,27 @@ final class ZeroThreeCLI {
               "matched": true
             }
           },
+          "filePlan": {
+            "command": "03 files plan --operation move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium",
+            "result": {
+              "operation": "move",
+              "action": "filesystem.move",
+              "risk": "medium",
+              "actionMutates": true,
+              "policy": {
+                "allowedRisk": "medium",
+                "actionRisk": "medium",
+                "allowed": true
+              },
+              "source": { "path": "/Users/example/Documents/Draft.md", "exists": true },
+              "destination": { "path": "/Users/example/Documents/Archive/Draft.md", "exists": false },
+              "checks": [
+                { "name": "destinationMissing", "ok": true, "code": "missing" }
+              ],
+              "canExecute": true,
+              "requiredAllowRisk": "medium"
+            }
+          },
           "fileDuplicate": {
             "command": "03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --allow-risk medium --reason 'Preserve original before editing'",
             "result": {
@@ -1851,6 +2230,9 @@ final class ZeroThreeCLI {
           03 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
           03 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
           03 files compare --path LEFT --to RIGHT [--algorithm sha256] [--max-file-bytes N]
+          03 files plan --operation duplicate|move --path SOURCE --to DESTINATION [--allow-risk low|medium|high|unknown]
+          03 files plan --operation mkdir --path PATH [--allow-risk low|medium|high|unknown]
+          03 files plan --operation rollback --audit-id AUDIT_ID [--allow-risk low|medium|high|unknown] [--audit-log PATH]
           03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
@@ -1870,6 +2252,7 @@ final class ZeroThreeCLI {
           - `files wait` waits for a path to exist or disappear and returns typed evidence.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
           - `files compare` compares two regular files by bounded SHA-256 digest and size.
+          - `files plan` previews mutating file operations with policy, target metadata, and preflight checks without changing files.
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.
@@ -2260,7 +2643,8 @@ final class ZeroThreeCLI {
 
     private func fileActions(kind: String, readable: Bool, writable: Bool) -> [FileAction] {
         var actions = [
-            FileAction(name: "filesystem.stat", risk: "low", mutates: false)
+            FileAction(name: "filesystem.stat", risk: "low", mutates: false),
+            FileAction(name: "filesystem.plan", risk: "low", mutates: false)
         ]
 
         if kind == "directory", readable {
