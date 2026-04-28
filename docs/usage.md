@@ -18,6 +18,14 @@ swift build
 
 macOS will prompt for Accessibility access. Grant access to the terminal app that launched 03, then rerun the command.
 
+## Inspect Action Policy
+
+```sh
+.build/debug/03 policy
+```
+
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, and `files mkdir` use these risk levels when evaluating `--allow-risk`.
+
 ## Inspect Running Apps
 
 ```sh

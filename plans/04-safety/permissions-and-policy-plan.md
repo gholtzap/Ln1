@@ -20,6 +20,11 @@ The system should classify observations and actions by risk, enforce user-config
 - Policy decisions are explainable and auditable.
 - The system defaults to conservative behavior when uncertain.
 
+## Implemented Increments
+
+- Action risk enforcement: `03 perform` and mutating filesystem actions require `--allow-risk` to meet or exceed the classified action risk.
+- Policy inspection: `03 policy` exposes known typed actions, risk levels, mutation classification, and the default allowed risk as structured JSON.
+
 ## Relationship To The Product
 
 Safety is not a wrapper around the product. It is part of the core action model and necessary for real adoption.

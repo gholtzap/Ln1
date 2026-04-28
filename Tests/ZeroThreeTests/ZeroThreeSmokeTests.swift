@@ -2,6 +2,29 @@ import Foundation
 import XCTest
 
 final class ZeroThreeSmokeTests: XCTestCase {
+    func testPolicyCommandReturnsKnownActionRiskClassifications() throws {
+        let result = try runZeroThree(["policy"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let riskLevels = try XCTUnwrap(object["riskLevels"] as? [String])
+        let actions = try XCTUnwrap(object["actions"] as? [[String: Any]])
+        let actionByName = Dictionary(uniqueKeysWithValues: actions.compactMap { action -> (String, [String: Any])? in
+            guard let name = action["name"] as? String else {
+                return nil
+            }
+            return (name, action)
+        })
+
+        XCTAssertEqual(object["defaultAllowedRisk"] as? String, "low")
+        XCTAssertEqual(riskLevels, ["low", "medium", "high", "unknown"])
+        XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.move"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.move"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["filesystem.createDirectory"]?["domain"] as? String, "filesystem")
+    }
+
     func testFilesStatReturnsStructuredMetadataForFile() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-files-\(UUID().uuidString)")

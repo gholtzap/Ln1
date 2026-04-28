@@ -62,6 +62,21 @@ struct TrustRecord: Codable {
     let message: String
 }
 
+struct PolicyActionRecord: Codable {
+    let name: String
+    let domain: String
+    let risk: String
+    let mutates: Bool
+}
+
+struct PolicySnapshot: Codable {
+    let generatedAt: String
+    let platform: String
+    let defaultAllowedRisk: String
+    let riskLevels: [String]
+    let actions: [PolicyActionRecord]
+}
+
 struct ActionResult: Codable {
     let ok: Bool
     let pid: Int32
@@ -262,6 +277,8 @@ final class ZeroThreeCLI {
         switch command {
         case "trust":
             try trust()
+        case "policy":
+            try policy()
         case "apps":
             try apps()
         case "state":
@@ -290,6 +307,16 @@ final class ZeroThreeCLI {
             message: trusted
                 ? "Accessibility access is enabled."
                 : "Grant Accessibility access to the terminal app running 03, then retry."
+        ))
+    }
+
+    private func policy() throws {
+        try writeJSON(PolicySnapshot(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            defaultAllowedRisk: "low",
+            riskLevels: ["low", "medium", "high", "unknown"],
+            actions: knownPolicyActions()
         ))
     }
 
@@ -1173,13 +1200,29 @@ final class ZeroThreeCLI {
 
     private func fileActionRisk(for action: String) -> String {
         switch action {
-        case "filesystem.stat", "filesystem.list", "filesystem.search":
+        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait":
             return "low"
         case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory":
             return "medium"
         default:
             return "unknown"
         }
+    }
+
+    private func knownPolicyActions() -> [PolicyActionRecord] {
+        [
+            PolicyActionRecord(name: kAXPressAction as String, domain: "accessibility", risk: "low", mutates: true),
+            PolicyActionRecord(name: kAXShowMenuAction as String, domain: "accessibility", risk: "low", mutates: false),
+            PolicyActionRecord(name: kAXConfirmAction as String, domain: "accessibility", risk: "medium", mutates: true),
+            PolicyActionRecord(name: kAXPickAction as String, domain: "accessibility", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.wait", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true)
+        ]
     }
 
     private func policyDecision(actionRisk: String) -> AuditPolicyDecision {
@@ -1225,9 +1268,17 @@ final class ZeroThreeCLI {
     private func schema() {
         print("""
         {
-            "state": {
-              "generatedAt": "ISO-8601 timestamp",
-              "platform": "macOS",
+          "policy": {
+            "command": "03 policy",
+            "defaultAllowedRisk": "low",
+            "riskLevels": ["low", "medium", "high", "unknown"],
+            "actions": [
+              { "name": "filesystem.move", "domain": "filesystem", "risk": "medium", "mutates": true }
+            ]
+          },
+          "state": {
+            "generatedAt": "ISO-8601 timestamp",
+            "platform": "macOS",
             "app": {
               "name": "frontmost or requested app name",
               "bundleIdentifier": "com.example.App",
@@ -1405,6 +1456,7 @@ final class ZeroThreeCLI {
 
         Usage:
           03 trust [--prompt true|false]
+          03 policy
           03 apps [--all]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
@@ -1420,6 +1472,7 @@ final class ZeroThreeCLI {
 
         Notes:
           - Run `03 trust` first and grant Accessibility access when prompted.
+          - `policy` describes known action risk levels and mutation behavior.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
