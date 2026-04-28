@@ -1,0 +1,25 @@
+# Verification And Recovery Plan
+
+## Goal
+
+Make the assistant prove that important actions worked and recover safely when they did not.
+
+## Why It Matters
+
+Computer control is unreliable without verification. Apps can lag, fail, open unexpected dialogs, lose focus, or reject input. A human checks outcomes before moving on. The assistant should too.
+
+## Desired Capability
+
+The system should define expected outcomes for actions, observe whether those outcomes happened, detect common failure modes, and choose safe recovery strategies.
+
+## Success Criteria
+
+- The assistant can tell whether an action changed the expected state.
+- The assistant can detect when nothing happened.
+- The assistant can identify blockers such as alerts, disabled controls, missing files, or lost focus.
+- The assistant can retry only when retrying is safe.
+- The assistant can escalate to the user when the outcome is ambiguous or risky.
+
+## Relationship To The Product
+
+Verification is what separates a serious computer-control product from a demo. It should be built into every nontrivial workflow.
