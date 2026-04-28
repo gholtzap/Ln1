@@ -60,6 +60,15 @@ Use an element ID from `state`:
 .build/debug/03 perform --element w0.3.1 --action AXPress --reason "Open the details panel"
 ```
 
+`perform` applies a conservative action policy before touching Accessibility APIs. By default, only actions classified as `low` risk are allowed. To explicitly permit broader known or unclassified action categories:
+
+```sh
+.build/debug/03 perform --element w0.3.1 --action AXConfirm --allow-risk medium --reason "Confirm the selected dialog"
+.build/debug/03 perform --element w0.3.1 --action AXCustomAction --allow-risk unknown --reason "Use app-specific action"
+```
+
+Policy denials are written to the audit log with the requested action, classified risk, allowed risk threshold, reason, and denial outcome. They do not require Accessibility access because the policy is checked before app inspection or action execution.
+
 For IDs from `state --all`, pass the app PID from that same app record:
 
 ```sh

@@ -110,9 +110,50 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(entry["command"] as? String, "perform")
         XCTAssertEqual(entry["reason"] as? String, "verification")
         XCTAssertEqual(entry["action"] as? String, "AXPress")
-        XCTAssertEqual(entry["risk"] as? String, "unknown")
+        XCTAssertEqual(entry["risk"] as? String, "low")
         XCTAssertEqual(outcome["ok"] as? Bool, false)
         XCTAssertEqual(outcome["code"] as? String, "rejected")
+    }
+
+    func testPerformPolicyDenialIsAuditedBeforeAccessibilityTrust() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-policy-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let rejected = try runZeroThree([
+            "perform",
+            "--audit-log", auditLog.path,
+            "--element", "w0",
+            "--action", "AXCustomAction",
+            "--allow-risk", "low",
+            "--reason", "policy verification"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "perform")
+        XCTAssertEqual(entry["reason"] as? String, "policy verification")
+        XCTAssertEqual(entry["elementID"] as? String, "w0")
+        XCTAssertEqual(entry["action"] as? String, "AXCustomAction")
+        XCTAssertEqual(entry["risk"] as? String, "unknown")
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "unknown")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }
 
     private func runZeroThree(_ arguments: [String]) throws -> ProcessResult {

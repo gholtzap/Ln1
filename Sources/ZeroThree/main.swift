@@ -87,6 +87,13 @@ struct AuditOutcome: Codable {
     let message: String
 }
 
+struct AuditPolicyDecision: Codable {
+    let allowedRisk: String
+    let actionRisk: String
+    let allowed: Bool
+    let message: String
+}
+
 struct ActionAuditRecord: Codable {
     let id: String
     let timestamp: String
@@ -97,6 +104,7 @@ struct ActionAuditRecord: Codable {
     let elementID: String?
     let element: AuditElementSummary?
     let action: String?
+    var policy: AuditPolicyDecision? = nil
     let outcome: AuditOutcome
 }
 
@@ -270,12 +278,33 @@ final class ZeroThreeCLI {
         var elementSummary: AuditElementSummary?
         var elementID: String?
         var action: String?
+        var policy: AuditPolicyDecision?
         var auditWritten = false
 
         do {
-            try requireTrusted()
-            elementID = try requiredOption("--element")
             action = option("--action") ?? kAXPressAction as String
+            policy = policyDecision(actionRisk: riskLevel(for: action!))
+            guard policy?.allowed == true else {
+                let message = policy?.message ?? "policy denied action"
+                try appendAuditRecord(ActionAuditRecord(
+                    id: auditID,
+                    timestamp: ISO8601DateFormatter().string(from: Date()),
+                    command: "perform",
+                    risk: riskLevel(for: action!),
+                    reason: option("--reason"),
+                    app: nil,
+                    elementID: option("--element"),
+                    element: nil,
+                    action: action,
+                    policy: policy,
+                    outcome: AuditOutcome(ok: false, code: "policy_denied", message: message)
+                ), to: auditURL)
+                auditWritten = true
+                throw CommandError(description: message)
+            }
+
+            elementID = try requiredOption("--element")
+            try requireTrusted()
             let app = try targetApp()
             appRecord = AppRecord(
                 name: app.localizedName,
@@ -298,6 +327,7 @@ final class ZeroThreeCLI {
                     elementID: elementID,
                     element: elementSummary,
                     action: action,
+                    policy: policy,
                     outcome: AuditOutcome(ok: false, code: "action_unavailable", message: message)
                 ), to: auditURL)
                 auditWritten = true
@@ -317,6 +347,7 @@ final class ZeroThreeCLI {
                     elementID: elementID,
                     element: elementSummary,
                     action: action,
+                    policy: policy,
                     outcome: AuditOutcome(ok: false, code: "action_failed", message: message)
                 ), to: auditURL)
                 auditWritten = true
@@ -334,6 +365,7 @@ final class ZeroThreeCLI {
                 elementID: elementID,
                 element: elementSummary,
                 action: action,
+                policy: policy,
                 outcome: AuditOutcome(ok: true, code: "performed", message: message)
             ), to: auditURL)
             auditWritten = true
@@ -359,6 +391,7 @@ final class ZeroThreeCLI {
                     elementID: elementID ?? option("--element"),
                     element: elementSummary,
                     action: action ?? option("--action") ?? kAXPressAction as String,
+                    policy: policy,
                     outcome: AuditOutcome(ok: false, code: "rejected", message: error.description)
                 ), to: auditURL)
             }
@@ -497,6 +530,46 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func policyDecision(actionRisk: String) -> AuditPolicyDecision {
+        let allowedRisk = option("--allow-risk") ?? "low"
+        guard let allowedRank = riskRank(allowedRisk) else {
+            return AuditPolicyDecision(
+                allowedRisk: allowedRisk,
+                actionRisk: actionRisk,
+                allowed: false,
+                message: "invalid --allow-risk '\(allowedRisk)'. Use low, medium, high, or unknown."
+            )
+        }
+
+        let actionRank = riskRank(actionRisk) ?? riskRank("unknown")!
+        let allowed = actionRank <= allowedRank
+        let message = allowed
+            ? "policy allowed \(actionRisk) action with --allow-risk \(allowedRisk)"
+            : "policy denied \(actionRisk) action because --allow-risk is \(allowedRisk)"
+
+        return AuditPolicyDecision(
+            allowedRisk: allowedRisk,
+            actionRisk: actionRisk,
+            allowed: allowed,
+            message: message
+        )
+    }
+
+    private func riskRank(_ risk: String) -> Int? {
+        switch risk {
+        case "low":
+            return 0
+        case "medium":
+            return 1
+        case "high":
+            return 2
+        case "unknown":
+            return 3
+        default:
+            return nil
+        }
+    }
+
     private func schema() {
         print("""
         {
@@ -541,7 +614,7 @@ final class ZeroThreeCLI {
             ]
           },
           "perform": {
-            "command": "03 perform --pid 456 --element a0.w0.3.1 --action AXPress --reason 'Open details'",
+            "command": "03 perform --pid 456 --element a0.w0.3.1 --action AXPress --allow-risk low --reason 'Open details'",
             "result": {
               "ok": true,
               "auditID": "UUID",
@@ -554,7 +627,7 @@ final class ZeroThreeCLI {
               "id": "UUID",
               "timestamp": "ISO-8601 timestamp",
               "command": "perform",
-              "risk": "low|medium|unknown",
+              "risk": "low|medium|high|unknown",
               "reason": "caller supplied intent",
               "app": { "name": "Finder", "bundleIdentifier": "com.apple.finder", "pid": 456 },
               "elementID": "w0.3.1",
@@ -565,6 +638,12 @@ final class ZeroThreeCLI {
                 "actions": ["AXPress"]
               },
               "action": "AXPress",
+              "policy": {
+                "allowedRisk": "low",
+                "actionRisk": "low",
+                "allowed": true,
+                "message": "policy allowed low action with --allow-risk low"
+              },
               "outcome": { "ok": true, "code": "performed", "message": "Performed AXPress on w0.3.1." }
             }
           },
@@ -598,7 +677,7 @@ final class ZeroThreeCLI {
           03 trust [--prompt true|false]
           03 apps [--all]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
-          03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--reason TEXT] [--audit-log PATH]
+          03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           03 audit [--limit N] [--audit-log PATH]
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
@@ -609,6 +688,7 @@ final class ZeroThreeCLI {
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
+          - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `files` emits read-only filesystem metadata and available typed file actions.
         """)
