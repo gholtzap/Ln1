@@ -67,6 +67,60 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue(directoryActions.contains { $0["name"] as? String == "filesystem.list" })
     }
 
+    func testFilesSearchReturnsStructuredNameAndContentMatches() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-search-\(UUID().uuidString)")
+        let nested = directory.appendingPathComponent("nested")
+        let contentMatch = directory.appendingPathComponent("alpha.txt")
+        let nameMatch = nested.appendingPathComponent("needle-name.txt")
+        let hiddenMatch = directory.appendingPathComponent(".hidden.txt")
+
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "first line\nThe Needle appears here\nlast line".write(to: contentMatch, atomically: true, encoding: .utf8)
+        try "ordinary text".write(to: nameMatch, atomically: true, encoding: .utf8)
+        try "needle should be skipped".write(to: hiddenMatch, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "search",
+            "--path", directory.path,
+            "--query", "needle",
+            "--depth", "2",
+            "--limit", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let matches = try XCTUnwrap(object["matches"] as? [[String: Any]])
+        let names = Set(matches.compactMap { ($0["file"] as? [String: Any])?["name"] as? String })
+
+        XCTAssertEqual(object["query"] as? String, "needle")
+        XCTAssertEqual(object["caseSensitive"] as? Bool, false)
+        XCTAssertEqual(object["truncated"] as? Bool, false)
+        XCTAssertTrue(names.contains("alpha.txt"))
+        XCTAssertTrue(names.contains("needle-name.txt"))
+        XCTAssertFalse(names.contains(".hidden.txt"))
+
+        let contentEntry = try XCTUnwrap(matches.first {
+            ($0["file"] as? [String: Any])?["name"] as? String == "alpha.txt"
+        })
+        let contentLines = try XCTUnwrap(contentEntry["contentMatches"] as? [[String: Any]])
+        let contentFile = try XCTUnwrap(contentEntry["file"] as? [String: Any])
+        let contentActions = try XCTUnwrap(contentFile["actions"] as? [[String: Any]])
+
+        XCTAssertEqual(contentEntry["matchedName"] as? Bool, false)
+        XCTAssertEqual(contentLines.first?["lineNumber"] as? Int, 2)
+        XCTAssertEqual(contentLines.first?["text"] as? String, "The Needle appears here")
+        XCTAssertTrue(contentActions.contains { $0["name"] as? String == "filesystem.search" })
+
+        let nameEntry = try XCTUnwrap(matches.first {
+            ($0["file"] as? [String: Any])?["name"] as? String == "needle-name.txt"
+        })
+        XCTAssertEqual(nameEntry["matchedName"] as? Bool, true)
+        XCTAssertEqual((nameEntry["contentMatches"] as? [Any])?.count, 0)
+    }
+
     func testAuditCommandReturnsEmptyEntriesForMissingLog() throws {
         let missingLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-missing-\(UUID().uuidString).jsonl")

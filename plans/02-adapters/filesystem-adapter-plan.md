@@ -20,6 +20,11 @@ The system should understand relevant files and folders, search local content an
 - The assistant can explain what files will be affected before changing them.
 - The assistant can integrate file state with app state and task context.
 
+## Implemented Increments
+
+- Read-only metadata inspection: `03 files stat` and `03 files list` expose structured file and folder state with typed available actions.
+- Bounded local search: `03 files search` searches file names and UTF-8 text line snippets under a path, skips hidden files by default, reports scan/skip counts, and keeps reads bounded by file-size and snippet limits.
+
 ## Relationship To The Product
 
 The filesystem adapter is one of the clearest examples of getting AI away from UI and onto real data. It should often replace Finder automation entirely.

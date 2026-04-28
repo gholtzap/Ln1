@@ -143,6 +143,36 @@ struct FilesystemState: Codable {
     let truncated: Bool
 }
 
+struct FileLineMatch: Codable {
+    let lineNumber: Int
+    let text: String
+}
+
+struct FileSearchMatch: Codable {
+    let file: FileRecord
+    let matchedName: Bool
+    let contentMatches: [FileLineMatch]
+}
+
+struct FilesystemSearchResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let root: FileRecord
+    let query: String
+    let caseSensitive: Bool
+    let maxDepth: Int
+    let limit: Int
+    let includeHidden: Bool
+    let maxFileBytes: Int
+    let maxSnippetCharacters: Int
+    let matches: [FileSearchMatch]
+    let scannedFiles: Int
+    let skippedUnreadable: Int
+    let skippedBinary: Int
+    let skippedTooLarge: Int
+    let truncated: Bool
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
@@ -434,6 +464,28 @@ final class ZeroThreeCLI {
                 includeHidden: includeHidden
             )
             try writeJSON(state)
+        case "search":
+            let query = try requiredOption("--query")
+            guard !query.isEmpty else {
+                throw CommandError(description: "--query must not be empty")
+            }
+            let maxDepth = max(0, option("--depth").flatMap(Int.init) ?? 4)
+            let limit = max(0, option("--limit").flatMap(Int.init) ?? 50)
+            let includeHidden = flag("--include-hidden")
+            let caseSensitive = flag("--case-sensitive")
+            let maxFileBytes = max(0, option("--max-file-bytes").flatMap(Int.init) ?? 1_048_576)
+            let maxSnippetCharacters = max(20, option("--max-snippet-characters").flatMap(Int.init) ?? 240)
+            let result = try filesystemSearchResult(
+                rootURL: rootURL,
+                query: query,
+                caseSensitive: caseSensitive,
+                maxDepth: maxDepth,
+                limit: limit,
+                includeHidden: includeHidden,
+                maxFileBytes: maxFileBytes,
+                maxSnippetCharacters: maxSnippetCharacters
+            )
+            try writeJSON(result)
         default:
             throw CommandError(description: "unknown files mode '\(mode)'")
         }
@@ -664,6 +716,23 @@ final class ZeroThreeCLI {
                 { "name": "filesystem.stat", "risk": "low", "mutates": false }
               ]
             }
+          },
+          "fileSearch": {
+            "command": "03 files search --path ~/Documents --query invoice --depth 4 --limit 50",
+            "match": {
+              "file": {
+                "path": "/Users/example/Documents/Invoice.txt",
+                "kind": "regularFile",
+                "actions": [
+                  { "name": "filesystem.stat", "risk": "low", "mutates": false },
+                  { "name": "filesystem.search", "risk": "low", "mutates": false }
+                ]
+              },
+              "matchedName": true,
+              "contentMatches": [
+                { "lineNumber": 4, "text": "bounded matching line snippet" }
+              ]
+            }
           }
         }
         """)
@@ -681,6 +750,7 @@ final class ZeroThreeCLI {
           03 audit [--limit N] [--audit-log PATH]
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
+          03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
           03 schema
 
         Notes:
@@ -690,7 +760,7 @@ final class ZeroThreeCLI {
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
-          - `files` emits read-only filesystem metadata and available typed file actions.
+          - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
         """)
     }
 
@@ -721,6 +791,229 @@ final class ZeroThreeCLI {
             limit: limit,
             truncated: truncated
         )
+    }
+
+    private func filesystemSearchResult(
+        rootURL: URL,
+        query: String,
+        caseSensitive: Bool,
+        maxDepth: Int,
+        limit: Int,
+        includeHidden: Bool,
+        maxFileBytes: Int,
+        maxSnippetCharacters: Int
+    ) throws -> FilesystemSearchResult {
+        let root = try fileRecord(for: rootURL)
+        var matches: [FileSearchMatch] = []
+        var stats = FileSearchStats()
+        var truncated = false
+
+        try collectSearchMatches(
+            from: rootURL,
+            currentDepth: 0,
+            maxDepth: maxDepth,
+            limit: limit,
+            includeHidden: includeHidden,
+            query: query,
+            caseSensitive: caseSensitive,
+            maxFileBytes: maxFileBytes,
+            maxSnippetCharacters: maxSnippetCharacters,
+            matches: &matches,
+            stats: &stats,
+            truncated: &truncated
+        )
+
+        return FilesystemSearchResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            root: root,
+            query: query,
+            caseSensitive: caseSensitive,
+            maxDepth: maxDepth,
+            limit: limit,
+            includeHidden: includeHidden,
+            maxFileBytes: maxFileBytes,
+            maxSnippetCharacters: maxSnippetCharacters,
+            matches: matches,
+            scannedFiles: stats.scannedFiles,
+            skippedUnreadable: stats.skippedUnreadable,
+            skippedBinary: stats.skippedBinary,
+            skippedTooLarge: stats.skippedTooLarge,
+            truncated: truncated
+        )
+    }
+
+    private struct FileSearchStats {
+        var scannedFiles = 0
+        var skippedUnreadable = 0
+        var skippedBinary = 0
+        var skippedTooLarge = 0
+    }
+
+    private func collectSearchMatches(
+        from url: URL,
+        currentDepth: Int,
+        maxDepth: Int,
+        limit: Int,
+        includeHidden: Bool,
+        query: String,
+        caseSensitive: Bool,
+        maxFileBytes: Int,
+        maxSnippetCharacters: Int,
+        matches: inout [FileSearchMatch],
+        stats: inout FileSearchStats,
+        truncated: inout Bool
+    ) throws {
+        guard !truncated else {
+            return
+        }
+
+        let record = try fileRecord(for: url)
+        if shouldSearch(record, includeHidden: includeHidden) {
+            if let match = try searchMatch(
+                record: record,
+                query: query,
+                caseSensitive: caseSensitive,
+                maxFileBytes: maxFileBytes,
+                maxSnippetCharacters: maxSnippetCharacters,
+                stats: &stats
+            ) {
+                if matches.count >= limit {
+                    truncated = true
+                    return
+                }
+                matches.append(match)
+            }
+        }
+
+        guard record.kind == "directory", currentDepth < maxDepth else {
+            return
+        }
+
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: Array(fileResourceKeys()),
+            options: includeHidden ? [] : [.skipsHiddenFiles]
+        )
+        .sorted { $0.path < $1.path }
+
+        for childURL in urls {
+            try collectSearchMatches(
+                from: childURL,
+                currentDepth: currentDepth + 1,
+                maxDepth: maxDepth,
+                limit: limit,
+                includeHidden: includeHidden,
+                query: query,
+                caseSensitive: caseSensitive,
+                maxFileBytes: maxFileBytes,
+                maxSnippetCharacters: maxSnippetCharacters,
+                matches: &matches,
+                stats: &stats,
+                truncated: &truncated
+            )
+
+            if truncated {
+                return
+            }
+        }
+    }
+
+    private func shouldSearch(_ record: FileRecord, includeHidden: Bool) -> Bool {
+        includeHidden || !record.hidden
+    }
+
+    private func searchMatch(
+        record: FileRecord,
+        query: String,
+        caseSensitive: Bool,
+        maxFileBytes: Int,
+        maxSnippetCharacters: Int,
+        stats: inout FileSearchStats
+    ) throws -> FileSearchMatch? {
+        let matchedName = contains(query, in: record.name, caseSensitive: caseSensitive)
+        var lineMatches: [FileLineMatch] = []
+
+        if record.kind == "regularFile" {
+            guard record.readable else {
+                stats.skippedUnreadable += 1
+                return matchedName ? FileSearchMatch(file: record, matchedName: true, contentMatches: []) : nil
+            }
+
+            stats.scannedFiles += 1
+
+            if let size = record.sizeBytes, size > maxFileBytes {
+                stats.skippedTooLarge += 1
+            } else {
+                let data = try Data(contentsOf: URL(fileURLWithPath: record.path))
+                if let contents = String(data: data, encoding: .utf8) {
+                    lineMatches = contentLineMatches(
+                        in: contents,
+                        query: query,
+                        caseSensitive: caseSensitive,
+                        maxSnippetCharacters: maxSnippetCharacters
+                    )
+                } else {
+                    stats.skippedBinary += 1
+                }
+            }
+        }
+
+        guard matchedName || !lineMatches.isEmpty else {
+            return nil
+        }
+
+        return FileSearchMatch(
+            file: record,
+            matchedName: matchedName,
+            contentMatches: lineMatches
+        )
+    }
+
+    private func contentLineMatches(
+        in contents: String,
+        query: String,
+        caseSensitive: Bool,
+        maxSnippetCharacters: Int
+    ) -> [FileLineMatch] {
+        var matches: [FileLineMatch] = []
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+
+        for (index, line) in lines.enumerated() {
+            let text = String(line)
+            guard contains(query, in: text, caseSensitive: caseSensitive) else {
+                continue
+            }
+            matches.append(FileLineMatch(
+                lineNumber: index + 1,
+                text: snippet(for: text, query: query, caseSensitive: caseSensitive, maxCharacters: maxSnippetCharacters)
+            ))
+        }
+
+        return matches
+    }
+
+    private func contains(_ needle: String, in haystack: String, caseSensitive: Bool) -> Bool {
+        if caseSensitive {
+            return haystack.contains(needle)
+        }
+        return haystack.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
+    private func snippet(for line: String, query: String, caseSensitive: Bool, maxCharacters: Int) -> String {
+        guard line.count > maxCharacters else {
+            return line
+        }
+
+        let options: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive, .diacriticInsensitive]
+        guard let range = line.range(of: query, options: options) else {
+            return String(line.prefix(maxCharacters))
+        }
+
+        let halfWindow = max(0, (maxCharacters - query.count) / 2)
+        let start = line.index(range.lowerBound, offsetBy: -halfWindow, limitedBy: line.startIndex) ?? line.startIndex
+        let end = line.index(start, offsetBy: maxCharacters, limitedBy: line.endIndex) ?? line.endIndex
+        return String(line[start..<end])
     }
 
     private func collectFileRecords(
@@ -847,6 +1140,11 @@ final class ZeroThreeCLI {
 
         if kind == "directory", readable {
             actions.append(FileAction(name: "filesystem.list", risk: "low", mutates: false))
+            actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
+        }
+
+        if kind == "regularFile", readable {
+            actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
         }
 
         return actions
