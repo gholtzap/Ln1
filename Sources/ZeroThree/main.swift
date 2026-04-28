@@ -193,6 +193,19 @@ struct FilesystemSearchResult: Codable {
     let truncated: Bool
 }
 
+struct FilesystemWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let path: String
+    let expectedExists: Bool
+    let matched: Bool
+    let elapsedMilliseconds: Int
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let file: FileRecord?
+    let message: String
+}
+
 struct FileOperationResult: Codable {
     let ok: Bool
     let action: String
@@ -540,6 +553,17 @@ final class ZeroThreeCLI {
                 includeHidden: includeHidden,
                 maxFileBytes: maxFileBytes,
                 maxSnippetCharacters: maxSnippetCharacters
+            )
+            try writeJSON(result)
+        case "wait":
+            let expectedExists = option("--exists").map(parseBool) ?? true
+            let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+            let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+            let result = try waitForFileState(
+                at: rootURL,
+                expectedExists: expectedExists,
+                timeoutMilliseconds: timeoutMilliseconds,
+                intervalMilliseconds: intervalMilliseconds
             )
             try writeJSON(result)
         case "duplicate":
@@ -1008,6 +1032,51 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func waitForFileState(
+        at url: URL,
+        expectedExists: Bool,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> FilesystemWaitResult {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var exists = FileManager.default.fileExists(atPath: url.path)
+
+        while exists != expectedExists && Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            exists = FileManager.default.fileExists(atPath: url.path)
+        }
+
+        let elapsedMilliseconds = max(0, Int(Date().timeIntervalSince(start) * 1_000))
+        let matched = exists == expectedExists
+        let record = exists ? try fileRecord(for: url) : nil
+        let message: String
+        if matched {
+            message = expectedExists
+                ? "Path exists at \(url.path)."
+                : "Path does not exist at \(url.path)."
+        } else {
+            message = expectedExists
+                ? "Timed out waiting for path to exist at \(url.path)."
+                : "Timed out waiting for path to disappear at \(url.path)."
+        }
+
+        return FilesystemWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            path: url.path,
+            expectedExists: expectedExists,
+            matched: matched,
+            elapsedMilliseconds: elapsedMilliseconds,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            file: record,
+            message: message
+        )
+    }
+
     private func appendAuditRecord(_ record: ActionAuditRecord, to url: URL) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1265,6 +1334,17 @@ final class ZeroThreeCLI {
               ]
             }
           },
+          "fileWait": {
+            "command": "03 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100",
+            "result": {
+              "path": "/Users/example/Downloads/report.pdf",
+              "expectedExists": true,
+              "matched": true,
+              "elapsedMilliseconds": 100,
+              "file": { "path": "/Users/example/Downloads/report.pdf", "kind": "regularFile" },
+              "message": "Path exists at /Users/example/Downloads/report.pdf."
+            }
+          },
           "fileDuplicate": {
             "command": "03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --allow-risk medium --reason 'Preserve original before editing'",
             "result": {
@@ -1332,6 +1412,7 @@ final class ZeroThreeCLI {
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
+          03 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
           03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
@@ -1346,6 +1427,7 @@ final class ZeroThreeCLI {
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `audit` can filter records by command name and outcome code before applying the limit.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
+          - `files wait` waits for a path to exist or disappear and returns typed evidence.
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.

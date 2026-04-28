@@ -20,6 +20,10 @@ The system should observe relevant changes from apps, the desktop, the filesyste
 - The assistant can correlate events with recent actions.
 - The assistant can maintain a useful recent history of computer state changes.
 
+## Implemented Increments
+
+- Bounded filesystem wait: `03 files wait` polls a path for expected existence or disappearance with a timeout and returns structured evidence for verification loops.
+
 ## Relationship To The Product
 
 Events make the system feel alive and reliable. They are also critical for verification and recovery.

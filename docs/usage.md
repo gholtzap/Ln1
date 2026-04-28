@@ -150,6 +150,15 @@ Search file names and bounded UTF-8 text content without using Finder:
 
 Search is case-insensitive by default, skips hidden files unless `--include-hidden` is passed, and avoids unbounded reads with `--max-file-bytes` and `--max-snippet-characters`. Results include file metadata, whether the name matched, matching line numbers, short line snippets, scan counts, and skip counts for unreadable, binary, or oversized files.
 
+Wait for a path to appear or disappear with bounded polling:
+
+```sh
+.build/debug/03 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100
+.build/debug/03 files wait --path ~/Downloads/report.part --exists false --timeout-ms 30000
+```
+
+`files wait` returns structured evidence about whether the expected existence state matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`. This is useful for downloads, generated files, and verification loops without relying on Finder state.
+
 Duplicate one regular file through an audited typed action:
 
 ```sh

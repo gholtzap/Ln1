@@ -121,6 +121,59 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual((nameEntry["contentMatches"] as? [Any])?.count, 0)
     }
 
+    func testFilesWaitReturnsMatchedExistingFileMetadata() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-wait-exists-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("ready.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "ready".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "wait",
+            "--path", file.path,
+            "--exists", "true",
+            "--timeout-ms", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let fileObject = try XCTUnwrap(object["file"] as? [String: Any])
+
+        XCTAssertEqual(object["path"] as? String, file.path)
+        XCTAssertEqual(object["expectedExists"] as? Bool, true)
+        XCTAssertEqual(object["matched"] as? Bool, true)
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
+        XCTAssertEqual(fileObject["path"] as? String, file.path)
+        XCTAssertEqual(fileObject["kind"] as? String, "regularFile")
+    }
+
+    func testFilesWaitReturnsMatchedMissingPathWithoutMetadata() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-wait-missing-\(UUID().uuidString)")
+        let missing = directory.appendingPathComponent("missing.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "wait",
+            "--path", missing.path,
+            "--exists", "false",
+            "--timeout-ms", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["path"] as? String, missing.path)
+        XCTAssertEqual(object["expectedExists"] as? Bool, false)
+        XCTAssertEqual(object["matched"] as? Bool, true)
+        XCTAssertNil(object["file"])
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
+    }
+
     func testFilesDuplicateCopiesRegularFileWithAuditAndVerification() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-duplicate-\(UUID().uuidString)")

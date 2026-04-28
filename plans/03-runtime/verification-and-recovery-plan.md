@@ -20,6 +20,10 @@ The system should define expected outcomes for actions, observe whether those ou
 - The assistant can retry only when retrying is safe.
 - The assistant can escalate to the user when the outcome is ambiguous or risky.
 
+## Implemented Increments
+
+- Filesystem existence verification: `03 files wait` provides bounded, typed evidence that a path appeared or disappeared before a workflow proceeds.
+
 ## Relationship To The Product
 
 Verification is what separates a serious computer-control product from a demo. It should be built into every nontrivial workflow.
