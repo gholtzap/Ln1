@@ -132,7 +132,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/03 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.duplicate`, and `filesystem.move`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.duplicate`, `filesystem.move`, and `filesystem.createDirectory`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -157,6 +157,14 @@ Move or rename one regular file through the same policy and audit path:
 ```
 
 `filesystem.move` is also a medium-risk mutating file action. It refuses to overwrite an existing destination, requires both source and destination parent directories to be writable, verifies that the original source path is gone and the destination has the same byte size, and records the policy decision plus verification result in the audit log.
+
+Create one directory for organization workflows:
+
+```sh
+.build/debug/03 files mkdir --path ~/Documents/Archive --allow-risk medium --reason "Create archive folder"
+```
+
+`filesystem.createDirectory` is a medium-risk mutating file action. It refuses existing paths, requires the parent directory to exist and be writable, verifies that the directory exists after creation, and records the policy decision plus verification result in the audit log.
 
 ## Product Direction
 

@@ -347,6 +347,112 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }
 
+    func testFilesMkdirCreatesDirectoryWithAuditAndVerification() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-mkdir-\(UUID().uuidString)")
+        let created = directory.appendingPathComponent("archive")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "mkdir",
+            "--path", created.path,
+            "--allow-risk", "medium",
+            "--reason", "test mkdir",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        var isDirectory = ObjCBool(false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: created.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+
+        let object = try decodeJSONObject(result.stdout)
+        let directoryObject = try XCTUnwrap(object["directory"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "filesystem.createDirectory")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(directoryObject["path"] as? String, created.path)
+        XCTAssertEqual(directoryObject["kind"] as? String, "directory")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "directory_exists")
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let destinationTarget = try XCTUnwrap(entry["fileDestination"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.mkdir")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.createDirectory")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "test mkdir")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(destinationTarget["path"] as? String, created.path)
+        XCTAssertEqual(destinationTarget["exists"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "created_directory")
+    }
+
+    func testFilesMkdirPolicyDenialIsAuditedAndDoesNotCreateDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-mkdir-policy-\(UUID().uuidString)")
+        let created = directory.appendingPathComponent("archive")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "files",
+            "mkdir",
+            "--path", created.path,
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: created.path))
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let destinationTarget = try XCTUnwrap(entry["fileDestination"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.mkdir")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.createDirectory")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(destinationTarget["path"] as? String, created.path)
+        XCTAssertEqual(destinationTarget["exists"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
     func testAuditCommandReturnsEmptyEntriesForMissingLog() throws {
         let missingLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-missing-\(UUID().uuidString).jsonl")

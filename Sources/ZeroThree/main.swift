@@ -202,6 +202,17 @@ struct FileOperationResult: Codable {
     let auditLogPath: String
 }
 
+struct DirectoryOperationResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let directory: FileRecord
+    let verification: FileOperationVerification
+    let message: String
+    let auditID: String
+    let auditLogPath: String
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
@@ -524,6 +535,9 @@ final class ZeroThreeCLI {
             let destinationPath = try requiredOption("--to")
             let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
             let result = try moveFile(from: rootURL, to: destinationURL)
+            try writeJSON(result)
+        case "mkdir":
+            let result = try createDirectory(at: rootURL)
             try writeJSON(result)
         default:
             throw CommandError(description: "unknown files mode '\(mode)'")
@@ -859,6 +873,125 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func createDirectory(at directoryURL: URL) throws -> DirectoryOperationResult {
+        let action = "filesystem.createDirectory"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var directoryTarget = FileAuditTarget(
+            path: directoryURL.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: directoryURL.path)
+        )
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.mkdir",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: nil,
+                fileDestination: directoryTarget,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard !FileManager.default.fileExists(atPath: directoryURL.path) else {
+                let message = "directory already exists at \(directoryURL.path)"
+                try writeAudit(ok: false, code: "destination_exists", message: message)
+                throw CommandError(description: message)
+            }
+
+            let parentURL = directoryURL.deletingLastPathComponent()
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                let message = "parent directory does not exist at \(parentURL.path)"
+                try writeAudit(ok: false, code: "parent_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard FileManager.default.isWritableFile(atPath: parentURL.path) else {
+                let message = "parent directory is not writable at \(parentURL.path)"
+                try writeAudit(ok: false, code: "parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: false)
+
+            let directoryRecord = try fileRecord(for: directoryURL)
+            directoryTarget = fileAuditTarget(record: directoryRecord, exists: true)
+
+            verification = verifyCreatedDirectory(directoryRecord)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "directory creation verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Created directory \(directoryURL.path)."
+            try writeAudit(ok: true, code: "created_directory", message: message)
+
+            return DirectoryOperationResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                directory: directoryRecord,
+                verification: verification!,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func verifyCreatedDirectory(_ directory: FileRecord) -> FileOperationVerification {
+        guard directory.kind == "directory" else {
+            return FileOperationVerification(
+                ok: false,
+                code: "not_directory",
+                message: "created path exists but is not a directory"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "directory_exists",
+            message: "directory exists at requested path"
+        )
+    }
+
     private func appendAuditRecord(_ record: ActionAuditRecord, to url: URL) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -943,7 +1076,7 @@ final class ZeroThreeCLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search":
             return "low"
-        case "filesystem.duplicate", "filesystem.move":
+        case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory":
             return "medium"
         default:
             return "unknown"
@@ -1135,6 +1268,22 @@ final class ZeroThreeCLI {
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
+          },
+          "directoryCreate": {
+            "command": "03 files mkdir --path ~/Documents/Archive --allow-risk medium --reason 'Create archive folder'",
+            "result": {
+              "ok": true,
+              "action": "filesystem.createDirectory",
+              "risk": "medium",
+              "directory": { "path": "/Users/example/Documents/Archive", "kind": "directory" },
+              "verification": {
+                "ok": true,
+                "code": "directory_exists",
+                "message": "directory exists at requested path"
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
           }
         }
         """)
@@ -1155,6 +1304,7 @@ final class ZeroThreeCLI {
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
           03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -1167,6 +1317,7 @@ final class ZeroThreeCLI {
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
+          - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.
         """)
     }
 
@@ -1491,7 +1642,7 @@ final class ZeroThreeCLI {
             hidden: values.isHidden ?? false,
             readable: readable,
             writable: writable,
-            actions: fileActions(kind: kind, readable: readable)
+            actions: fileActions(kind: kind, readable: readable, writable: writable)
         )
     }
 
@@ -1539,7 +1690,7 @@ final class ZeroThreeCLI {
         data.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func fileActions(kind: String, readable: Bool) -> [FileAction] {
+    private func fileActions(kind: String, readable: Bool, writable: Bool) -> [FileAction] {
         var actions = [
             FileAction(name: "filesystem.stat", risk: "low", mutates: false)
         ]
@@ -1547,6 +1698,10 @@ final class ZeroThreeCLI {
         if kind == "directory", readable {
             actions.append(FileAction(name: "filesystem.list", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
+        }
+
+        if kind == "directory", writable {
+            actions.append(FileAction(name: "filesystem.createDirectory", risk: "medium", mutates: true))
         }
 
         if kind == "regularFile", readable {
