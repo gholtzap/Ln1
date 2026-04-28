@@ -167,6 +167,14 @@ Wait for a path to appear or disappear with bounded polling:
 
 `files wait` returns structured evidence about whether the expected existence state matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`. This is useful for downloads, generated files, and verification loops without relying on Finder state.
 
+Compute a bounded content digest without returning file contents:
+
+```sh
+.build/debug/03 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600
+```
+
+`filesystem.checksum` currently supports SHA-256 for regular files. It is a low-risk read action, but still bounded by `--max-file-bytes` so large files are not read accidentally. The response includes file metadata, the algorithm, and the hex digest.
+
 Duplicate one regular file through an audited typed action:
 
 ```sh

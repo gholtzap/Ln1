@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CryptoKit
 import Foundation
 
 struct CommandError: Error, CustomStringConvertible {
@@ -219,6 +220,15 @@ struct FilesystemWaitResult: Codable {
     let intervalMilliseconds: Int
     let file: FileRecord?
     let message: String
+}
+
+struct FilesystemChecksumResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let file: FileRecord
+    let algorithm: String
+    let digest: String
+    let maxFileBytes: Int
 }
 
 struct FileOperationResult: Codable {
@@ -591,6 +601,15 @@ final class ZeroThreeCLI {
                 expectedExists: expectedExists,
                 timeoutMilliseconds: timeoutMilliseconds,
                 intervalMilliseconds: intervalMilliseconds
+            )
+            try writeJSON(result)
+        case "checksum":
+            let algorithm = option("--algorithm") ?? "sha256"
+            let maxFileBytes = max(0, option("--max-file-bytes").flatMap(Int.init) ?? 104_857_600)
+            let result = try fileChecksum(
+                for: rootURL,
+                algorithm: algorithm,
+                maxFileBytes: maxFileBytes
             )
             try writeJSON(result)
         case "duplicate":
@@ -1104,6 +1123,40 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func fileChecksum(
+        for url: URL,
+        algorithm: String,
+        maxFileBytes: Int
+    ) throws -> FilesystemChecksumResult {
+        let normalizedAlgorithm = algorithm.lowercased()
+        guard normalizedAlgorithm == "sha256" else {
+            throw CommandError(description: "unsupported checksum algorithm '\(algorithm)'. Use sha256.")
+        }
+
+        let record = try fileRecord(for: url)
+        guard record.kind == "regularFile" else {
+            throw CommandError(description: "filesystem.checksum currently supports regular files only")
+        }
+        guard record.readable else {
+            throw CommandError(description: "file is not readable at \(url.path)")
+        }
+        if let size = record.sizeBytes, size > maxFileBytes {
+            throw CommandError(description: "file size \(size) exceeds --max-file-bytes \(maxFileBytes)")
+        }
+
+        let data = try Data(contentsOf: url)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+
+        return FilesystemChecksumResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            file: record,
+            algorithm: normalizedAlgorithm,
+            digest: digest,
+            maxFileBytes: maxFileBytes
+        )
+    }
+
     private func appendAuditRecord(_ record: ActionAuditRecord, to url: URL) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1200,7 +1253,7 @@ final class ZeroThreeCLI {
 
     private func fileActionRisk(for action: String) -> String {
         switch action {
-        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait":
+        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.checksum":
             return "low"
         case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory":
             return "medium"
@@ -1219,6 +1272,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.wait", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.checksum", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true)
@@ -1396,6 +1450,15 @@ final class ZeroThreeCLI {
               "message": "Path exists at /Users/example/Downloads/report.pdf."
             }
           },
+          "fileChecksum": {
+            "command": "03 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600",
+            "result": {
+              "file": { "path": "/Users/example/Documents/Plan.md", "kind": "regularFile" },
+              "algorithm": "sha256",
+              "digest": "hex encoded SHA-256 digest",
+              "maxFileBytes": 104857600
+            }
+          },
           "fileDuplicate": {
             "command": "03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --allow-risk medium --reason 'Preserve original before editing'",
             "result": {
@@ -1465,6 +1528,7 @@ final class ZeroThreeCLI {
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
           03 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
+          03 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
           03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
@@ -1481,6 +1545,7 @@ final class ZeroThreeCLI {
           - `audit` can filter records by command name and outcome code before applying the limit.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files wait` waits for a path to exist or disappear and returns typed evidence.
+          - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.
@@ -1872,6 +1937,7 @@ final class ZeroThreeCLI {
 
         if kind == "regularFile", readable {
             actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
+            actions.append(FileAction(name: "filesystem.checksum", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
         }

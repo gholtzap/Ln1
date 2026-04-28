@@ -50,6 +50,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(root["readable"] as? Bool, true)
         XCTAssertEqual((object["entries"] as? [Any])?.count, 0)
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.stat" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.checksum" })
     }
 
     func testFilesListReturnsDirectoryEntriesWithoutHiddenFilesByDefault() throws {
@@ -195,6 +196,33 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["matched"] as? Bool, true)
         XCTAssertNil(object["file"])
         XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
+    }
+
+    func testFilesChecksumReturnsBoundedSHA256WithoutContent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-checksum-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "checksum",
+            "--path", file.path,
+            "--max-file-bytes", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let fileObject = try XCTUnwrap(object["file"] as? [String: Any])
+
+        XCTAssertEqual(fileObject["path"] as? String, file.path)
+        XCTAssertEqual(fileObject["kind"] as? String, "regularFile")
+        XCTAssertEqual(object["algorithm"] as? String, "sha256")
+        XCTAssertEqual(object["digest"] as? String, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        XCTAssertEqual(object["maxFileBytes"] as? Int, 10)
+        XCTAssertNil(object["contents"])
     }
 
     func testFilesDuplicateCopiesRegularFileWithAuditAndVerification() throws {

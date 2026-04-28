@@ -23,6 +23,7 @@ The system should define expected outcomes for actions, observe whether those ou
 ## Implemented Increments
 
 - Filesystem existence verification: `03 files wait` provides bounded, typed evidence that a path appeared or disappeared before a workflow proceeds.
+- Filesystem content identity verification: `03 files checksum` provides a bounded SHA-256 digest for comparing regular files without storing their contents.
 
 ## Relationship To The Product
 
