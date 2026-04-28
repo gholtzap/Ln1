@@ -103,12 +103,34 @@ Read from a custom audit file:
 .build/debug/03 audit --audit-log /tmp/03-audit.jsonl --limit 5
 ```
 
+## Inspect Filesystem State
+
+Inspect one file or folder without reading file contents:
+
+```sh
+.build/debug/03 files stat --path ~/Documents/Plan.md
+```
+
+List a folder as structured metadata:
+
+```sh
+.build/debug/03 files list --path ~/Documents --depth 2 --limit 200
+```
+
+Hidden files are skipped by default. Include them explicitly when they are relevant:
+
+```sh
+.build/debug/03 files list --path ~/Documents --include-hidden --depth 1
+```
+
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat` and `filesystem.list`. It is intentionally read-only in this increment and does not capture file contents.
+
 ## Product Direction
 
 The next step is to add adapters for richer state sources:
 
 - Browser DOM through Chrome DevTools Protocol
-- Filesystem metadata and document indexes
+- Filesystem document indexes and audited file operations
 - Clipboard and notifications
 - App-native integrations where available
 - A permission/audit log around every action

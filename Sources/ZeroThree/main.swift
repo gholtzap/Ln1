@@ -105,6 +105,36 @@ struct AuditEntries: Codable {
     let entries: [ActionAuditRecord]
 }
 
+struct FileAction: Codable {
+    let name: String
+    let risk: String
+    let mutates: Bool
+}
+
+struct FileRecord: Codable {
+    let id: String
+    let path: String
+    let name: String
+    let kind: String
+    let sizeBytes: Int?
+    let createdAt: String?
+    let modifiedAt: String?
+    let hidden: Bool
+    let readable: Bool
+    let writable: Bool
+    let actions: [FileAction]
+}
+
+struct FilesystemState: Codable {
+    let generatedAt: String
+    let platform: String
+    let root: FileRecord
+    let entries: [FileRecord]
+    let maxDepth: Int
+    let limit: Int
+    let truncated: Bool
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
@@ -146,6 +176,8 @@ final class ZeroThreeCLI {
             try perform()
         case "audit":
             try audit()
+        case "files":
+            try files()
         case "schema":
             schema()
         case "help", "--help", "-h":
@@ -341,6 +373,39 @@ final class ZeroThreeCLI {
         try writeJSON(AuditEntries(path: auditURL.path, entries: records))
     }
 
+    private func files() throws {
+        let mode = arguments.dropFirst().first ?? "list"
+        let path = try requiredOption("--path")
+        let rootURL = URL(fileURLWithPath: expandedPath(path)).standardizedFileURL
+
+        switch mode {
+        case "stat":
+            let record = try fileRecord(for: rootURL)
+            try writeJSON(FilesystemState(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                root: record,
+                entries: [],
+                maxDepth: 0,
+                limit: 0,
+                truncated: false
+            ))
+        case "list":
+            let maxDepth = max(0, option("--depth").flatMap(Int.init) ?? 2)
+            let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
+            let includeHidden = flag("--include-hidden")
+            let state = try filesystemState(
+                rootURL: rootURL,
+                maxDepth: maxDepth,
+                limit: limit,
+                includeHidden: includeHidden
+            )
+            try writeJSON(state)
+        default:
+            throw CommandError(description: "unknown files mode '\(mode)'")
+        }
+    }
+
     private func auditSummary(_ element: AXUIElement) -> AuditElementSummary {
         AuditElementSummary(
             role: stringAttribute(element, kAXRoleAttribute),
@@ -502,6 +567,24 @@ final class ZeroThreeCLI {
               "action": "AXPress",
               "outcome": { "ok": true, "code": "performed", "message": "Performed AXPress on w0.3.1." }
             }
+          },
+          "files": {
+            "command": "03 files list --path ~/Documents --depth 2 --limit 200",
+            "entry": {
+              "id": "file:stable-resource-identifier",
+              "path": "/Users/example/Documents/Plan.md",
+              "name": "Plan.md",
+              "kind": "regularFile|directory|symbolicLink|other",
+              "sizeBytes": 1234,
+              "createdAt": "ISO-8601 timestamp",
+              "modifiedAt": "ISO-8601 timestamp",
+              "hidden": false,
+              "readable": true,
+              "writable": true,
+              "actions": [
+                { "name": "filesystem.stat", "risk": "low", "mutates": false }
+              ]
+            }
           }
         }
         """)
@@ -517,6 +600,8 @@ final class ZeroThreeCLI {
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--reason TEXT] [--audit-log PATH]
           03 audit [--limit N] [--audit-log PATH]
+          03 files stat --path PATH
+          03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 schema
 
         Notes:
@@ -525,7 +610,166 @@ final class ZeroThreeCLI {
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
           - `perform` appends a structured JSONL audit record before returning success or failure.
+          - `files` emits read-only filesystem metadata and available typed file actions.
         """)
+    }
+
+    private func filesystemState(rootURL: URL, maxDepth: Int, limit: Int, includeHidden: Bool) throws -> FilesystemState {
+        let root = try fileRecord(for: rootURL)
+        guard root.kind == "directory" else {
+            throw CommandError(description: "\(rootURL.path) is not a directory")
+        }
+
+        var entries: [FileRecord] = []
+        var truncated = false
+        try collectFileRecords(
+            from: rootURL,
+            currentDepth: 0,
+            maxDepth: maxDepth,
+            limit: limit,
+            includeHidden: includeHidden,
+            entries: &entries,
+            truncated: &truncated
+        )
+
+        return FilesystemState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            root: root,
+            entries: entries,
+            maxDepth: maxDepth,
+            limit: limit,
+            truncated: truncated
+        )
+    }
+
+    private func collectFileRecords(
+        from directoryURL: URL,
+        currentDepth: Int,
+        maxDepth: Int,
+        limit: Int,
+        includeHidden: Bool,
+        entries: inout [FileRecord],
+        truncated: inout Bool
+    ) throws {
+        guard currentDepth < maxDepth, !truncated else {
+            return
+        }
+
+        let keys = fileResourceKeys()
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: Array(keys),
+            options: includeHidden ? [] : [.skipsHiddenFiles]
+        )
+        .sorted { $0.path < $1.path }
+
+        for url in urls {
+            if entries.count >= limit {
+                truncated = true
+                return
+            }
+
+            let record = try fileRecord(for: url)
+            entries.append(record)
+
+            if record.kind == "directory" {
+                try collectFileRecords(
+                    from: url,
+                    currentDepth: currentDepth + 1,
+                    maxDepth: maxDepth,
+                    limit: limit,
+                    includeHidden: includeHidden,
+                    entries: &entries,
+                    truncated: &truncated
+                )
+            }
+
+            if truncated {
+                return
+            }
+        }
+    }
+
+    private func fileRecord(for url: URL) throws -> FileRecord {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw CommandError(description: "file does not exist at \(url.path)")
+        }
+
+        let values = try url.resourceValues(forKeys: fileResourceKeys())
+        let kind = fileKind(values)
+        let readable = FileManager.default.isReadableFile(atPath: url.path)
+        let writable = FileManager.default.isWritableFile(atPath: url.path)
+
+        return FileRecord(
+            id: fileID(values: values, url: url),
+            path: url.path,
+            name: values.name ?? url.lastPathComponent,
+            kind: kind,
+            sizeBytes: values.fileSize,
+            createdAt: values.creationDate.map { ISO8601DateFormatter().string(from: $0) },
+            modifiedAt: values.contentModificationDate.map { ISO8601DateFormatter().string(from: $0) },
+            hidden: values.isHidden ?? false,
+            readable: readable,
+            writable: writable,
+            actions: fileActions(kind: kind, readable: readable)
+        )
+    }
+
+    private func fileResourceKeys() -> Set<URLResourceKey> {
+        [
+            .nameKey,
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+            .creationDateKey,
+            .contentModificationDateKey,
+            .isHiddenKey,
+            .fileResourceIdentifierKey
+        ]
+    }
+
+    private func fileKind(_ values: URLResourceValues) -> String {
+        if values.isSymbolicLink == true {
+            return "symbolicLink"
+        }
+        if values.isDirectory == true {
+            return "directory"
+        }
+        if values.isRegularFile == true {
+            return "regularFile"
+        }
+        return "other"
+    }
+
+    private func fileID(values: URLResourceValues, url: URL) -> String {
+        if let identifier = values.fileResourceIdentifier {
+            if let data = identifier as? Data {
+                return "file:\(hexString(data))"
+            }
+            if let data = identifier as? NSData {
+                return "file:\(hexString(data as Data))"
+            }
+            return "file:\(String(describing: identifier))"
+        }
+        return "path:\(url.resolvingSymlinksInPath().path)"
+    }
+
+    private func hexString(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func fileActions(kind: String, readable: Bool) -> [FileAction] {
+        var actions = [
+            FileAction(name: "filesystem.stat", risk: "low", mutates: false)
+        ]
+
+        if kind == "directory", readable {
+            actions.append(FileAction(name: "filesystem.list", risk: "low", mutates: false))
+        }
+
+        return actions
     }
 
     private func runningApps(includeBackground: Bool) -> [NSRunningApplication] {

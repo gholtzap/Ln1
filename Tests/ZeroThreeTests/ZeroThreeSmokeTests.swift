@@ -2,6 +2,71 @@ import Foundation
 import XCTest
 
 final class ZeroThreeSmokeTests: XCTestCase {
+    func testFilesStatReturnsStructuredMetadataForFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-files-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "stat",
+            "--path", file.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let root = try XCTUnwrap(object["root"] as? [String: Any])
+        let actions = try XCTUnwrap(root["actions"] as? [[String: Any]])
+
+        XCTAssertEqual(root["path"] as? String, file.path)
+        XCTAssertEqual(root["name"] as? String, "note.txt")
+        XCTAssertEqual(root["kind"] as? String, "regularFile")
+        XCTAssertEqual(root["readable"] as? Bool, true)
+        XCTAssertEqual((object["entries"] as? [Any])?.count, 0)
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.stat" })
+    }
+
+    func testFilesListReturnsDirectoryEntriesWithoutHiddenFilesByDefault() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-files-\(UUID().uuidString)")
+        let nested = directory.appendingPathComponent("nested")
+        let visible = directory.appendingPathComponent("visible.txt")
+        let hidden = directory.appendingPathComponent(".secret")
+        let inner = nested.appendingPathComponent("inner.txt")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "visible".write(to: visible, atomically: true, encoding: .utf8)
+        try "hidden".write(to: hidden, atomically: true, encoding: .utf8)
+        try "inner".write(to: inner, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "list",
+            "--path", directory.path,
+            "--depth", "2",
+            "--limit", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let root = try XCTUnwrap(object["root"] as? [String: Any])
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let names = Set(entries.compactMap { $0["name"] as? String })
+        let directoryEntry = try XCTUnwrap(entries.first { $0["name"] as? String == "nested" })
+        let directoryActions = try XCTUnwrap(directoryEntry["actions"] as? [[String: Any]])
+
+        XCTAssertEqual(root["kind"] as? String, "directory")
+        XCTAssertEqual(object["truncated"] as? Bool, false)
+        XCTAssertTrue(names.contains("visible.txt"))
+        XCTAssertTrue(names.contains("nested"))
+        XCTAssertTrue(names.contains("inner.txt"))
+        XCTAssertFalse(names.contains(".secret"))
+        XCTAssertTrue(directoryActions.contains { $0["name"] as? String == "filesystem.list" })
+    }
+
     func testAuditCommandReturnsEmptyEntriesForMissingLog() throws {
         let missingLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-missing-\(UUID().uuidString).jsonl")
