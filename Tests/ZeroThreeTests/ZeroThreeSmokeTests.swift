@@ -121,6 +121,118 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual((nameEntry["contentMatches"] as? [Any])?.count, 0)
     }
 
+    func testFilesDuplicateCopiesRegularFileWithAuditAndVerification() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-duplicate-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source.txt")
+        let destination = directory.appendingPathComponent("copy.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "copy me".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "duplicate",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "test duplicate",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "copy me")
+
+        let object = try decodeJSONObject(result.stdout)
+        let sourceObject = try XCTUnwrap(object["source"] as? [String: Any])
+        let destinationObject = try XCTUnwrap(object["destination"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "filesystem.duplicate")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(sourceObject["path"] as? String, source.path)
+        XCTAssertEqual(destinationObject["path"] as? String, destination.path)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "metadata_matched")
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.duplicate")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.duplicate")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "test duplicate")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "duplicated")
+    }
+
+    func testFilesDuplicatePolicyDenialIsAuditedAndDoesNotCopy() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-duplicate-policy-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source.txt")
+        let destination = directory.appendingPathComponent("copy.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "do not copy".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "files",
+            "duplicate",
+            "--path", source.path,
+            "--to", destination.path,
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let sourceTarget = try XCTUnwrap(entry["fileSource"] as? [String: Any])
+        let destinationTarget = try XCTUnwrap(entry["fileDestination"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.duplicate")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.duplicate")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(sourceTarget["path"] as? String, source.path)
+        XCTAssertEqual(sourceTarget["exists"] as? Bool, true)
+        XCTAssertEqual(destinationTarget["path"] as? String, destination.path)
+        XCTAssertEqual(destinationTarget["exists"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
     func testAuditCommandReturnsEmptyEntriesForMissingLog() throws {
         let missingLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-missing-\(UUID().uuidString).jsonl")

@@ -132,7 +132,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/03 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, and `filesystem.search`. It is intentionally read-only in this increment and only exposes bounded matching snippets during search, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, and `filesystem.duplicate`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -141,6 +141,14 @@ Search file names and bounded UTF-8 text content without using Finder:
 ```
 
 Search is case-insensitive by default, skips hidden files unless `--include-hidden` is passed, and avoids unbounded reads with `--max-file-bytes` and `--max-snippet-characters`. Results include file metadata, whether the name matched, matching line numbers, short line snippets, scan counts, and skip counts for unreadable, binary, or oversized files.
+
+Duplicate one regular file through an audited typed action:
+
+```sh
+.build/debug/03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md --allow-risk medium --reason "Keep an original before editing"
+```
+
+`filesystem.duplicate` is a medium-risk mutating file action. It is denied by the default low-risk policy unless `--allow-risk medium` is supplied. The command refuses to overwrite an existing destination, requires the destination parent directory to already exist, verifies that the copied file exists with the same byte size, and appends an audit record for success, policy denial, preflight failure, or verification failure.
 
 ## Product Direction
 

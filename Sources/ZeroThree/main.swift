@@ -94,6 +94,20 @@ struct AuditPolicyDecision: Codable {
     let message: String
 }
 
+struct FileAuditTarget: Codable {
+    let path: String
+    let id: String?
+    let kind: String?
+    let sizeBytes: Int?
+    let exists: Bool?
+}
+
+struct FileOperationVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+}
+
 struct ActionAuditRecord: Codable {
     let id: String
     let timestamp: String
@@ -105,6 +119,9 @@ struct ActionAuditRecord: Codable {
     let element: AuditElementSummary?
     let action: String?
     var policy: AuditPolicyDecision? = nil
+    var fileSource: FileAuditTarget? = nil
+    var fileDestination: FileAuditTarget? = nil
+    var verification: FileOperationVerification? = nil
     let outcome: AuditOutcome
 }
 
@@ -171,6 +188,18 @@ struct FilesystemSearchResult: Codable {
     let skippedBinary: Int
     let skippedTooLarge: Int
     let truncated: Bool
+}
+
+struct FileOperationResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let source: FileRecord
+    let destination: FileRecord
+    let verification: FileOperationVerification
+    let message: String
+    let auditID: String
+    let auditLogPath: String
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -486,6 +515,11 @@ final class ZeroThreeCLI {
                 maxSnippetCharacters: maxSnippetCharacters
             )
             try writeJSON(result)
+        case "duplicate":
+            let destinationPath = try requiredOption("--to")
+            let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
+            let result = try duplicateFile(from: rootURL, to: destinationURL)
+            try writeJSON(result)
         default:
             throw CommandError(description: "unknown files mode '\(mode)'")
         }
@@ -499,6 +533,160 @@ final class ZeroThreeCLI {
             help: stringAttribute(element, kAXHelpAttribute),
             enabled: boolAttribute(element, kAXEnabledAttribute),
             actions: actionNames(element)
+        )
+    }
+
+    private func duplicateFile(from sourceURL: URL, to destinationURL: URL) throws -> FileOperationResult {
+        let action = "filesystem.duplicate"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var sourceTarget = FileAuditTarget(
+            path: sourceURL.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: sourceURL.path)
+        )
+        var destinationTarget = FileAuditTarget(
+            path: destinationURL.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: destinationURL.path)
+        )
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.duplicate",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: sourceTarget,
+                fileDestination: destinationTarget,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let sourceRecord = try fileRecord(for: sourceURL)
+            sourceTarget = fileAuditTarget(record: sourceRecord, exists: true)
+
+            guard sourceRecord.kind == "regularFile" else {
+                let message = "filesystem.duplicate currently supports regular files only"
+                try writeAudit(ok: false, code: "unsupported_source_kind", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard sourceRecord.readable else {
+                let message = "source file is not readable at \(sourceURL.path)"
+                try writeAudit(ok: false, code: "source_unreadable", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+                let message = "destination already exists at \(destinationURL.path)"
+                try writeAudit(ok: false, code: "destination_exists", message: message)
+                throw CommandError(description: message)
+            }
+
+            let parentURL = destinationURL.deletingLastPathComponent()
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                let message = "destination parent directory does not exist at \(parentURL.path)"
+                try writeAudit(ok: false, code: "destination_parent_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+
+            let destinationRecord = try fileRecord(for: destinationURL)
+            destinationTarget = fileAuditTarget(record: destinationRecord, exists: true)
+
+            verification = verifyDuplicate(source: sourceRecord, destination: destinationRecord)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "duplicate verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Duplicated \(sourceURL.path) to \(destinationURL.path)."
+            try writeAudit(ok: true, code: "duplicated", message: message)
+
+            return FileOperationResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                source: sourceRecord,
+                destination: destinationRecord,
+                verification: verification!,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func fileAuditTarget(record: FileRecord, exists: Bool) -> FileAuditTarget {
+        FileAuditTarget(
+            path: record.path,
+            id: record.id,
+            kind: record.kind,
+            sizeBytes: record.sizeBytes,
+            exists: exists
+        )
+    }
+
+    private func verifyDuplicate(source: FileRecord, destination: FileRecord) -> FileOperationVerification {
+        guard destination.kind == "regularFile" else {
+            return FileOperationVerification(
+                ok: false,
+                code: "destination_not_regular_file",
+                message: "destination exists but is not a regular file"
+            )
+        }
+
+        guard source.sizeBytes == destination.sizeBytes else {
+            return FileOperationVerification(
+                ok: false,
+                code: "size_mismatch",
+                message: "destination size does not match source size"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "metadata_matched",
+            message: "destination exists and size matches source"
         )
     }
 
@@ -576,6 +764,17 @@ final class ZeroThreeCLI {
         case kAXPressAction, kAXShowMenuAction:
             return "low"
         case kAXConfirmAction, kAXPickAction:
+            return "medium"
+        default:
+            return "unknown"
+        }
+    }
+
+    private func fileActionRisk(for action: String) -> String {
+        switch action {
+        case "filesystem.stat", "filesystem.list", "filesystem.search":
+            return "low"
+        case "filesystem.duplicate":
             return "medium"
         default:
             return "unknown"
@@ -733,6 +932,23 @@ final class ZeroThreeCLI {
                 { "lineNumber": 4, "text": "bounded matching line snippet" }
               ]
             }
+          },
+          "fileDuplicate": {
+            "command": "03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --allow-risk medium --reason 'Preserve original before editing'",
+            "result": {
+              "ok": true,
+              "action": "filesystem.duplicate",
+              "risk": "medium",
+              "source": { "path": "/Users/example/Documents/Plan.md", "kind": "regularFile" },
+              "destination": { "path": "/Users/example/Documents/Plan copy.md", "kind": "regularFile" },
+              "verification": {
+                "ok": true,
+                "code": "metadata_matched",
+                "message": "destination exists and size matches source"
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
           }
         }
         """)
@@ -751,6 +967,7 @@ final class ZeroThreeCLI {
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
+          03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -761,6 +978,7 @@ final class ZeroThreeCLI {
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
+          - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
         """)
     }
 
@@ -1145,6 +1363,7 @@ final class ZeroThreeCLI {
 
         if kind == "regularFile", readable {
             actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
+            actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
         }
 
         return actions

@@ -20,6 +20,11 @@ The system should keep a structured history of task intent, actions taken, permi
 - Sensitive content is not unnecessarily stored.
 - Logs can support rollback, debugging, and product improvement.
 
+## Implemented Increments
+
+- Accessibility action audit: `03 perform` records requested actions, policy decisions, target element summaries, and outcomes.
+- Filesystem mutation audit: `03 files duplicate` records source and destination metadata, medium-risk policy decisions, verification results, and success or failure outcomes without storing file contents.
+
 ## Relationship To The Product
 
 The audit log is the product's memory of accountability. It should make powerful automation feel inspectable rather than opaque.
