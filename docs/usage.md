@@ -132,7 +132,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/03 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, and `filesystem.duplicate`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.duplicate`, and `filesystem.move`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -149,6 +149,14 @@ Duplicate one regular file through an audited typed action:
 ```
 
 `filesystem.duplicate` is a medium-risk mutating file action. It is denied by the default low-risk policy unless `--allow-risk medium` is supplied. The command refuses to overwrite an existing destination, requires the destination parent directory to already exist, verifies that the copied file exists with the same byte size, and appends an audit record for success, policy denial, preflight failure, or verification failure.
+
+Move or rename one regular file through the same policy and audit path:
+
+```sh
+.build/debug/03 files move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium --reason "Archive completed draft"
+```
+
+`filesystem.move` is also a medium-risk mutating file action. It refuses to overwrite an existing destination, requires both source and destination parent directories to be writable, verifies that the original source path is gone and the destination has the same byte size, and records the policy decision plus verification result in the audit log.
 
 ## Product Direction
 

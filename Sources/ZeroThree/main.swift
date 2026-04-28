@@ -520,6 +520,11 @@ final class ZeroThreeCLI {
             let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
             let result = try duplicateFile(from: rootURL, to: destinationURL)
             try writeJSON(result)
+        case "move":
+            let destinationPath = try requiredOption("--to")
+            let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
+            let result = try moveFile(from: rootURL, to: destinationURL)
+            try writeJSON(result)
         default:
             throw CommandError(description: "unknown files mode '\(mode)'")
         }
@@ -690,6 +695,170 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func moveFile(from sourceURL: URL, to destinationURL: URL) throws -> FileOperationResult {
+        let action = "filesystem.move"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var sourceTarget = FileAuditTarget(
+            path: sourceURL.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: sourceURL.path)
+        )
+        var destinationTarget = FileAuditTarget(
+            path: destinationURL.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: destinationURL.path)
+        )
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.move",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: sourceTarget,
+                fileDestination: destinationTarget,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard sourceURL.path != destinationURL.path else {
+                let message = "source and destination must be different paths"
+                try writeAudit(ok: false, code: "same_source_and_destination", message: message)
+                throw CommandError(description: message)
+            }
+
+            let sourceRecord = try fileRecord(for: sourceURL)
+            sourceTarget = fileAuditTarget(record: sourceRecord, exists: true)
+
+            guard sourceRecord.kind == "regularFile" else {
+                let message = "filesystem.move currently supports regular files only"
+                try writeAudit(ok: false, code: "unsupported_source_kind", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard FileManager.default.isWritableFile(atPath: sourceURL.deletingLastPathComponent().path) else {
+                let message = "source parent directory is not writable at \(sourceURL.deletingLastPathComponent().path)"
+                try writeAudit(ok: false, code: "source_parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+                let message = "destination already exists at \(destinationURL.path)"
+                try writeAudit(ok: false, code: "destination_exists", message: message)
+                throw CommandError(description: message)
+            }
+
+            let parentURL = destinationURL.deletingLastPathComponent()
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                let message = "destination parent directory does not exist at \(parentURL.path)"
+                try writeAudit(ok: false, code: "destination_parent_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard FileManager.default.isWritableFile(atPath: parentURL.path) else {
+                let message = "destination parent directory is not writable at \(parentURL.path)"
+                try writeAudit(ok: false, code: "destination_parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+
+            let destinationRecord = try fileRecord(for: destinationURL)
+            destinationTarget = fileAuditTarget(record: destinationRecord, exists: true)
+
+            verification = verifyMove(source: sourceRecord, destination: destinationRecord)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "move verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Moved \(sourceURL.path) to \(destinationURL.path)."
+            try writeAudit(ok: true, code: "moved", message: message)
+
+            return FileOperationResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                source: sourceRecord,
+                destination: destinationRecord,
+                verification: verification!,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func verifyMove(source: FileRecord, destination: FileRecord) -> FileOperationVerification {
+        guard !FileManager.default.fileExists(atPath: source.path) else {
+            return FileOperationVerification(
+                ok: false,
+                code: "source_still_exists",
+                message: "source path still exists after move"
+            )
+        }
+
+        guard destination.kind == "regularFile" else {
+            return FileOperationVerification(
+                ok: false,
+                code: "destination_not_regular_file",
+                message: "destination exists but is not a regular file"
+            )
+        }
+
+        guard source.sizeBytes == destination.sizeBytes else {
+            return FileOperationVerification(
+                ok: false,
+                code: "size_mismatch",
+                message: "destination size does not match original source size"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "moved_and_metadata_matched",
+            message: "source path is gone, destination exists, and size matches original source"
+        )
+    }
+
     private func appendAuditRecord(_ record: ActionAuditRecord, to url: URL) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -774,7 +943,7 @@ final class ZeroThreeCLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search":
             return "low"
-        case "filesystem.duplicate":
+        case "filesystem.duplicate", "filesystem.move":
             return "medium"
         default:
             return "unknown"
@@ -949,6 +1118,23 @@ final class ZeroThreeCLI {
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
+          },
+          "fileMove": {
+            "command": "03 files move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium --reason 'Organize completed draft'",
+            "result": {
+              "ok": true,
+              "action": "filesystem.move",
+              "risk": "medium",
+              "source": { "path": "/Users/example/Documents/Draft.md", "kind": "regularFile" },
+              "destination": { "path": "/Users/example/Documents/Archive/Draft.md", "kind": "regularFile" },
+              "verification": {
+                "ok": true,
+                "code": "moved_and_metadata_matched",
+                "message": "source path is gone, destination exists, and size matches original source"
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
           }
         }
         """)
@@ -968,6 +1154,7 @@ final class ZeroThreeCLI {
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N]
           03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -979,6 +1166,7 @@ final class ZeroThreeCLI {
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
+          - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
         """)
     }
 
@@ -1364,6 +1552,7 @@ final class ZeroThreeCLI {
         if kind == "regularFile", readable {
             actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
         }
 
         return actions

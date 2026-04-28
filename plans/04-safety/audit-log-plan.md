@@ -23,7 +23,7 @@ The system should keep a structured history of task intent, actions taken, permi
 ## Implemented Increments
 
 - Accessibility action audit: `03 perform` records requested actions, policy decisions, target element summaries, and outcomes.
-- Filesystem mutation audit: `03 files duplicate` records source and destination metadata, medium-risk policy decisions, verification results, and success or failure outcomes without storing file contents.
+- Filesystem mutation audit: `03 files duplicate` and `03 files move` record source and destination metadata, medium-risk policy decisions, verification results, and success or failure outcomes without storing file contents.
 
 ## Relationship To The Product
 

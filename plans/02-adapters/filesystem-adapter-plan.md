@@ -25,6 +25,7 @@ The system should understand relevant files and folders, search local content an
 - Read-only metadata inspection: `03 files stat` and `03 files list` expose structured file and folder state with typed available actions.
 - Bounded local search: `03 files search` searches file names and UTF-8 text line snippets under a path, skips hidden files by default, reports scan/skip counts, and keeps reads bounded by file-size and snippet limits.
 - Audited file duplication: `03 files duplicate` copies one regular file to a new path through a medium-risk typed action, refuses overwrites, verifies destination metadata, and records policy decisions and outcomes in the audit log.
+- Audited file move/rename: `03 files move` moves one regular file to a new path through a medium-risk typed action, refuses overwrites, verifies source removal and destination metadata, and records policy decisions and outcomes in the audit log.
 
 ## Relationship To The Product
 
