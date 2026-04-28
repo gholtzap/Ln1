@@ -23,6 +23,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.move"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.move"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.createDirectory"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.rollbackMove"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.rollbackMove"]?["mutates"] as? Bool, true)
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {
@@ -534,6 +536,144 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(sourceTarget["exists"] as? Bool, true)
         XCTAssertEqual(destinationTarget["path"] as? String, destination.path)
         XCTAssertEqual(destinationTarget["exists"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
+    func testFilesRollbackRestoresAuditedMoveWithVerification() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-rollback-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("draft.txt")
+        let destination = directory.appendingPathComponent("archive.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "restore me".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let move = try runZeroThree([
+            "files",
+            "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "move before rollback",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(move.status, 0, move.stderr)
+        let moveObject = try decodeJSONObject(move.stdout)
+        let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
+
+        let rollback = try runZeroThree([
+            "files",
+            "rollback",
+            "--audit-id", moveAuditID,
+            "--allow-risk", "medium",
+            "--reason", "undo move",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(rollback.status, 0, rollback.stderr)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "restore me")
+
+        let object = try decodeJSONObject(rollback.stdout)
+        let restoredSource = try XCTUnwrap(object["restoredSource"] as? [String: Any])
+        let previousDestination = try XCTUnwrap(object["previousDestination"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "filesystem.rollbackMove")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["rollbackOfAuditID"] as? String, moveAuditID)
+        XCTAssertEqual(restoredSource["path"] as? String, source.path)
+        XCTAssertEqual(previousDestination["path"] as? String, destination.path)
+        XCTAssertEqual(previousDestination["exists"] as? Bool, false)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "move_restored")
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.rollback",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.rollback")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.rollbackMove")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "undo move")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "rolled_back_move")
+    }
+
+    func testFilesRollbackPolicyDenialIsAuditedAndDoesNotRestoreMove() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-rollback-policy-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("draft.txt")
+        let destination = directory.appendingPathComponent("archive.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "stay archived".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let move = try runZeroThree([
+            "files",
+            "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "move before denied rollback",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(move.status, 0, move.stderr)
+        let moveObject = try decodeJSONObject(move.stdout)
+        let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
+
+        let rejected = try runZeroThree([
+            "files",
+            "rollback",
+            "--audit-id", moveAuditID,
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.rollback",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.rollback")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.rollbackMove")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
         XCTAssertEqual(outcome["ok"] as? Bool, false)
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }

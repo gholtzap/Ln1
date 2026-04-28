@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, and `files mkdir` use these risk levels when evaluating `--allow-risk`.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, and `files rollback` use these risk levels when evaluating `--allow-risk`.
 
 ## Inspect Running Apps
 
@@ -126,7 +126,7 @@ Filter audit records before applying the limit:
 .build/debug/03 audit --command files.move --code moved --limit 10
 ```
 
-`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, or `files.mkdir`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, or `created_directory`.
+`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, or `files.rollback`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, or `rolled_back_move`.
 
 ## Inspect Filesystem State
 
@@ -148,7 +148,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/03 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.duplicate`, `filesystem.move`, and `filesystem.createDirectory`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -198,6 +198,14 @@ Move or rename one regular file through the same policy and audit path:
 ```
 
 `filesystem.move` is also a medium-risk mutating file action. It refuses to overwrite an existing destination, requires both source and destination parent directories to be writable, verifies that the original source path is gone and the destination has the same byte size, and records the policy decision plus verification result in the audit log.
+
+Rollback a successful audited file move:
+
+```sh
+.build/debug/03 files rollback --audit-id AUDIT_ID --allow-risk medium --reason "Undo mistaken move"
+```
+
+`filesystem.rollbackMove` is a medium-risk mutating file action. It reads the requested audit record, only supports successful `files.move` records, verifies that the current moved file still matches the recorded destination metadata, refuses to overwrite the original source path, moves the file back, verifies that the original source path is restored and the moved destination is gone, and records the rollback policy decision plus verification result in the audit log.
 
 Create one directory for organization workflows:
 

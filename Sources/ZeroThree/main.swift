@@ -269,6 +269,19 @@ struct DirectoryOperationResult: Codable {
     let auditLogPath: String
 }
 
+struct FileRollbackResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let rollbackOfAuditID: String
+    let restoredSource: FileRecord
+    let previousDestination: FileAuditTarget
+    let verification: FileOperationVerification
+    let message: String
+    let auditID: String
+    let auditLogPath: String
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
@@ -559,12 +572,15 @@ final class ZeroThreeCLI {
 
     private func files() throws {
         let mode = arguments.dropFirst().first ?? "list"
-        let path = try requiredOption("--path")
-        let rootURL = URL(fileURLWithPath: expandedPath(path)).standardizedFileURL
+
+        func requestedFileURL() throws -> URL {
+            let path = try requiredOption("--path")
+            return URL(fileURLWithPath: expandedPath(path)).standardizedFileURL
+        }
 
         switch mode {
         case "stat":
-            let record = try fileRecord(for: rootURL)
+            let record = try fileRecord(for: requestedFileURL())
             try writeJSON(FilesystemState(
                 generatedAt: ISO8601DateFormatter().string(from: Date()),
                 platform: "macOS",
@@ -579,7 +595,7 @@ final class ZeroThreeCLI {
             let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
             let includeHidden = flag("--include-hidden")
             let state = try filesystemState(
-                rootURL: rootURL,
+                rootURL: requestedFileURL(),
                 maxDepth: maxDepth,
                 limit: limit,
                 includeHidden: includeHidden
@@ -598,7 +614,7 @@ final class ZeroThreeCLI {
             let maxSnippetCharacters = max(20, option("--max-snippet-characters").flatMap(Int.init) ?? 240)
             let maxMatchesPerFile = max(1, option("--max-matches-per-file").flatMap(Int.init) ?? 20)
             let result = try filesystemSearchResult(
-                rootURL: rootURL,
+                rootURL: requestedFileURL(),
                 query: query,
                 caseSensitive: caseSensitive,
                 maxDepth: maxDepth,
@@ -614,7 +630,7 @@ final class ZeroThreeCLI {
             let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
             let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
             let result = try waitForFileState(
-                at: rootURL,
+                at: requestedFileURL(),
                 expectedExists: expectedExists,
                 timeoutMilliseconds: timeoutMilliseconds,
                 intervalMilliseconds: intervalMilliseconds
@@ -624,7 +640,7 @@ final class ZeroThreeCLI {
             let algorithm = option("--algorithm") ?? "sha256"
             let maxFileBytes = max(0, option("--max-file-bytes").flatMap(Int.init) ?? 104_857_600)
             let result = try fileChecksum(
-                for: rootURL,
+                for: requestedFileURL(),
                 algorithm: algorithm,
                 maxFileBytes: maxFileBytes
             )
@@ -635,7 +651,7 @@ final class ZeroThreeCLI {
             let algorithm = option("--algorithm") ?? "sha256"
             let maxFileBytes = max(0, option("--max-file-bytes").flatMap(Int.init) ?? 104_857_600)
             let result = try compareFiles(
-                leftURL: rootURL,
+                leftURL: requestedFileURL(),
                 rightURL: rightURL,
                 algorithm: algorithm,
                 maxFileBytes: maxFileBytes
@@ -644,15 +660,19 @@ final class ZeroThreeCLI {
         case "duplicate":
             let destinationPath = try requiredOption("--to")
             let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
-            let result = try duplicateFile(from: rootURL, to: destinationURL)
+            let result = try duplicateFile(from: requestedFileURL(), to: destinationURL)
             try writeJSON(result)
         case "move":
             let destinationPath = try requiredOption("--to")
             let destinationURL = URL(fileURLWithPath: expandedPath(destinationPath)).standardizedFileURL
-            let result = try moveFile(from: rootURL, to: destinationURL)
+            let result = try moveFile(from: requestedFileURL(), to: destinationURL)
             try writeJSON(result)
         case "mkdir":
-            let result = try createDirectory(at: rootURL)
+            let result = try createDirectory(at: requestedFileURL())
+            try writeJSON(result)
+        case "rollback":
+            let auditRecordID = try requiredOption("--audit-id")
+            let result = try rollbackFileMove(auditRecordID: auditRecordID)
             try writeJSON(result)
         default:
             throw CommandError(description: "unknown files mode '\(mode)'")
@@ -1107,6 +1127,220 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func rollbackFileMove(auditRecordID: String) throws -> FileRollbackResult {
+        let action = "filesystem.rollbackMove"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var rollbackSourceTarget: FileAuditTarget?
+        var restoreDestinationTarget: FileAuditTarget?
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.rollback",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: rollbackSourceTarget,
+                fileDestination: restoreDestinationTarget,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            let records = try readAuditRecords(from: auditURL, limit: Int.max)
+            guard let originalRecord = records.first(where: { $0.id == auditRecordID }) else {
+                let message = "no audit record found with id \(auditRecordID)"
+                try writeAudit(ok: false, code: "rollback_record_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard originalRecord.command == "files.move",
+                  originalRecord.outcome.ok,
+                  originalRecord.outcome.code == "moved" else {
+                let message = "audit record \(auditRecordID) is not a successful files.move record"
+                try writeAudit(ok: false, code: "unsupported_rollback_record", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard let originalSource = originalRecord.fileSource,
+                  let movedDestination = originalRecord.fileDestination else {
+                let message = "audit record \(auditRecordID) does not contain move source and destination metadata"
+                try writeAudit(ok: false, code: "rollback_metadata_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let rollbackSourceURL = URL(fileURLWithPath: movedDestination.path).standardizedFileURL
+            let restoreDestinationURL = URL(fileURLWithPath: originalSource.path).standardizedFileURL
+            rollbackSourceTarget = FileAuditTarget(
+                path: rollbackSourceURL.path,
+                id: nil,
+                kind: nil,
+                sizeBytes: nil,
+                exists: FileManager.default.fileExists(atPath: rollbackSourceURL.path)
+            )
+            restoreDestinationTarget = FileAuditTarget(
+                path: restoreDestinationURL.path,
+                id: nil,
+                kind: nil,
+                sizeBytes: nil,
+                exists: FileManager.default.fileExists(atPath: restoreDestinationURL.path)
+            )
+
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let rollbackSourceRecord = try fileRecord(for: rollbackSourceURL)
+            rollbackSourceTarget = fileAuditTarget(record: rollbackSourceRecord, exists: true)
+
+            guard fileRecord(rollbackSourceRecord, matches: movedDestination) else {
+                let message = "current moved file does not match audit metadata at \(rollbackSourceURL.path)"
+                try writeAudit(ok: false, code: "rollback_source_mismatch", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard !FileManager.default.fileExists(atPath: restoreDestinationURL.path) else {
+                let message = "restore destination already exists at \(restoreDestinationURL.path)"
+                try writeAudit(ok: false, code: "restore_destination_exists", message: message)
+                throw CommandError(description: message)
+            }
+
+            let restoreParentURL = restoreDestinationURL.deletingLastPathComponent()
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: restoreParentURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                let message = "restore parent directory does not exist at \(restoreParentURL.path)"
+                try writeAudit(ok: false, code: "restore_parent_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard FileManager.default.isWritableFile(atPath: restoreParentURL.path) else {
+                let message = "restore parent directory is not writable at \(restoreParentURL.path)"
+                try writeAudit(ok: false, code: "restore_parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard FileManager.default.isWritableFile(atPath: rollbackSourceURL.deletingLastPathComponent().path) else {
+                let message = "moved file parent directory is not writable at \(rollbackSourceURL.deletingLastPathComponent().path)"
+                try writeAudit(ok: false, code: "rollback_source_parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            try FileManager.default.moveItem(at: rollbackSourceURL, to: restoreDestinationURL)
+
+            let restoredRecord = try fileRecord(for: restoreDestinationURL)
+            restoreDestinationTarget = fileAuditTarget(record: restoredRecord, exists: true)
+            rollbackSourceTarget = FileAuditTarget(
+                path: rollbackSourceURL.path,
+                id: movedDestination.id,
+                kind: movedDestination.kind,
+                sizeBytes: movedDestination.sizeBytes,
+                exists: FileManager.default.fileExists(atPath: rollbackSourceURL.path)
+            )
+
+            verification = verifyMoveRollback(
+                restoredSource: restoredRecord,
+                originalSource: originalSource,
+                movedDestination: movedDestination
+            )
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "move rollback verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Rolled back move \(auditRecordID), restoring \(restoreDestinationURL.path)."
+            try writeAudit(ok: true, code: "rolled_back_move", message: message)
+
+            return FileRollbackResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                rollbackOfAuditID: auditRecordID,
+                restoredSource: restoredRecord,
+                previousDestination: rollbackSourceTarget!,
+                verification: verification!,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func fileRecord(_ record: FileRecord, matches target: FileAuditTarget) -> Bool {
+        if let kind = target.kind, record.kind != kind {
+            return false
+        }
+        if let sizeBytes = target.sizeBytes, record.sizeBytes != sizeBytes {
+            return false
+        }
+        if let id = target.id, record.id != id {
+            return false
+        }
+        return true
+    }
+
+    private func verifyMoveRollback(
+        restoredSource: FileRecord,
+        originalSource: FileAuditTarget,
+        movedDestination: FileAuditTarget
+    ) -> FileOperationVerification {
+        guard !FileManager.default.fileExists(atPath: movedDestination.path) else {
+            return FileOperationVerification(
+                ok: false,
+                code: "moved_destination_still_exists",
+                message: "moved destination still exists after rollback"
+            )
+        }
+
+        guard restoredSource.path == originalSource.path else {
+            return FileOperationVerification(
+                ok: false,
+                code: "restored_path_mismatch",
+                message: "restored file path does not match original source path"
+            )
+        }
+
+        guard fileRecord(restoredSource, matches: originalSource) else {
+            return FileOperationVerification(
+                ok: false,
+                code: "restored_metadata_mismatch",
+                message: "restored file does not match original source metadata"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "move_restored",
+            message: "original source path is restored and moved destination is gone"
+        )
+    }
+
     private func waitForFileState(
         at url: URL,
         expectedExists: Bool,
@@ -1310,7 +1544,7 @@ final class ZeroThreeCLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.checksum", "filesystem.compare":
             return "low"
-        case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory":
+        case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
         default:
             return "unknown"
@@ -1331,7 +1565,8 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.compare", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
-            PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true)
+            PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "filesystem.rollbackMove", domain: "filesystem", risk: "medium", mutates: true)
         ]
     }
 
@@ -1576,6 +1811,24 @@ final class ZeroThreeCLI {
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
+          },
+          "fileRollback": {
+            "command": "03 files rollback --audit-id UUID --allow-risk medium --reason 'Undo mistaken move'",
+            "result": {
+              "ok": true,
+              "action": "filesystem.rollbackMove",
+              "risk": "medium",
+              "rollbackOfAuditID": "UUID",
+              "restoredSource": { "path": "/Users/example/Documents/Draft.md", "kind": "regularFile" },
+              "previousDestination": { "path": "/Users/example/Documents/Archive/Draft.md", "exists": false },
+              "verification": {
+                "ok": true,
+                "code": "move_restored",
+                "message": "original source path is restored and moved destination is gone"
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
           }
         }
         """)
@@ -1601,6 +1854,7 @@ final class ZeroThreeCLI {
           03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          03 files rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -1619,6 +1873,7 @@ final class ZeroThreeCLI {
           - `files duplicate` copies one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.
+          - `files rollback` restores a successful audited file move after validating current filesystem metadata.
         """)
     }
 
@@ -2023,6 +2278,7 @@ final class ZeroThreeCLI {
             actions.append(FileAction(name: "filesystem.compare", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.rollbackMove", risk: "medium", mutates: true))
         }
 
         return actions

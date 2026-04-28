@@ -30,6 +30,7 @@ The system should understand relevant files and folders, search local content an
 - Audited file duplication: `03 files duplicate` copies one regular file to a new path through a medium-risk typed action, refuses overwrites, verifies destination metadata, and records policy decisions and outcomes in the audit log.
 - Audited file move/rename: `03 files move` moves one regular file to a new path through a medium-risk typed action, refuses overwrites, verifies source removal and destination metadata, and records policy decisions and outcomes in the audit log.
 - Audited directory creation: `03 files mkdir` creates one directory through a medium-risk typed action, refuses existing paths, verifies creation, and records policy decisions and outcomes in the audit log.
+- Audited move rollback: `03 files rollback --audit-id` restores a successful audited `files.move` record after policy approval, metadata validation, overwrite prevention, verification, and audit logging.
 
 ## Relationship To The Product
 

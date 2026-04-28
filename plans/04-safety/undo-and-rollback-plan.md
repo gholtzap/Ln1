@@ -20,6 +20,10 @@ The system should understand which actions are reversible, which require backups
 - The assistant can preserve enough context to repair mistakes.
 - The system communicates clearly when rollback is unavailable.
 
+## Implemented Increments
+
+- Audited file move rollback: `03 files rollback --audit-id` restores a successful audited `files.move` operation after policy approval, metadata validation, overwrite prevention, and verification that the original path is restored.
+
 ## Relationship To The Product
 
 Rollback makes delegation safer. It should be considered part of action planning, not only error handling.
