@@ -225,6 +225,64 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(object["contents"])
     }
 
+    func testFilesCompareReportsMatchingFilesBySizeAndDigest() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-compare-match-\(UUID().uuidString)")
+        let left = directory.appendingPathComponent("left.txt")
+        let right = directory.appendingPathComponent("right.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "same".write(to: left, atomically: true, encoding: .utf8)
+        try "same".write(to: right, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "compare",
+            "--path", left.path,
+            "--to", right.path,
+            "--max-file-bytes", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let leftObject = try XCTUnwrap(object["left"] as? [String: Any])
+        let rightObject = try XCTUnwrap(object["right"] as? [String: Any])
+
+        XCTAssertEqual(leftObject["path"] as? String, left.path)
+        XCTAssertEqual(rightObject["path"] as? String, right.path)
+        XCTAssertEqual(object["algorithm"] as? String, "sha256")
+        XCTAssertEqual(object["sameSize"] as? Bool, true)
+        XCTAssertEqual(object["sameDigest"] as? Bool, true)
+        XCTAssertEqual(object["matched"] as? Bool, true)
+        XCTAssertEqual(object["leftDigest"] as? String, object["rightDigest"] as? String)
+    }
+
+    func testFilesCompareReportsDifferentFilesByDigest() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-compare-different-\(UUID().uuidString)")
+        let left = directory.appendingPathComponent("left.txt")
+        let right = directory.appendingPathComponent("right.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "left".write(to: left, atomically: true, encoding: .utf8)
+        try "right".write(to: right, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "compare",
+            "--path", left.path,
+            "--to", right.path,
+            "--max-file-bytes", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["sameDigest"] as? Bool, false)
+        XCTAssertEqual(object["matched"] as? Bool, false)
+        XCTAssertNotEqual(object["leftDigest"] as? String, object["rightDigest"] as? String)
+    }
+
     func testFilesDuplicateCopiesRegularFileWithAuditAndVerification() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-duplicate-\(UUID().uuidString)")

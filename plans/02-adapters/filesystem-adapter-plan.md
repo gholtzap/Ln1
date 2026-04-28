@@ -26,6 +26,7 @@ The system should understand relevant files and folders, search local content an
 - Bounded local search: `03 files search` searches file names and UTF-8 text line snippets under a path, skips hidden files by default, reports scan/skip counts, and keeps reads bounded by file-size and snippet limits.
 - Bounded file-state waiting: `03 files wait` waits for a path to appear or disappear and returns structured evidence and metadata when available.
 - Bounded file checksum: `03 files checksum` computes a SHA-256 digest for one regular file within a caller-provided byte limit without returning file contents.
+- Bounded file comparison: `03 files compare` compares two regular files by size and SHA-256 digest within a caller-provided byte limit.
 - Audited file duplication: `03 files duplicate` copies one regular file to a new path through a medium-risk typed action, refuses overwrites, verifies destination metadata, and records policy decisions and outcomes in the audit log.
 - Audited file move/rename: `03 files move` moves one regular file to a new path through a medium-risk typed action, refuses overwrites, verifies source removal and destination metadata, and records policy decisions and outcomes in the audit log.
 - Audited directory creation: `03 files mkdir` creates one directory through a medium-risk typed action, refuses existing paths, verifies creation, and records policy decisions and outcomes in the audit log.

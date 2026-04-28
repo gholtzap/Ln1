@@ -175,6 +175,14 @@ Compute a bounded content digest without returning file contents:
 
 `filesystem.checksum` currently supports SHA-256 for regular files. It is a low-risk read action, but still bounded by `--max-file-bytes` so large files are not read accidentally. The response includes file metadata, the algorithm, and the hex digest.
 
+Compare two regular files by size and digest:
+
+```sh
+.build/debug/03 files compare --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md --algorithm sha256
+```
+
+`filesystem.compare` is a low-risk read action that computes bounded SHA-256 digests for both files and reports `sameSize`, `sameDigest`, and `matched`. This is useful after copy or generation workflows where the assistant needs evidence that two files are identical without reading contents into the prompt.
+
 Duplicate one regular file through an audited typed action:
 
 ```sh
