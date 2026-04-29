@@ -52,6 +52,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.readDOM"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readDOM"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readDOM"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.fillFormField"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.fillFormField"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.fillFormField"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -277,6 +280,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
             $0["name"] as? String == "browser.readDOM"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.fillFormField"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
         })
 
         let tabResult = try runZeroThree([
@@ -602,6 +610,153 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "read_dom")
+    }
+
+    func testBrowserFillSetsFormFieldWithPolicyVerificationAndRedactedAudit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-fill-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let fillPayload: [String: Any] = [
+            "ok": true,
+            "code": "filled",
+            "message": "The matched form field was filled and verified.",
+            "selector": "input[name='q']",
+            "tagName": "input",
+            "inputType": "search",
+            "disabled": false,
+            "readOnly": false,
+            "valueLength": 14,
+            "matched": true
+        ]
+        let fillData = try JSONSerialization.data(withJSONObject: fillPayload, options: [.sortedKeys])
+        let fillJSONString = String(decoding: fillData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": fillJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Search Page",
+            "url": "https://example.com/search",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "fill",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='q']",
+            "--text", "private search",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "fill",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='q']",
+            "--text", "private search",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "prepare search query"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.fillFormField")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["selector"] as? String, "input[name='q']")
+        XCTAssertEqual(object["textLength"] as? Int, 14)
+        XCTAssertEqual(object["textDigest"] as? String, "88fe3ede4a30aa7bf22d1e028e44abff6d94513d5a9f24f415377f0e4b6b6196")
+        XCTAssertEqual(object["targetTagName"] as? String, "input")
+        XCTAssertEqual(object["targetInputType"] as? String, "search")
+        XCTAssertEqual(object["resultingValueLength"] as? Int, 14)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "value_matched")
+        XCTAssertNil(object["textValue"])
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.fill",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.fillFormField")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["formSelector"] as? String, "input[name='q']")
+        XCTAssertEqual(deniedBrowserTab["formTextLength"] as? Int, 14)
+        XCTAssertEqual(deniedBrowserTab["formTextDigest"] as? String, "88fe3ede4a30aa7bf22d1e028e44abff6d94513d5a9f24f415377f0e4b6b6196")
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.fill",
+            "--code", "filled",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.fill")
+        XCTAssertEqual(entry["action"] as? String, "browser.fillFormField")
+        XCTAssertEqual(entry["reason"] as? String, "prepare search query")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Search Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/search")
+        XCTAssertEqual(browserTab["formSelector"] as? String, "input[name='q']")
+        XCTAssertEqual(browserTab["formTextLength"] as? Int, 14)
+        XCTAssertEqual(browserTab["formTextDigest"] as? String, "88fe3ede4a30aa7bf22d1e028e44abff6d94513d5a9f24f415377f0e4b6b6196")
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "value_matched")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "filled")
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {

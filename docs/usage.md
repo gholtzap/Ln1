@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection actions are listed as low-risk, non-mutating reads.
 
 ## Inspect Running Apps
 
@@ -345,7 +345,15 @@ Read bounded structured page state from the DOM:
 
 `browser.readDOM` is also a medium-risk read action because labels, links, visible text, and form metadata can expose private web-app state. The result includes bounded DOM elements with IDs, parent IDs, depth, tag names, inferred roles, bounded text snippets, selected safe attributes, links, and form metadata such as input type, checked/disabled state, and value length. It intentionally does not return form values and suppresses value metadata for password and hidden inputs. The audit record stores only tab metadata, DOM element count, DOM digest, policy decision, reason, and outcome; it does not store the DOM payload.
 
-This adapter is now using browser-native DevTools metadata, page text, and structured DOM snapshots. Form actions and navigation verification still need follow-on work through the tab's DevTools WebSocket.
+Fill one browser form field through the tab's DevTools WebSocket:
+
+```sh
+.build/debug/03 browser fill --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query" --allow-risk medium --reason "Prepare search"
+```
+
+`browser.fillFormField` is a medium-risk mutating action because it changes page state and may enter private text into a web app. The command targets one CSS selector, refuses disabled, read-only, and unsupported elements, dispatches `input` and `change` events, and verifies that the field contains text with the requested length. The result includes the selector, text length, SHA-256 digest, target metadata, verification, and audit ID. The audit record stores tab metadata, selector, text length, digest, policy decision, reason, verification, and outcome without storing the entered text.
+
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, and typed form filling. Navigation verification still needs follow-on work through the tab's DevTools WebSocket.
 
 ## Product Direction
 

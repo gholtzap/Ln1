@@ -246,6 +246,9 @@ struct BrowserAuditSummary: Codable {
     let textDigest: String?
     let domNodeCount: Int?
     let domDigest: String?
+    var formSelector: String? = nil
+    var formTextLength: Int? = nil
+    var formTextDigest: String? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -304,6 +307,40 @@ struct BrowserDOMResult: Codable {
     let maxElements: Int
     let maxTextCharacters: Int
     let digest: String
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserFormFillPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let readOnly: Bool?
+    let valueLength: Int?
+    let matched: Bool
+}
+
+struct BrowserFormFillResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let selector: String
+    let textLength: Int
+    let textDigest: String
+    let verification: FileOperationVerification
+    let targetTagName: String?
+    let targetInputType: String?
+    let targetDisabled: Bool?
+    let targetReadOnly: Bool?
+    let resultingValueLength: Int?
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -1104,6 +1141,11 @@ final class ZeroThreeCLI {
             let maxElements = max(0, option("--max-elements").flatMap(Int.init) ?? 200)
             let maxTextCharacters = max(0, option("--max-text-characters").flatMap(Int.init) ?? 120)
             try writeJSON(browserDOM(id: id, maxElements: maxElements, maxTextCharacters: maxTextCharacters))
+        case "fill":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let text = try requiredOption("--text")
+            try writeJSON(browserFill(id: id, selector: selector, text: text))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -2233,6 +2275,11 @@ final class ZeroThreeCLI {
                     name: "browser.readDOM",
                     risk: browserActionRisk(for: "browser.readDOM"),
                     mutates: false
+                ),
+                BrowserAction(
+                    name: "browser.fillFormField",
+                    risk: browserActionRisk(for: "browser.fillFormField"),
+                    mutates: true
                 )
             ]
         )
@@ -2492,6 +2539,139 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func browserFill(id: String, selector: String, text: String) throws -> BrowserFormFillResult {
+        let action = "browser.fillFormField"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let textDigest = sha256Digest(text)
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            formSelector: selector,
+            formTextLength: text.count,
+            formTextDigest: textDigest
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String, verification: FileOperationVerification? = nil) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.fill",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                formSelector: selector,
+                formTextLength: text.count,
+                formTextDigest: textDigest
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let payload = try fillBrowserFormField(
+                selector: selector,
+                text: text,
+                at: webSocketURL
+            )
+            let verification = FileOperationVerification(
+                ok: payload.ok && payload.matched && payload.valueLength == text.count,
+                code: payload.ok && payload.matched && payload.valueLength == text.count ? "value_matched" : payload.code,
+                message: payload.ok && payload.matched && payload.valueLength == text.count
+                    ? "browser form field contains text with the requested length"
+                    : payload.message
+            )
+
+            guard verification.ok else {
+                try writeAudit(ok: false, code: payload.code, message: payload.message, verification: verification)
+                throw CommandError(description: payload.message)
+            }
+
+            let message = "Filled browser form field matching selector '\(selector)' in tab \(id)."
+            try writeAudit(ok: true, code: "filled", message: message, verification: verification)
+
+            return BrowserFormFillResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                selector: selector,
+                textLength: text.count,
+                textDigest: textDigest,
+                verification: verification,
+                targetTagName: payload.tagName,
+                targetInputType: payload.inputType,
+                targetDisabled: payload.disabled,
+                targetReadOnly: payload.readOnly,
+                resultingValueLength: payload.valueLength,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
     private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
         let expression = """
         (() => {
@@ -2637,6 +2817,100 @@ final class ZeroThreeCLI {
             return try JSONDecoder().decode(BrowserDOMSnapshotPayload.self, from: data)
         } catch {
             throw CommandError(description: "Chrome DevTools DOM snapshot was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
+    private func fillBrowserFormField(
+        selector: String,
+        text: String,
+        at webSocketURL: URL
+    ) throws -> BrowserFormFillPayload {
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const text = \(try javascriptStringLiteral(text));
+          const element = document.querySelector(selector);
+
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            tagName: extra.tagName || null,
+            inputType: extra.inputType || null,
+            disabled: extra.disabled ?? null,
+            readOnly: extra.readOnly ?? null,
+            valueLength: extra.valueLength ?? null,
+            matched: extra.matched || false
+          });
+
+          if (!element) {
+            return result(false, "element_missing", `No element matches selector '${selector}'.`);
+          }
+
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const inputType = tagName === "input" ? (element.getAttribute("type") || "text").toLowerCase() : null;
+          const disabled = Boolean(element.disabled);
+          const readOnly = Boolean(element.readOnly);
+          const metadata = { tagName, inputType, disabled, readOnly };
+
+          if (disabled) {
+            return result(false, "element_disabled", "The matched form field is disabled.", metadata);
+          }
+          if (readOnly) {
+            return result(false, "element_readonly", "The matched form field is read-only.", metadata);
+          }
+          if (tagName === "input" && ["password", "hidden", "file"].includes(inputType)) {
+            return result(false, "unsupported_sensitive_field", "The matched input type is not supported by browser fill.", metadata);
+          }
+
+          const setValue = "value" in element;
+          const setContentEditable = !setValue && element.isContentEditable;
+          if (!setValue && !setContentEditable) {
+            return result(false, "unsupported_element", "The matched element does not expose a writable value.", metadata);
+          }
+
+          if (setValue) {
+            element.focus?.();
+            element.value = text;
+          } else {
+            element.focus?.();
+            element.innerText = text;
+          }
+
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+
+          const currentValue = setValue ? String(element.value || "") : String(element.innerText || "");
+          return result(true, "filled", "The matched form field was filled and verified.", {
+            ...metadata,
+            valueLength: currentValue.length,
+            matched: currentValue === text
+          });
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a form fill result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools form fill result was not valid UTF-8")
+        }
+        do {
+            return try JSONDecoder().decode(BrowserFormFillPayload.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools form fill result was not valid JSON: \(error.localizedDescription)")
         }
     }
 
@@ -3057,6 +3331,14 @@ final class ZeroThreeCLI {
         SHA256.hash(data: Data(string.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    private func javascriptStringLiteral(_ string: String) throws -> String {
+        let data = try JSONEncoder().encode(string)
+        guard let literal = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "failed to encode JavaScript string literal")
+        }
+        return literal
+    }
+
     private func appendAuditRecord(_ record: ActionAuditRecord, to url: URL) throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -3317,7 +3599,7 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab":
             return "low"
-        case "browser.readText", "browser.readDOM":
+        case "browser.readText", "browser.readDOM", "browser.fillFormField":
             return "medium"
         default:
             return "unknown"
@@ -3380,6 +3662,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -3628,7 +3911,8 @@ final class ZeroThreeCLI {
                   "actions": [
                     { "name": "browser.inspectTab", "risk": "low", "mutates": false },
                     { "name": "browser.readText", "risk": "medium", "mutates": false },
-                    { "name": "browser.readDOM", "risk": "medium", "mutates": false }
+                    { "name": "browser.readDOM", "risk": "medium", "mutates": false },
+                    { "name": "browser.fillFormField", "risk": "medium", "mutates": true }
                   ]
                 }
               ]
@@ -3683,6 +3967,26 @@ final class ZeroThreeCLI {
                   "valueLength": 6
                 }
               ]
+            }
+          },
+          "browserFill": {
+            "command": "03 browser fill --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --text 'bounded text' --allow-risk medium",
+            "result": {
+              "action": "browser.fillFormField",
+              "risk": "medium",
+              "selector": "input[name=q]",
+              "textLength": 12,
+              "textDigest": "hex encoded SHA-256 digest",
+              "verification": {
+                "ok": true,
+                "code": "value_matched",
+                "message": "browser form field contains text with the requested length"
+              },
+              "targetTagName": "input",
+              "targetInputType": "text",
+              "resultingValueLength": 12,
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
           },
           "files": {
@@ -3881,6 +4185,7 @@ final class ZeroThreeCLI {
           03 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -3910,6 +4215,7 @@ final class ZeroThreeCLI {
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
+          - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
         """)
     }
 
