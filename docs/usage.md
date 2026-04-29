@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect Running Apps
 
@@ -204,7 +204,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/03 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.plan`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -222,6 +222,14 @@ Wait for a path to appear or disappear with bounded polling:
 ```
 
 `files wait` returns structured evidence about whether the expected existence state matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`. This is useful for downloads, generated files, and verification loops without relying on Finder state.
+
+Watch a file or directory for metadata changes:
+
+```sh
+.build/debug/03 files watch --path ~/Downloads --depth 1 --timeout-ms 30000 --interval-ms 250
+```
+
+`files watch` is a low-risk read action that snapshots file metadata, waits for the first created, deleted, or modified event under the path, then returns normalized event records with previous/current `FileRecord` metadata. It uses `--depth`, `--limit`, and `--include-hidden` to keep directory watches bounded.
 
 Compute a bounded content digest without returning file contents:
 

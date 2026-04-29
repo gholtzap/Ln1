@@ -23,6 +23,7 @@ The system should define expected outcomes for actions, observe whether those ou
 ## Implemented Increments
 
 - Filesystem existence verification: `03 files wait` provides bounded, typed evidence that a path appeared or disappeared before a workflow proceeds.
+- Filesystem change verification: `03 files watch` provides bounded, typed evidence that file metadata changed, including normalized created, deleted, and modified events.
 - Filesystem content identity verification: `03 files checksum` provides a bounded SHA-256 digest for comparing regular files without storing their contents.
 - Filesystem equality verification: `03 files compare` reports whether two regular files match by size and SHA-256 digest without exposing file contents.
 - Filesystem move rollback verification: `03 files rollback --audit-id` validates audit metadata before restoring a moved file and verifies that the original path exists while the moved destination is gone afterward.

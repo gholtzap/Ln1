@@ -24,6 +24,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.watch"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["filesystem.watch"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.plan"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.plan"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.move"]?["risk"] as? String, "medium")
@@ -958,6 +960,74 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["expectedExists"] as? Bool, false)
         XCTAssertEqual(object["matched"] as? Bool, true)
         XCTAssertNil(object["file"])
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
+    }
+
+    func testFilesWatchReturnsCreatedFileEventWithMetadata() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-watch-created-\(UUID().uuidString)")
+        let created = directory.appendingPathComponent("created.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+            try? "created".write(to: created, atomically: true, encoding: .utf8)
+        }
+
+        let result = try runZeroThree([
+            "files",
+            "watch",
+            "--path", directory.path,
+            "--depth", "1",
+            "--timeout-ms", "3000",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let root = try XCTUnwrap(object["root"] as? [String: Any])
+        let rootActions = try XCTUnwrap(root["actions"] as? [[String: Any]])
+        let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+        let event = try XCTUnwrap(events.first)
+        let current = try XCTUnwrap(event["current"] as? [String: Any])
+
+        XCTAssertEqual(root["path"] as? String, directory.path)
+        XCTAssertTrue(rootActions.contains { $0["name"] as? String == "filesystem.watch" })
+        XCTAssertEqual(object["matched"] as? Bool, true)
+        XCTAssertEqual(object["eventCount"] as? Int, 1)
+        XCTAssertEqual(object["beforeCount"] as? Int, 1)
+        XCTAssertEqual(object["afterCount"] as? Int, 2)
+        XCTAssertEqual(object["maxDepth"] as? Int, 1)
+        XCTAssertEqual(object["limit"] as? Int, 200)
+        XCTAssertEqual(object["includeHidden"] as? Bool, false)
+        XCTAssertEqual(event["type"] as? String, "created")
+        XCTAssertTrue((event["path"] as? String)?.hasSuffix("/created.txt") == true)
+        XCTAssertNil(event["previous"])
+        XCTAssertTrue((current["path"] as? String)?.hasSuffix("/created.txt") == true)
+        XCTAssertEqual(current["kind"] as? String, "regularFile")
+    }
+
+    func testFilesWatchTimesOutWithoutEvents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-watch-timeout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "files",
+            "watch",
+            "--path", directory.path,
+            "--timeout-ms", "0",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let events = try XCTUnwrap(object["events"] as? [[String: Any]])
+
+        XCTAssertEqual(object["matched"] as? Bool, false)
+        XCTAssertEqual(object["eventCount"] as? Int, 0)
+        XCTAssertEqual(events.count, 0)
         XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
     }
 

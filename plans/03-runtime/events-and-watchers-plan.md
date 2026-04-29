@@ -23,6 +23,7 @@ The system should observe relevant changes from apps, the desktop, the filesyste
 ## Implemented Increments
 
 - Bounded filesystem wait: `03 files wait` polls a path for expected existence or disappearance with a timeout and returns structured evidence for verification loops.
+- Bounded filesystem watch: `03 files watch` polls bounded file metadata under a file or directory and returns normalized created, deleted, or modified events with previous/current records.
 
 ## Relationship To The Product
 

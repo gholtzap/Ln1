@@ -508,6 +508,34 @@ struct FilesystemWaitResult: Codable {
     let message: String
 }
 
+struct FileWatchEvent: Codable {
+    let id: String
+    let type: String
+    let path: String
+    let previous: FileRecord?
+    let current: FileRecord?
+}
+
+struct FilesystemWatchResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let root: FileRecord
+    let maxDepth: Int
+    let limit: Int
+    let includeHidden: Bool
+    let matched: Bool
+    let events: [FileWatchEvent]
+    let eventCount: Int
+    let beforeCount: Int
+    let afterCount: Int
+    let beforeTruncated: Bool
+    let afterTruncated: Bool
+    let elapsedMilliseconds: Int
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let message: String
+}
+
 struct FilesystemChecksumResult: Codable {
     let generatedAt: String
     let platform: String
@@ -1050,6 +1078,21 @@ final class ZeroThreeCLI {
             let result = try waitForFileState(
                 at: requestedFileURL(),
                 expectedExists: expectedExists,
+                timeoutMilliseconds: timeoutMilliseconds,
+                intervalMilliseconds: intervalMilliseconds
+            )
+            try writeJSON(result)
+        case "watch":
+            let maxDepth = max(0, option("--depth").flatMap(Int.init) ?? 1)
+            let limit = max(1, option("--limit").flatMap(Int.init) ?? 200)
+            let includeHidden = flag("--include-hidden")
+            let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+            let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+            let result = try watchFileChanges(
+                at: requestedFileURL(),
+                maxDepth: maxDepth,
+                limit: limit,
+                includeHidden: includeHidden,
                 timeoutMilliseconds: timeoutMilliseconds,
                 intervalMilliseconds: intervalMilliseconds
             )
@@ -2185,6 +2228,199 @@ final class ZeroThreeCLI {
             file: record,
             message: message
         )
+    }
+
+    private struct FileWatchSnapshot {
+        let recordsByPath: [String: FileRecord]
+        let truncated: Bool
+    }
+
+    private func watchFileChanges(
+        at url: URL,
+        maxDepth: Int,
+        limit: Int,
+        includeHidden: Bool,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> FilesystemWatchResult {
+        let root = try fileRecord(for: url)
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        let before = try fileWatchSnapshot(
+            at: url,
+            maxDepth: maxDepth,
+            limit: limit,
+            includeHidden: includeHidden
+        )
+        var after = before
+        var events = fileWatchEvents(before: before.recordsByPath, after: after.recordsByPath)
+
+        while events.isEmpty && Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            after = try fileWatchSnapshot(
+                at: url,
+                maxDepth: maxDepth,
+                limit: limit,
+                includeHidden: includeHidden
+            )
+            events = fileWatchEvents(before: before.recordsByPath, after: after.recordsByPath)
+        }
+
+        let elapsedMilliseconds = max(0, Int(Date().timeIntervalSince(start) * 1_000))
+        let matched = !events.isEmpty
+        let message = matched
+            ? "Observed \(events.count) filesystem event(s) under \(url.path)."
+            : "Timed out waiting for filesystem changes under \(url.path)."
+
+        return FilesystemWatchResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            root: root,
+            maxDepth: maxDepth,
+            limit: limit,
+            includeHidden: includeHidden,
+            matched: matched,
+            events: events,
+            eventCount: events.count,
+            beforeCount: before.recordsByPath.count,
+            afterCount: after.recordsByPath.count,
+            beforeTruncated: before.truncated,
+            afterTruncated: after.truncated,
+            elapsedMilliseconds: elapsedMilliseconds,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            message: message
+        )
+    }
+
+    private func fileWatchSnapshot(
+        at url: URL,
+        maxDepth: Int,
+        limit: Int,
+        includeHidden: Bool
+    ) throws -> FileWatchSnapshot {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return FileWatchSnapshot(recordsByPath: [:], truncated: false)
+        }
+
+        let root = try fileRecord(for: url)
+        var records = [root]
+        var truncated = false
+
+        if root.kind == "directory" {
+            collectFileWatchRecords(
+                from: url,
+                currentDepth: 0,
+                maxDepth: maxDepth,
+                limit: limit,
+                includeHidden: includeHidden,
+                records: &records,
+                truncated: &truncated
+            )
+        }
+
+        return FileWatchSnapshot(
+            recordsByPath: Dictionary(uniqueKeysWithValues: records.map { ($0.path, $0) }),
+            truncated: truncated
+        )
+    }
+
+    private func collectFileWatchRecords(
+        from directoryURL: URL,
+        currentDepth: Int,
+        maxDepth: Int,
+        limit: Int,
+        includeHidden: Bool,
+        records: inout [FileRecord],
+        truncated: inout Bool
+    ) {
+        guard currentDepth < maxDepth, !truncated else {
+            return
+        }
+
+        let urls: [URL]
+        do {
+            urls = try FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: Array(fileResourceKeys()),
+                options: includeHidden ? [] : [.skipsHiddenFiles]
+            )
+            .sorted { $0.path < $1.path }
+        } catch {
+            return
+        }
+
+        for url in urls {
+            if records.count >= limit {
+                truncated = true
+                return
+            }
+
+            guard let record = try? fileRecord(for: url) else {
+                continue
+            }
+            records.append(record)
+
+            if record.kind == "directory" {
+                collectFileWatchRecords(
+                    from: url,
+                    currentDepth: currentDepth + 1,
+                    maxDepth: maxDepth,
+                    limit: limit,
+                    includeHidden: includeHidden,
+                    records: &records,
+                    truncated: &truncated
+                )
+            }
+
+            if truncated {
+                return
+            }
+        }
+    }
+
+    private func fileWatchEvents(
+        before: [String: FileRecord],
+        after: [String: FileRecord]
+    ) -> [FileWatchEvent] {
+        let paths = Set(before.keys).union(after.keys).sorted()
+        return paths.compactMap { path in
+            let previous = before[path]
+            let current = after[path]
+
+            let type: String
+            if previous == nil, current != nil {
+                type = "created"
+            } else if previous != nil, current == nil {
+                type = "deleted"
+            } else if let previous, let current, fileWatchFingerprint(previous) != fileWatchFingerprint(current) {
+                type = "modified"
+            } else {
+                return nil
+            }
+
+            return FileWatchEvent(
+                id: "fileEvent:\(sha256Digest("\(type):\(path)"))",
+                type: type,
+                path: path,
+                previous: previous,
+                current: current
+            )
+        }
+    }
+
+    private func fileWatchFingerprint(_ record: FileRecord) -> String {
+        [
+            record.id,
+            record.kind,
+            record.sizeBytes.map(String.init) ?? "",
+            record.modifiedAt ?? "",
+            String(record.hidden),
+            String(record.readable),
+            String(record.writable)
+        ].joined(separator: "|")
     }
 
     private func browserTabs(includeNonPageTargets: Bool) throws -> BrowserTabsState {
@@ -3575,7 +3811,7 @@ final class ZeroThreeCLI {
 
     private func fileActionRisk(for action: String) -> String {
         switch action {
-        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
+        case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
         case "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
@@ -3648,6 +3884,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.wait", domain: "filesystem", risk: "low", mutates: false),
+            PolicyActionRecord(name: "filesystem.watch", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.checksum", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.compare", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.plan", domain: "filesystem", risk: "low", mutates: false),
@@ -4036,6 +4273,25 @@ final class ZeroThreeCLI {
               "message": "Path exists at /Users/example/Downloads/report.pdf."
             }
           },
+          "fileWatch": {
+            "command": "03 files watch --path ~/Downloads --depth 1 --timeout-ms 30000 --interval-ms 250",
+            "result": {
+              "root": { "path": "/Users/example/Downloads", "kind": "directory" },
+              "matched": true,
+              "events": [
+                {
+                  "id": "fileEvent:hex encoded SHA-256 digest",
+                  "type": "created",
+                  "path": "/Users/example/Downloads/report.pdf",
+                  "previous": null,
+                  "current": { "path": "/Users/example/Downloads/report.pdf", "kind": "regularFile" }
+                }
+              ],
+              "eventCount": 1,
+              "beforeCount": 4,
+              "afterCount": 5
+            }
+          },
           "fileChecksum": {
             "command": "03 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600",
             "result": {
@@ -4169,6 +4425,7 @@ final class ZeroThreeCLI {
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
           03 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
+          03 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
           03 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
           03 files compare --path LEFT --to RIGHT [--algorithm sha256] [--max-file-bytes N]
           03 files plan --operation duplicate|move --path SOURCE --to DESTINATION [--allow-risk low|medium|high|unknown]
@@ -4201,6 +4458,7 @@ final class ZeroThreeCLI {
           - `task` stores and reads task-scoped memory as medium-risk local persistence with sensitive-summary redaction.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files wait` waits for a path to exist or disappear and returns typed evidence.
+          - `files watch` waits for created, deleted, or modified file metadata events under a path and returns normalized event records.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
           - `files compare` compares two regular files by bounded SHA-256 digest and size.
           - `files plan` previews mutating file operations with policy, target metadata, and preflight checks without changing files.
@@ -4609,6 +4867,7 @@ final class ZeroThreeCLI {
         if kind == "directory", readable {
             actions.append(FileAction(name: "filesystem.list", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
+            actions.append(FileAction(name: "filesystem.watch", risk: "low", mutates: false))
         }
 
         if kind == "directory", writable {
@@ -4617,6 +4876,7 @@ final class ZeroThreeCLI {
 
         if kind == "regularFile", readable {
             actions.append(FileAction(name: "filesystem.search", risk: "low", mutates: false))
+            actions.append(FileAction(name: "filesystem.watch", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.checksum", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.compare", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))

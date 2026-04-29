@@ -25,6 +25,7 @@ The system should understand relevant files and folders, search local content an
 - Read-only metadata inspection: `03 files stat` and `03 files list` expose structured file and folder state with typed available actions.
 - Bounded local search: `03 files search` searches file names and UTF-8 text line snippets under a path, skips hidden files by default, reports scan/skip counts, and keeps reads bounded by file-size, snippet length, and per-file match limits.
 - Bounded file-state waiting: `03 files wait` waits for a path to appear or disappear and returns structured evidence and metadata when available.
+- Bounded filesystem event watching: `03 files watch` snapshots a file or directory, waits for created/deleted/modified metadata changes, and returns normalized event records with previous/current file metadata.
 - Bounded file checksum: `03 files checksum` computes a SHA-256 digest for one regular file within a caller-provided byte limit without returning file contents.
 - Bounded file comparison: `03 files compare` compares two regular files by size and SHA-256 digest within a caller-provided byte limit.
 - Structured mutation preflight: `03 files plan` previews duplicate, move, directory creation, and move rollback operations with policy decisions, affected file metadata, and named checks without changing the filesystem.

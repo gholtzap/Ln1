@@ -26,6 +26,7 @@ The system should classify observations and actions by risk, enforce user-config
 - Policy inspection: `03 policy` exposes known typed actions, risk levels, mutation classification, and the default allowed risk as structured JSON.
 - Desktop window inspection classification: `03 desktop windows` is classified as a low-risk, non-mutating desktop metadata read.
 - Preflight policy preview: `03 files plan` reports whether the matching mutating filesystem action would pass the current `--allow-risk` threshold before any mutation is attempted.
+- Filesystem watch classification: `03 files watch` is classified as a low-risk, non-mutating filesystem read action that returns bounded metadata events without reading file contents.
 - Rollback risk enforcement: `03 files rollback --audit-id` is classified as a medium-risk mutating filesystem action and is denied by default unless the caller explicitly allows medium risk.
 - Clipboard privacy enforcement: `03 clipboard read-text` is classified as a medium-risk read action and is denied by default unless the caller explicitly allows medium risk.
 - Clipboard mutation enforcement: `03 clipboard write-text` is classified as a medium-risk mutating clipboard action and is denied by default unless the caller explicitly allows medium risk.
