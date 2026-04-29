@@ -20,6 +20,10 @@ The system should maintain task-scoped memory that is structured, inspectable, a
 - The assistant can separate task memory from long-term user memory.
 - Sensitive observations are minimized or redacted where appropriate.
 
+## Implemented Increments
+
+- Task-scoped memory journal: `03 task start`, `03 task record`, `03 task finish`, and `03 task show` persist typed task events with status, summaries, related audit IDs, and sensitivity-aware redaction for sensitive summaries.
+
 ## Relationship To The Product
 
 Task memory gives continuity to the control loop. It also supports transparency, debugging, and user trust.

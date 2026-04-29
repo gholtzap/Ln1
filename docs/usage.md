@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, and `clipboard write-text` use these risk levels when evaluating `--allow-risk`; browser inspection actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser inspection actions are listed as low-risk, non-mutating reads.
 
 ## Inspect Running Apps
 
@@ -127,6 +127,48 @@ Filter audit records before applying the limit:
 ```
 
 `--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, or `clipboard.read-text`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_text`.
+
+## Track Task Memory
+
+Start a task-scoped memory journal when a workflow needs resumable context:
+
+```sh
+.build/debug/03 task start --title "Verify downloaded report" --summary "Wait for report.pdf and compare checksum" --allow-risk medium
+```
+
+Task memory is a medium-risk local persistence action because it can store task context. By default it writes JSONL events to:
+
+```text
+~/Library/Application Support/03/task-memory.jsonl
+```
+
+Use `--memory-log` to isolate tests or a specific workflow:
+
+```sh
+.build/debug/03 task start --title "Verify downloaded report" --allow-risk medium --memory-log /tmp/03-task-memory.jsonl
+```
+
+Append typed task events as work progresses:
+
+```sh
+.build/debug/03 task record --task-id TASK_ID --kind observation --summary "report.pdf appeared in Downloads" --allow-risk medium
+.build/debug/03 task record --task-id TASK_ID --kind verification --summary "checksum matched expected digest" --related-audit-id AUDIT_ID --allow-risk medium
+```
+
+Supported event kinds are `observation`, `decision`, `action`, `verification`, and `note`. Summaries default to `private` sensitivity. When a summary is marked `sensitive`, the event records only its length and SHA-256 digest, not the summary text:
+
+```sh
+.build/debug/03 task record --task-id TASK_ID --kind observation --summary "copied one-time code 123456" --sensitivity sensitive --allow-risk medium
+```
+
+Finish and inspect the task:
+
+```sh
+.build/debug/03 task finish --task-id TASK_ID --status completed --summary "Downloaded report was verified." --allow-risk medium
+.build/debug/03 task show --task-id TASK_ID --limit 20 --allow-risk medium
+```
+
+`task show` returns the task title, status, start/update timestamps, event count, and recent events. Reading task memory is also medium-risk because it may reveal persisted private workflow context.
 
 ## Inspect Filesystem State
 

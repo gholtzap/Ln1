@@ -268,6 +268,32 @@ struct AuditEntries: Codable {
     let entries: [ActionAuditRecord]
 }
 
+struct TaskMemoryEvent: Codable {
+    let id: String
+    let timestamp: String
+    let taskID: String
+    let kind: String
+    let status: String?
+    let title: String?
+    let summary: String?
+    let summaryLength: Int?
+    let summaryDigest: String?
+    let sensitivity: String
+    let relatedAuditID: String?
+}
+
+struct TaskMemoryResult: Codable {
+    let path: String
+    let taskID: String
+    let status: String?
+    let title: String?
+    let startedAt: String?
+    let updatedAt: String?
+    let eventCount: Int
+    let limit: Int
+    let events: [TaskMemoryEvent]
+}
+
 struct FileAction: Codable {
     let name: String
     let risk: String
@@ -456,6 +482,8 @@ final class ZeroThreeCLI {
             try perform()
         case "audit":
             try audit()
+        case "task":
+            try task()
         case "files":
             try files()
         case "clipboard":
@@ -703,6 +731,70 @@ final class ZeroThreeCLI {
             limit: max(0, limit),
             entries: records
         ))
+    }
+
+    private func task() throws {
+        let mode = arguments.dropFirst().first ?? "show"
+
+        switch mode {
+        case "start":
+            try requirePolicyAllowed(action: "task.memoryStart")
+            let title = try requiredOption("--title")
+            let taskID = option("--task-id") ?? UUID().uuidString
+            let event = try taskMemoryEvent(
+                taskID: taskID,
+                kind: "task.started",
+                status: "active",
+                title: title,
+                summary: option("--summary"),
+                relatedAuditID: option("--related-audit-id")
+            )
+            let memoryURL = try taskMemoryURL()
+            try appendTaskMemoryEvent(event, to: memoryURL)
+            try writeJSON(try taskMemoryResult(taskID: taskID, from: memoryURL, limit: 50))
+        case "record":
+            try requirePolicyAllowed(action: "task.memoryRecord")
+            let taskID = try requiredOption("--task-id")
+            let kind = try taskMemoryKind(try requiredOption("--kind"))
+            let summary = try requiredOption("--summary")
+            let event = try taskMemoryEvent(
+                taskID: taskID,
+                kind: kind,
+                status: nil,
+                title: nil,
+                summary: summary,
+                relatedAuditID: option("--related-audit-id")
+            )
+            let memoryURL = try taskMemoryURL()
+            try requireTaskExists(taskID: taskID, in: memoryURL)
+            try appendTaskMemoryEvent(event, to: memoryURL)
+            try writeJSON(try taskMemoryResult(taskID: taskID, from: memoryURL, limit: 50))
+        case "finish":
+            try requirePolicyAllowed(action: "task.memoryFinish")
+            let taskID = try requiredOption("--task-id")
+            let status = try taskFinishStatus(option("--status") ?? "completed")
+            let event = try taskMemoryEvent(
+                taskID: taskID,
+                kind: "task.finished",
+                status: status,
+                title: nil,
+                summary: option("--summary"),
+                relatedAuditID: option("--related-audit-id")
+            )
+            let memoryURL = try taskMemoryURL()
+            try requireTaskExists(taskID: taskID, in: memoryURL)
+            try appendTaskMemoryEvent(event, to: memoryURL)
+            try writeJSON(try taskMemoryResult(taskID: taskID, from: memoryURL, limit: 50))
+        case "show":
+            try requirePolicyAllowed(action: "task.memoryShow")
+            let taskID = try requiredOption("--task-id")
+            let limit = max(0, option("--limit").flatMap(Int.init) ?? 50)
+            let memoryURL = try taskMemoryURL()
+            try requireTaskExists(taskID: taskID, in: memoryURL)
+            try writeJSON(try taskMemoryResult(taskID: taskID, from: memoryURL, limit: limit))
+        default:
+            throw CommandError(description: "unknown task mode '\(mode)'")
+        }
     }
 
     private func files() throws {
@@ -2347,6 +2439,131 @@ final class ZeroThreeCLI {
         return Array(records.suffix(limit))
     }
 
+    private func taskMemoryEvent(
+        taskID: String,
+        kind: String,
+        status: String?,
+        title: String?,
+        summary: String?,
+        relatedAuditID: String?
+    ) throws -> TaskMemoryEvent {
+        let sensitivity = try taskMemorySensitivity(option("--sensitivity") ?? "private")
+        let summaryLength = summary?.count
+        let summaryDigest = summary.map(sha256Digest)
+        let storedSummary = sensitivity == "sensitive" ? nil : summary
+
+        return TaskMemoryEvent(
+            id: UUID().uuidString,
+            timestamp: ISO8601DateFormatter().string(from: Date()),
+            taskID: taskID,
+            kind: kind,
+            status: status,
+            title: title,
+            summary: storedSummary,
+            summaryLength: summaryLength,
+            summaryDigest: summaryDigest,
+            sensitivity: sensitivity,
+            relatedAuditID: relatedAuditID
+        )
+    }
+
+    private func appendTaskMemoryEvent(_ event: TaskMemoryEvent, to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let lineEncoder = JSONEncoder()
+        lineEncoder.outputFormatting = [.sortedKeys]
+        let data = try lineEncoder.encode(event)
+        guard var line = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "failed to encode task memory event")
+        }
+        line.append("\n")
+
+        if FileManager.default.fileExists(atPath: url.path) {
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(line.utf8))
+        } else {
+            try line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    private func readTaskMemoryEvents(from url: URL) throws -> [TaskMemoryEvent] {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return []
+        }
+
+        let data = try Data(contentsOf: url)
+        guard let contents = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "task memory log is not valid UTF-8")
+        }
+
+        let decoder = JSONDecoder()
+        return try contents
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { line in
+                try decoder.decode(TaskMemoryEvent.self, from: Data(line.utf8))
+            }
+    }
+
+    private func taskMemoryResult(taskID: String, from url: URL, limit: Int) throws -> TaskMemoryResult {
+        let events = try readTaskMemoryEvents(from: url).filter { $0.taskID == taskID }
+        let started = events.first { $0.kind == "task.started" }
+        let latestStatus = events.reversed().first { $0.status != nil }?.status
+        let limitedEvents = Array(events.suffix(max(0, limit)))
+
+        return TaskMemoryResult(
+            path: url.path,
+            taskID: taskID,
+            status: latestStatus,
+            title: started?.title,
+            startedAt: started?.timestamp,
+            updatedAt: events.last?.timestamp,
+            eventCount: events.count,
+            limit: max(0, limit),
+            events: limitedEvents
+        )
+    }
+
+    private func requireTaskExists(taskID: String, in url: URL) throws {
+        let exists = try readTaskMemoryEvents(from: url).contains {
+            $0.taskID == taskID && $0.kind == "task.started"
+        }
+        guard exists else {
+            throw CommandError(description: "no task memory found with id \(taskID)")
+        }
+    }
+
+    private func taskMemoryKind(_ rawKind: String) throws -> String {
+        switch rawKind {
+        case "observation", "decision", "action", "verification", "note":
+            return "task.\(rawKind)"
+        case "task.observation", "task.decision", "task.action", "task.verification", "task.note":
+            return rawKind
+        default:
+            throw CommandError(description: "unsupported task memory kind '\(rawKind)'. Use observation, decision, action, verification, or note.")
+        }
+    }
+
+    private func taskFinishStatus(_ status: String) throws -> String {
+        switch status {
+        case "completed", "blocked", "cancelled":
+            return status
+        default:
+            throw CommandError(description: "unsupported task status '\(status)'. Use completed, blocked, or cancelled.")
+        }
+    }
+
+    private func taskMemorySensitivity(_ sensitivity: String) throws -> String {
+        switch sensitivity {
+        case "public", "private", "sensitive":
+            return sensitivity
+        default:
+            throw CommandError(description: "unsupported task memory sensitivity '\(sensitivity)'. Use public, private, or sensitive.")
+        }
+    }
+
     private func auditLogURL() throws -> URL {
         if let path = option("--audit-log") {
             return URL(fileURLWithPath: expandedPath(path))
@@ -2360,6 +2577,21 @@ final class ZeroThreeCLI {
         }
 
         return applicationSupport.appendingPathComponent("03/audit-log.jsonl")
+    }
+
+    private func taskMemoryURL() throws -> URL {
+        if let path = option("--memory-log") {
+            return URL(fileURLWithPath: expandedPath(path))
+        }
+
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw CommandError(description: "could not resolve Application Support directory")
+        }
+
+        return applicationSupport.appendingPathComponent("03/task-memory.jsonl")
     }
 
     private func expandedPath(_ path: String) -> String {
@@ -2415,6 +2647,28 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func taskMemoryActionRisk(for action: String) -> String {
+        switch action {
+        case "task.memoryStart", "task.memoryRecord", "task.memoryFinish", "task.memoryShow":
+            return "medium"
+        default:
+            return "unknown"
+        }
+    }
+
+    private func requirePolicyAllowed(action: String) throws {
+        let risk: String
+        if action.hasPrefix("task.") {
+            risk = taskMemoryActionRisk(for: action)
+        } else {
+            risk = "unknown"
+        }
+        let policy = policyDecision(actionRisk: risk)
+        guard policy.allowed else {
+            throw CommandError(description: policy.message)
+        }
+    }
+
     private func knownPolicyActions() -> [PolicyActionRecord] {
         [
             PolicyActionRecord(name: kAXPressAction as String, domain: "accessibility", risk: "low", mutates: true),
@@ -2436,7 +2690,11 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false),
             PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
-            PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false)
+            PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "task.memoryShow", domain: "task", risk: "medium", mutates: false)
         ]
     }
 
@@ -2563,6 +2821,26 @@ final class ZeroThreeCLI {
                 "message": "policy allowed low action with --allow-risk low"
               },
               "outcome": { "ok": true, "code": "performed", "message": "Performed AXPress on w0.3.1." }
+            }
+          },
+          "taskMemory": {
+            "command": "03 task record --task-id UUID --kind verification --summary 'download matched expected digest' --allow-risk medium",
+            "result": {
+              "path": "~/Library/Application Support/03/task-memory.jsonl",
+              "taskID": "UUID",
+              "status": "active|completed|blocked|cancelled",
+              "title": "Verify downloaded report",
+              "eventCount": 2,
+              "events": [
+                {
+                  "kind": "task.verification",
+                  "summary": "download matched expected digest",
+                  "summaryLength": 31,
+                  "summaryDigest": "hex encoded SHA-256 digest",
+                  "sensitivity": "private",
+                  "relatedAuditID": "UUID"
+                }
+              ]
             }
           },
           "clipboardState": {
@@ -2821,6 +3099,10 @@ final class ZeroThreeCLI {
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           03 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
+          03 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
+          03 task record --task-id ID --kind observation|decision|action|verification|note --summary TEXT --allow-risk medium [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
+          03 task finish --task-id ID [--status completed|blocked|cancelled] --allow-risk medium [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
+          03 task show --task-id ID --allow-risk medium [--limit N] [--memory-log PATH]
           03 files stat --path PATH
           03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
@@ -2850,6 +3132,7 @@ final class ZeroThreeCLI {
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `audit` can filter records by command name and outcome code before applying the limit.
+          - `task` stores and reads task-scoped memory as medium-risk local persistence with sensitive-summary redaction.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files wait` waits for a path to exist or disappear and returns typed evidence.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.

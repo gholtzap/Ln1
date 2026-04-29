@@ -43,6 +43,121 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.inspectTab"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.inspectTab"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.inspectTab"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
+        XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["task.memoryRecord"]?["domain"] as? String, "task")
+        XCTAssertEqual(actionByName["task.memoryRecord"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["task.memoryRecord"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["task.memoryFinish"]?["domain"] as? String, "task")
+        XCTAssertEqual(actionByName["task.memoryFinish"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["task.memoryFinish"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["task.memoryShow"]?["domain"] as? String, "task")
+        XCTAssertEqual(actionByName["task.memoryShow"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["task.memoryShow"]?["mutates"] as? Bool, false)
+    }
+
+    func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {
+        let memoryLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-task-memory-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: memoryLog) }
+
+        let start = try runZeroThree([
+            "task",
+            "start",
+            "--title", "Verify download",
+            "--summary", "Wait for report.pdf and compare checksum",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(start.status, 0, start.stderr)
+        let startObject = try decodeJSONObject(start.stdout)
+        let taskID = try XCTUnwrap(startObject["taskID"] as? String)
+        let startEvents = try XCTUnwrap(startObject["events"] as? [[String: Any]])
+        let started = try XCTUnwrap(startEvents.first)
+
+        XCTAssertEqual(startObject["path"] as? String, memoryLog.path)
+        XCTAssertEqual(startObject["status"] as? String, "active")
+        XCTAssertEqual(startObject["title"] as? String, "Verify download")
+        XCTAssertEqual(startObject["eventCount"] as? Int, 1)
+        XCTAssertEqual(started["kind"] as? String, "task.started")
+        XCTAssertEqual(started["summary"] as? String, "Wait for report.pdf and compare checksum")
+        XCTAssertEqual(started["sensitivity"] as? String, "private")
+
+        let record = try runZeroThree([
+            "task",
+            "record",
+            "--task-id", taskID,
+            "--kind", "verification",
+            "--summary", "secret confirmation code 123456",
+            "--sensitivity", "sensitive",
+            "--related-audit-id", "audit-1",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(record.status, 0, record.stderr)
+        let recordObject = try decodeJSONObject(record.stdout)
+        let recordEvents = try XCTUnwrap(recordObject["events"] as? [[String: Any]])
+        let verification = try XCTUnwrap(recordEvents.last)
+
+        XCTAssertEqual(recordObject["eventCount"] as? Int, 2)
+        XCTAssertEqual(verification["kind"] as? String, "task.verification")
+        XCTAssertEqual(verification["sensitivity"] as? String, "sensitive")
+        XCTAssertEqual(verification["summaryLength"] as? Int, 31)
+        XCTAssertEqual(verification["summaryDigest"] as? String, "bfdc69fc2ce532ddd962d2d01bc9a5015890b303334f7c131ff6d5efc1172cae")
+        XCTAssertEqual(verification["relatedAuditID"] as? String, "audit-1")
+        XCTAssertNil(verification["summary"])
+
+        let finish = try runZeroThree([
+            "task",
+            "finish",
+            "--task-id", taskID,
+            "--status", "completed",
+            "--summary", "Download was verified.",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(finish.status, 0, finish.stderr)
+
+        let show = try runZeroThree([
+            "task",
+            "show",
+            "--task-id", taskID,
+            "--limit", "2",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(show.status, 0, show.stderr)
+        let showObject = try decodeJSONObject(show.stdout)
+        let shownEvents = try XCTUnwrap(showObject["events"] as? [[String: Any]])
+
+        XCTAssertEqual(showObject["status"] as? String, "completed")
+        XCTAssertEqual(showObject["eventCount"] as? Int, 3)
+        XCTAssertEqual(showObject["limit"] as? Int, 2)
+        XCTAssertEqual(shownEvents.count, 2)
+        XCTAssertEqual(shownEvents.first?["kind"] as? String, "task.verification")
+        XCTAssertEqual(shownEvents.last?["kind"] as? String, "task.finished")
+    }
+
+    func testTaskMemoryRequiresMediumRiskBeforePersisting() throws {
+        let memoryLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-task-memory-policy-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: memoryLog) }
+
+        let rejected = try runZeroThree([
+            "task",
+            "start",
+            "--title", "Blocked task",
+            "--summary", "should not be persisted",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: memoryLog.path))
     }
 
     func testBrowserTabsReturnsStructuredDevToolsPageTargets() throws {
