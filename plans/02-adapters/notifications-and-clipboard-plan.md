@@ -20,6 +20,11 @@ The system should observe relevant notifications, inspect clipboard state when p
 - The assistant can avoid silently retaining sensitive copied data.
 - Notification and clipboard context can improve task verification.
 
+## Implemented Increments
+
+- Clipboard metadata state: `03 clipboard state` reports pasteboard name, change count, types, text availability, text length, and a SHA-256 digest without returning clipboard contents.
+- Audited clipboard text read: `03 clipboard read-text` is a medium-risk read action that requires explicit policy allowance, returns bounded text to the caller, and records only clipboard metadata, digest, reason, policy decision, and outcome in the audit log.
+
 ## Relationship To The Product
 
 These signals make the assistant more situationally aware. They should be handled with stricter privacy expectations than ordinary UI state.

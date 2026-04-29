@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, and `files rollback` use these risk levels when evaluating `--allow-risk`.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, and `clipboard read-text` use these risk levels when evaluating `--allow-risk`.
 
 ## Inspect Running Apps
 
@@ -126,7 +126,7 @@ Filter audit records before applying the limit:
 .build/debug/03 audit --command files.move --code moved --limit 10
 ```
 
-`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, or `files.rollback`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, or `rolled_back_move`.
+`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, or `clipboard.read-text`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_text`.
 
 ## Inspect Filesystem State
 
@@ -226,13 +226,32 @@ Create one directory for organization workflows:
 
 `filesystem.createDirectory` is a medium-risk mutating file action. It refuses existing paths, requires the parent directory to exist and be writable, verifies that the directory exists after creation, and records the policy decision plus verification result in the audit log.
 
+## Inspect Clipboard State
+
+Inspect clipboard metadata without returning copied text:
+
+```sh
+.build/debug/03 clipboard state
+```
+
+`clipboard.state` is a low-risk read action. It returns the pasteboard name, change count, available pasteboard types, whether plain text is available, the text length, and a SHA-256 digest of the text. It intentionally does not return clipboard contents.
+
+Read bounded plain text from the clipboard only after explicitly allowing medium-risk clipboard access:
+
+```sh
+.build/debug/03 clipboard read-text --allow-risk medium --max-characters 4096 --reason "Use copied confirmation code"
+```
+
+`clipboard.readText` is a medium-risk read action because clipboard text may contain private transient data. The command writes an audit record containing pasteboard metadata, text length, digest, policy decision, reason, and outcome, but the audit record does not store the clipboard text itself. Use `--pasteboard NAME` to target a named pasteboard for tests or isolated workflows.
+
 ## Product Direction
 
 The next step is to add adapters for richer state sources:
 
 - Browser DOM through Chrome DevTools Protocol
 - Filesystem document indexes and audited file operations beyond bounded local search
-- Clipboard and notifications
+- Notifications
+- Clipboard write workflows with policy and audit
 - App-native integrations where available
 - A permission/audit log around every action
 

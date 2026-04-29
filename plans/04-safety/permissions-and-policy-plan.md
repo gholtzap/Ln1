@@ -26,6 +26,7 @@ The system should classify observations and actions by risk, enforce user-config
 - Policy inspection: `03 policy` exposes known typed actions, risk levels, mutation classification, and the default allowed risk as structured JSON.
 - Preflight policy preview: `03 files plan` reports whether the matching mutating filesystem action would pass the current `--allow-risk` threshold before any mutation is attempted.
 - Rollback risk enforcement: `03 files rollback --audit-id` is classified as a medium-risk mutating filesystem action and is denied by default unless the caller explicitly allows medium risk.
+- Clipboard privacy enforcement: `03 clipboard read-text` is classified as a medium-risk read action and is denied by default unless the caller explicitly allows medium risk.
 
 ## Relationship To The Product
 
