@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, and `clipboard read-text` use these risk levels when evaluating `--allow-risk`.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, and `clipboard write-text` use these risk levels when evaluating `--allow-risk`.
 
 ## Inspect Running Apps
 
@@ -244,6 +244,14 @@ Read bounded plain text from the clipboard only after explicitly allowing medium
 
 `clipboard.readText` is a medium-risk read action because clipboard text may contain private transient data. The command writes an audit record containing pasteboard metadata, text length, digest, policy decision, reason, and outcome, but the audit record does not store the clipboard text itself. Use `--pasteboard NAME` to target a named pasteboard for tests or isolated workflows.
 
+Write plain text to the clipboard only after explicitly allowing medium-risk clipboard mutation:
+
+```sh
+.build/debug/03 clipboard write-text --text "ready to paste" --allow-risk medium --reason "Prepare value for the next app"
+```
+
+`clipboard.writeText` is a medium-risk mutating action because it replaces the current plain-text pasteboard contents. The command records before/after pasteboard metadata, text lengths, digests, policy decision, verification result, reason, and outcome without storing either the previous or new clipboard text in the audit log. The command verifies the write by checking that the clipboard contains text with the requested length and SHA-256 digest.
+
 ## Product Direction
 
 The next step is to add adapters for richer state sources:
@@ -251,7 +259,6 @@ The next step is to add adapters for richer state sources:
 - Browser DOM through Chrome DevTools Protocol
 - Filesystem document indexes and audited file operations beyond bounded local search
 - Notifications
-- Clipboard write workflows with policy and audit
 - App-native integrations where available
 - A permission/audit log around every action
 

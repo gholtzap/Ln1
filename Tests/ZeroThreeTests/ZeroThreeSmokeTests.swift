@@ -34,6 +34,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["clipboard.readText"]?["domain"] as? String, "clipboard")
         XCTAssertEqual(actionByName["clipboard.readText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["clipboard.readText"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["clipboard.writeText"]?["domain"] as? String, "clipboard")
+        XCTAssertEqual(actionByName["clipboard.writeText"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["clipboard.writeText"]?["mutates"] as? Bool, true)
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {
@@ -1044,6 +1047,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(object["text"])
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.state" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.readText" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.writeText" })
     }
 
     func testClipboardReadTextRequiresMediumRiskAndAuditsRead() throws {
@@ -1114,6 +1118,111 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "read_text")
+    }
+
+    func testClipboardWriteTextRequiresMediumRiskVerifiesAndAuditsWithoutText() throws {
+        let pasteboardName = "03-test-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-clipboard-write-\(UUID().uuidString).jsonl")
+        pasteboard.clearContents()
+        pasteboard.setString("old clipboard", forType: .string)
+        defer {
+            pasteboard.clearContents()
+            try? FileManager.default.removeItem(at: auditLog)
+        }
+
+        let rejected = try runZeroThree([
+            "clipboard",
+            "write-text",
+            "--pasteboard", pasteboardName,
+            "--text", "blocked clipboard",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "old clipboard")
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "clipboard.write-text",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+        let deniedBefore = try XCTUnwrap(deniedEntry["clipboardBefore"] as? [String: Any])
+        let deniedAfter = try XCTUnwrap(deniedEntry["clipboardAfter"] as? [String: Any])
+        let deniedOutcome = try XCTUnwrap(deniedEntry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "clipboard.writeText")
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+        XCTAssertEqual(deniedAfter["stringDigest"] as? String, deniedBefore["stringDigest"] as? String)
+        XCTAssertEqual(deniedOutcome["code"] as? String, "policy_denied")
+
+        let result = try runZeroThree([
+            "clipboard",
+            "write-text",
+            "--pasteboard", pasteboardName,
+            "--text", "new clipboard",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "write test clipboard"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new clipboard")
+
+        let object = try decodeJSONObject(result.stdout)
+        let previous = try XCTUnwrap(object["previous"] as? [String: Any])
+        let current = try XCTUnwrap(object["current"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["pasteboard"] as? String, pasteboardName)
+        XCTAssertEqual(object["writtenLength"] as? Int, 13)
+        XCTAssertEqual(previous["stringLength"] as? Int, 13)
+        XCTAssertEqual(current["stringLength"] as? Int, 13)
+        XCTAssertEqual(current["stringDigest"] as? String, object["writtenDigest"] as? String)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "text_matched")
+        XCTAssertNil(object["text"])
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "clipboard.write-text",
+            "--code", "wrote_text",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let before = try XCTUnwrap(entry["clipboardBefore"] as? [String: Any])
+        let after = try XCTUnwrap(entry["clipboardAfter"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "clipboard.write-text")
+        XCTAssertEqual(entry["action"] as? String, "clipboard.writeText")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "write test clipboard")
+        XCTAssertEqual(before["pasteboard"] as? String, pasteboardName)
+        XCTAssertEqual(after["pasteboard"] as? String, pasteboardName)
+        XCTAssertEqual(after["stringLength"] as? Int, 13)
+        XCTAssertNil(after["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "wrote_text")
     }
 
     func testRejectedPerformWritesAuditRecord() throws {

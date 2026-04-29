@@ -24,6 +24,7 @@ The system should observe relevant notifications, inspect clipboard state when p
 
 - Clipboard metadata state: `03 clipboard state` reports pasteboard name, change count, types, text availability, text length, and a SHA-256 digest without returning clipboard contents.
 - Audited clipboard text read: `03 clipboard read-text` is a medium-risk read action that requires explicit policy allowance, returns bounded text to the caller, and records only clipboard metadata, digest, reason, policy decision, and outcome in the audit log.
+- Audited clipboard text write: `03 clipboard write-text` is a medium-risk mutating action that requires explicit policy allowance, verifies the resulting clipboard text by length and digest, and records before/after metadata without storing clipboard contents.
 
 ## Relationship To The Product
 

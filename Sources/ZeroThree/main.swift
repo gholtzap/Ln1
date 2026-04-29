@@ -158,6 +158,20 @@ struct ClipboardTextResult: Codable {
     let message: String
 }
 
+struct ClipboardWriteResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let pasteboard: String
+    let previous: ClipboardAuditSummary
+    let current: ClipboardAuditSummary
+    let writtenLength: Int
+    let writtenDigest: String
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct ClipboardAuditSummary: Codable {
     let pasteboard: String
     let changeCount: Int
@@ -206,6 +220,8 @@ struct ActionAuditRecord: Codable {
     var fileDestination: FileAuditTarget? = nil
     var verification: FileOperationVerification? = nil
     var clipboard: ClipboardAuditSummary? = nil
+    var clipboardBefore: ClipboardAuditSummary? = nil
+    var clipboardAfter: ClipboardAuditSummary? = nil
     let outcome: AuditOutcome
 }
 
@@ -763,6 +779,11 @@ final class ZeroThreeCLI {
         case "read-text":
             let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 4_096)
             try writeJSON(clipboardText(for: pasteboard, maxCharacters: maxCharacters))
+        case "write-text":
+            guard let text = option("--text") else {
+                throw CommandError(description: "missing required option --text")
+            }
+            try writeJSON(writeClipboardText(text, to: pasteboard))
         default:
             throw CommandError(description: "unknown clipboard mode '\(mode)'")
         }
@@ -1885,7 +1906,8 @@ final class ZeroThreeCLI {
             stringDigest: string.map(sha256Digest),
             actions: [
                 ClipboardAction(name: "clipboard.state", risk: "low", mutates: false),
-                ClipboardAction(name: "clipboard.readText", risk: "medium", mutates: false)
+                ClipboardAction(name: "clipboard.readText", risk: "medium", mutates: false),
+                ClipboardAction(name: "clipboard.writeText", risk: "medium", mutates: true)
             ]
         )
     }
@@ -1953,6 +1975,132 @@ final class ZeroThreeCLI {
             auditID: auditID,
             auditLogPath: auditURL.path,
             message: message
+        )
+    }
+
+    private func writeClipboardText(_ text: String, to pasteboard: NSPasteboard) throws -> ClipboardWriteResult {
+        let action = "clipboard.writeText"
+        let risk = clipboardActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let beforeString = pasteboard.string(forType: .string)
+        let before = clipboardAuditSummary(for: pasteboard, string: beforeString)
+        let writtenDigest = sha256Digest(text)
+        var after = before
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "clipboard.write-text",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                clipboard: after,
+                clipboardBefore: before,
+                clipboardAfter: after,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            pasteboard.clearContents()
+            guard pasteboard.setString(text, forType: .string) else {
+                let message = "failed to write plain text to \(pasteboard.name.rawValue)"
+                verification = FileOperationVerification(ok: false, code: "write_failed", message: message)
+                after = clipboardAuditSummary(for: pasteboard, string: pasteboard.string(forType: .string))
+                try writeAudit(ok: false, code: "write_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let currentString = pasteboard.string(forType: .string)
+            after = clipboardAuditSummary(for: pasteboard, string: currentString)
+            verification = verifyClipboardText(currentString, expectedLength: text.count, expectedDigest: writtenDigest)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "clipboard write verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Wrote plain text to \(pasteboard.name.rawValue)."
+            try writeAudit(ok: true, code: "wrote_text", message: message)
+
+            return ClipboardWriteResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                pasteboard: pasteboard.name.rawValue,
+                previous: before,
+                current: after,
+                writtenLength: text.count,
+                writtenDigest: writtenDigest,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func verifyClipboardText(
+        _ currentString: String?,
+        expectedLength: Int,
+        expectedDigest: String
+    ) -> FileOperationVerification {
+        guard let currentString else {
+            return FileOperationVerification(
+                ok: false,
+                code: "text_missing",
+                message: "clipboard does not contain plain text after write"
+            )
+        }
+
+        guard currentString.count == expectedLength else {
+            return FileOperationVerification(
+                ok: false,
+                code: "length_mismatch",
+                message: "clipboard text length does not match requested text length"
+            )
+        }
+
+        guard sha256Digest(currentString) == expectedDigest else {
+            return FileOperationVerification(
+                ok: false,
+                code: "digest_mismatch",
+                message: "clipboard text digest does not match requested text digest"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "text_matched",
+            message: "clipboard contains text with the requested length and digest"
         )
     }
 
@@ -2084,7 +2232,7 @@ final class ZeroThreeCLI {
         switch action {
         case "clipboard.state":
             return "low"
-        case "clipboard.readText":
+        case "clipboard.readText", "clipboard.writeText":
             return "medium"
         default:
             return "unknown"
@@ -2109,7 +2257,8 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.rollbackMove", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "clipboard.state", domain: "clipboard", risk: "low", mutates: false),
-            PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false)
+            PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true)
         ]
     }
 
@@ -2249,7 +2398,8 @@ final class ZeroThreeCLI {
               "stringDigest": "hex encoded SHA-256 digest",
               "actions": [
                 { "name": "clipboard.state", "risk": "low", "mutates": false },
-                { "name": "clipboard.readText", "risk": "medium", "mutates": false }
+                { "name": "clipboard.readText", "risk": "medium", "mutates": false },
+                { "name": "clipboard.writeText", "risk": "medium", "mutates": true }
               ]
             }
           },
@@ -2263,6 +2413,31 @@ final class ZeroThreeCLI {
               "stringLength": 42,
               "stringDigest": "hex encoded SHA-256 digest",
               "truncated": false,
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "clipboardWrite": {
+            "command": "03 clipboard write-text --allow-risk medium --text 'bounded clipboard text' --reason 'Prepare value for paste'",
+            "result": {
+              "pasteboard": "Apple CFPasteboard general",
+              "previous": {
+                "changeCount": 12,
+                "stringLength": 42,
+                "stringDigest": "previous hex encoded SHA-256 digest"
+              },
+              "current": {
+                "changeCount": 14,
+                "stringLength": 22,
+                "stringDigest": "new hex encoded SHA-256 digest"
+              },
+              "writtenLength": 22,
+              "writtenDigest": "new hex encoded SHA-256 digest",
+              "verification": {
+                "ok": true,
+                "code": "text_matched",
+                "message": "clipboard contains text with the requested length and digest"
+              },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -2453,6 +2628,7 @@ final class ZeroThreeCLI {
           03 files rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 clipboard state [--pasteboard NAME]
           03 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
+          03 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           03 schema
 
         Notes:
@@ -2475,6 +2651,7 @@ final class ZeroThreeCLI {
           - `files rollback` restores a successful audited file move after validating current filesystem metadata.
           - `clipboard state` reports pasteboard metadata and text digest without returning clipboard text.
           - `clipboard read-text` returns bounded text only after medium-risk policy approval and audits metadata without storing text.
+          - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text.
         """)
     }
 
