@@ -19,6 +19,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertEqual(object["defaultAllowedRisk"] as? String, "low")
         XCTAssertEqual(riskLevels, ["low", "medium", "high", "unknown"])
+        XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.plan"]?["risk"] as? String, "low")
@@ -61,6 +64,41 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["task.memoryShow"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryShow"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryShow"]?["mutates"] as? Bool, false)
+    }
+
+    func testDesktopWindowsReturnsStructuredVisibleWindowInventory() throws {
+        let result = try runZeroThree([
+            "desktop",
+            "windows",
+            "--limit", "25"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let windows = try XCTUnwrap(object["windows"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertNotNil(object["available"] as? Bool)
+        XCTAssertNotNil(object["message"] as? String)
+        XCTAssertEqual(object["includeDesktop"] as? Bool, false)
+        XCTAssertEqual(object["includeAllLayers"] as? Bool, false)
+        XCTAssertEqual(object["limit"] as? Int, 25)
+        XCTAssertEqual(object["count"] as? Int, windows.count)
+        XCTAssertLessThanOrEqual(windows.count, 25)
+
+        if let first = windows.first {
+            XCTAssertNotNil(first["id"] as? String)
+            XCTAssertNotNil(first["windowNumber"] as? Int)
+            XCTAssertNotNil(first["ownerPID"] as? Int)
+            XCTAssertNotNil(first["active"] as? Bool)
+            XCTAssertNotNil(first["layer"] as? Int)
+            if let bounds = first["bounds"] as? [String: Any] {
+                XCTAssertNotNil(bounds["x"] as? Double)
+                XCTAssertNotNil(bounds["y"] as? Double)
+                XCTAssertNotNil(bounds["width"] as? Double)
+                XCTAssertNotNil(bounds["height"] as? Double)
+            }
+        }
     }
 
     func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {

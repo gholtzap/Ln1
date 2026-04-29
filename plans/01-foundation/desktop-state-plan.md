@@ -20,6 +20,10 @@ The system should describe the current desktop in terms of visible apps, windows
 - The assistant can reason about screen coordinates and window positions when needed.
 - The assistant can tell when the desktop state is insufficient and request a richer observation.
 
+## Implemented Increments
+
+- Visible desktop window inventory: `03 desktop windows` lists visible macOS windows as structured owner, title, layer, bounds, and active-owner metadata without requiring screenshots or Accessibility access.
+
 ## Relationship To The Product
 
 This is the base map of the computer. Without it, every other capability risks being app-local, brittle, or unaware of desktop-level blockers.

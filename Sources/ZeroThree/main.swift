@@ -58,6 +58,36 @@ struct AppSummary: Codable {
     let active: Bool
 }
 
+struct DesktopWindowRecord: Codable {
+    let id: String
+    let windowNumber: UInt32
+    let ownerName: String?
+    let ownerBundleIdentifier: String?
+    let ownerPID: Int32
+    let active: Bool
+    let title: String?
+    let layer: Int
+    let bounds: Rect?
+    let onscreen: Bool?
+    let alpha: Double?
+    let memoryUsageBytes: Int?
+    let sharingState: Int?
+}
+
+struct DesktopWindowsState: Codable {
+    let generatedAt: String
+    let platform: String
+    let available: Bool
+    let message: String
+    let activePID: Int32?
+    let includeDesktop: Bool
+    let includeAllLayers: Bool
+    let limit: Int
+    let count: Int
+    let truncated: Bool
+    let windows: [DesktopWindowRecord]
+}
+
 struct TrustRecord: Codable {
     let trusted: Bool
     let message: String
@@ -587,6 +617,8 @@ final class ZeroThreeCLI {
             try policy()
         case "apps":
             try apps()
+        case "desktop":
+            try desktop()
         case "state":
             try state()
         case "perform":
@@ -607,6 +639,17 @@ final class ZeroThreeCLI {
             printHelp()
         default:
             throw CommandError(description: "unknown command '\(command)'")
+        }
+    }
+
+    private func desktop() throws {
+        let mode = arguments.dropFirst().first ?? "windows"
+
+        switch mode {
+        case "windows":
+            try writeJSON(desktopWindows())
+        default:
+            throw CommandError(description: "unknown desktop mode '\(mode)'")
         }
     }
 
@@ -3281,6 +3324,15 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func desktopActionRisk(for action: String) -> String {
+        switch action {
+        case "desktop.listWindows":
+            return "low"
+        default:
+            return "unknown"
+        }
+    }
+
     private func taskMemoryActionRisk(for action: String) -> String {
         switch action {
         case "task.memoryStart", "task.memoryRecord", "task.memoryFinish", "task.memoryShow":
@@ -3309,6 +3361,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: kAXShowMenuAction as String, domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: kAXConfirmAction as String, domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: kAXPickAction as String, domain: "accessibility", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
@@ -3424,6 +3477,31 @@ final class ZeroThreeCLI {
                 ]
               }
             ]
+          },
+          "desktopWindows": {
+            "command": "03 desktop windows --limit 50",
+            "result": {
+              "available": true,
+              "message": "Read visible desktop window metadata.",
+              "activePID": 123,
+              "includeDesktop": false,
+              "includeAllLayers": false,
+              "count": 1,
+              "windows": [
+                {
+                  "id": "window:456",
+                  "windowNumber": 456,
+                  "ownerName": "Finder",
+                  "ownerBundleIdentifier": "com.apple.finder",
+                  "ownerPID": 123,
+                  "active": true,
+                  "title": "Documents",
+                  "layer": 0,
+                  "bounds": { "x": 0, "y": 25, "width": 900, "height": 700 },
+                  "onscreen": true
+                }
+              ]
+            }
           },
           "perform": {
             "command": "03 perform --pid 456 --element a0.w0.3.1 --action AXPress --allow-risk low --reason 'Open details'",
@@ -3775,6 +3853,7 @@ final class ZeroThreeCLI {
           03 trust [--prompt true|false]
           03 policy
           03 apps [--all]
+          03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           03 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
@@ -3807,6 +3886,7 @@ final class ZeroThreeCLI {
         Notes:
           - Run `03 trust` before Accessibility-backed `state` or `perform` commands.
           - `policy` describes known action risk levels and mutation behavior.
+          - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
@@ -4239,6 +4319,158 @@ final class ZeroThreeCLI {
         }
 
         return actions
+    }
+
+    private func desktopWindows() throws -> DesktopWindowsState {
+        let includeDesktop = flag("--include-desktop")
+        let includeAllLayers = flag("--all-layers")
+        let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
+        let activePID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let bundleIdentifierByPID = Dictionary(
+            uniqueKeysWithValues: NSWorkspace.shared.runningApplications.compactMap { app in
+                app.bundleIdentifier.map { (app.processIdentifier, $0) }
+            }
+        )
+        var options: CGWindowListOption = [.optionOnScreenOnly]
+        if !includeDesktop {
+            options.insert(.excludeDesktopElements)
+        }
+
+        guard let rawWindows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return DesktopWindowsState(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                available: false,
+                message: "Desktop window metadata is unavailable from this process.",
+                activePID: activePID,
+                includeDesktop: includeDesktop,
+                includeAllLayers: includeAllLayers,
+                limit: limit,
+                count: 0,
+                truncated: false,
+                windows: []
+            )
+        }
+
+        let records = rawWindows.compactMap { window -> DesktopWindowRecord? in
+            guard let windowNumber = uint32Value(window[kCGWindowNumber as String]),
+                  let ownerPID = int32Value(window[kCGWindowOwnerPID as String]) else {
+                return nil
+            }
+
+            let layer = intValue(window[kCGWindowLayer as String]) ?? 0
+            if !includeAllLayers, layer != 0 {
+                return nil
+            }
+
+            return DesktopWindowRecord(
+                id: "window:\(windowNumber)",
+                windowNumber: windowNumber,
+                ownerName: window[kCGWindowOwnerName as String] as? String,
+                ownerBundleIdentifier: bundleIdentifierByPID[ownerPID],
+                ownerPID: ownerPID,
+                active: ownerPID == activePID,
+                title: window[kCGWindowName as String] as? String,
+                layer: layer,
+                bounds: rectValue(window[kCGWindowBounds as String]),
+                onscreen: boolValue(window[kCGWindowIsOnscreen as String]),
+                alpha: doubleValue(window[kCGWindowAlpha as String]),
+                memoryUsageBytes: intValue(window[kCGWindowMemoryUsage as String]),
+                sharingState: intValue(window[kCGWindowSharingState as String])
+            )
+        }
+        .sorted { left, right in
+            if left.active != right.active {
+                return left.active && !right.active
+            }
+            if left.layer != right.layer {
+                return left.layer < right.layer
+            }
+            let leftName = left.ownerName ?? left.ownerBundleIdentifier ?? "\(left.ownerPID)"
+            let rightName = right.ownerName ?? right.ownerBundleIdentifier ?? "\(right.ownerPID)"
+            if leftName != rightName {
+                return leftName < rightName
+            }
+            return left.windowNumber < right.windowNumber
+        }
+
+        let limitedRecords = Array(records.prefix(limit))
+        return DesktopWindowsState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            available: true,
+            message: records.isEmpty
+                ? "No matching visible desktop windows were reported."
+                : "Read visible desktop window metadata.",
+            activePID: activePID,
+            includeDesktop: includeDesktop,
+            includeAllLayers: includeAllLayers,
+            limit: limit,
+            count: limitedRecords.count,
+            truncated: records.count > limitedRecords.count,
+            windows: limitedRecords
+        )
+    }
+
+    private func uint32Value(_ value: Any?) -> UInt32? {
+        if let number = value as? NSNumber {
+            return number.uint32Value
+        }
+        if let value = value as? UInt32 {
+            return value
+        }
+        if let value = value as? Int, value >= 0 {
+            return UInt32(value)
+        }
+        return nil
+    }
+
+    private func int32Value(_ value: Any?) -> Int32? {
+        if let number = value as? NSNumber {
+            return number.int32Value
+        }
+        if let value = value as? Int32 {
+            return value
+        }
+        if let value = value as? Int {
+            return Int32(value)
+        }
+        return nil
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        return value as? Int
+    }
+
+    private func doubleValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        return value as? Double
+    }
+
+    private func boolValue(_ value: Any?) -> Bool? {
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        return value as? Bool
+    }
+
+    private func rectValue(_ value: Any?) -> Rect? {
+        guard let dictionary = value as? NSDictionary,
+              let cgRect = CGRect(dictionaryRepresentation: dictionary) else {
+            return nil
+        }
+
+        return Rect(
+            x: Double(cgRect.origin.x),
+            y: Double(cgRect.origin.y),
+            width: Double(cgRect.width),
+            height: Double(cgRect.height)
+        )
     }
 
     private func runningApps(includeBackground: Bool) -> [NSRunningApplication] {
