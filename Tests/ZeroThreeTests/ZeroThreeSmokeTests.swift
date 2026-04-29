@@ -57,6 +57,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.fillFormField"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.fillFormField"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.fillFormField"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.navigate"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.navigate"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.navigate"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -285,6 +288,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.fillFormField"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.navigate"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
         })
@@ -759,6 +767,133 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "value_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "filled")
+    }
+
+    func testBrowserNavigateRequiresPolicyVerifiesURLAndAudits() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-navigate-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("navigate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        try """
+        {
+          "ok": true,
+          "code": "url_matched",
+          "message": "browser tab URL matched expected exact value",
+          "requestedURL": "https://example.com/next",
+          "expectedURL": "https://example.com/next",
+          "currentURL": "https://example.com/next",
+          "match": "exact",
+          "matched": true
+        }
+        """.write(to: cdpResponse, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Start Page",
+            "url": "https://example.com/start",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "navigate",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--url", "https://example.com/blocked",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "navigate",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--url", "https://example.com/next",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "open next page"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.navigate")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["requestedURL"] as? String, "https://example.com/next")
+        XCTAssertEqual(object["expectedURL"] as? String, "https://example.com/next")
+        XCTAssertEqual(object["match"] as? String, "exact")
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "url_matched")
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/next")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.navigate",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.navigate")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["navigationURL"] as? String, "https://example.com/blocked")
+        XCTAssertNil(deniedBrowserTab["currentURL"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.navigate",
+            "--code", "navigated",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.navigate")
+        XCTAssertEqual(entry["action"] as? String, "browser.navigate")
+        XCTAssertEqual(entry["reason"] as? String, "open next page")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Start Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/start")
+        XCTAssertEqual(browserTab["navigationURL"] as? String, "https://example.com/next")
+        XCTAssertEqual(browserTab["currentURL"] as? String, "https://example.com/next")
+        XCTAssertEqual(browserTab["urlMatched"] as? Bool, true)
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "url_matched")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "navigated")
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {

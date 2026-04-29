@@ -249,6 +249,9 @@ struct BrowserAuditSummary: Codable {
     var formSelector: String? = nil
     var formTextLength: Int? = nil
     var formTextDigest: String? = nil
+    var navigationURL: String? = nil
+    var currentURL: String? = nil
+    var urlMatched: Bool? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -341,6 +344,33 @@ struct BrowserFormFillResult: Codable {
     let targetDisabled: Bool?
     let targetReadOnly: Bool?
     let resultingValueLength: Int?
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserNavigationVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let requestedURL: String
+    let expectedURL: String
+    let currentURL: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserNavigationResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let requestedURL: String
+    let expectedURL: String
+    let match: String
+    let verification: BrowserNavigationVerification
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -613,6 +643,11 @@ private struct CDPEvaluateResponse: Decodable {
     let error: CDPError?
 }
 
+private struct CDPCommandResponse: Decodable {
+    let id: Int?
+    let error: CDPError?
+}
+
 private struct CDPEvaluateResult: Decodable {
     let result: CDPRemoteObject
 }
@@ -639,6 +674,23 @@ private final class CDPResponseBox: @unchecked Sendable {
     }
 
     func get() -> Result<CDPEvaluateResponse, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
+private final class CDPCommandResponseBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<CDPCommandResponse, Error>?
+
+    func set(_ newValue: Result<CDPCommandResponse, Error>) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> Result<CDPCommandResponse, Error>? {
         lock.lock()
         defer { lock.unlock() }
         return value
@@ -1189,6 +1241,10 @@ final class ZeroThreeCLI {
             let selector = try requiredOption("--selector")
             let text = try requiredOption("--text")
             try writeJSON(browserFill(id: id, selector: selector, text: text))
+        case "navigate":
+            let id = try requiredOption("--id")
+            let url = try requiredOption("--url")
+            try writeJSON(browserNavigate(id: id, requestedURL: url))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -2516,6 +2572,11 @@ final class ZeroThreeCLI {
                     name: "browser.fillFormField",
                     risk: browserActionRisk(for: "browser.fillFormField"),
                     mutates: true
+                ),
+                BrowserAction(
+                    name: "browser.navigate",
+                    risk: browserActionRisk(for: "browser.navigate"),
+                    mutates: true
                 )
             ]
         )
@@ -2908,6 +2969,156 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func browserNavigate(id: String, requestedURL: String) throws -> BrowserNavigationResult {
+        let action = "browser.navigate"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let expectedURL = option("--expect-url") ?? requestedURL
+        let match = try browserURLMatchMode(option("--match") ?? "exact")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        var verification: BrowserNavigationVerification?
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            navigationURL: requestedURL,
+            currentURL: nil,
+            urlMatched: nil
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.navigate",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification.map {
+                    FileOperationVerification(ok: $0.ok, code: $0.code, message: $0.message)
+                },
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            let normalizedRequestedURL = try validatedBrowserNavigationURL(requestedURL)
+            let normalizedExpectedURL = try validatedBrowserExpectedURL(expectedURL)
+
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                navigationURL: normalizedRequestedURL,
+                currentURL: tab.url,
+                urlMatched: nil
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            verification = try navigateBrowserPage(
+                tabID: id,
+                requestedURL: normalizedRequestedURL,
+                expectedURL: normalizedExpectedURL,
+                match: match,
+                endpoint: endpoint,
+                webSocketURL: webSocketURL,
+                timeoutMilliseconds: timeoutMilliseconds,
+                intervalMilliseconds: intervalMilliseconds
+            )
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                navigationURL: normalizedRequestedURL,
+                currentURL: verification?.currentURL,
+                urlMatched: verification?.matched
+            )
+
+            guard let verification, verification.ok else {
+                let message = verification?.message ?? "browser navigation verification failed"
+                try writeAudit(ok: false, code: verification?.code ?? "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Navigated browser tab \(id) and verified the resulting URL."
+            try writeAudit(ok: true, code: "navigated", message: message)
+
+            return BrowserNavigationResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                requestedURL: normalizedRequestedURL,
+                expectedURL: normalizedExpectedURL,
+                match: match,
+                verification: verification,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
     private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
         let expression = """
         (() => {
@@ -3150,6 +3361,135 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func navigateBrowserPage(
+        tabID: String,
+        requestedURL: String,
+        expectedURL: String,
+        match: String,
+        endpoint: URL,
+        webSocketURL: URL,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> BrowserNavigationVerification {
+        if webSocketURL.isFileURL {
+            let data = try Data(contentsOf: webSocketURL)
+            return try JSONDecoder().decode(BrowserNavigationVerification.self, from: data)
+        }
+
+        let response = try sendCDPCommand(
+            method: "Page.navigate",
+            params: ["url": requestedURL],
+            at: webSocketURL,
+            timeout: Double(timeoutMilliseconds) / 1_000.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Page.navigate failed with \(error.code): \(error.message)")
+        }
+
+        return try waitForBrowserURL(
+            tabID: tabID,
+            requestedURL: requestedURL,
+            expectedURL: expectedURL,
+            match: match,
+            endpoint: endpoint,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+    }
+
+    private func waitForBrowserURL(
+        tabID: String,
+        requestedURL: String,
+        expectedURL: String,
+        match: String,
+        endpoint: URL,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> BrowserNavigationVerification {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var currentURL: String?
+
+        repeat {
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            currentURL = tabs.first(where: { $0.id == tabID })?.url
+            if browserURL(currentURL, matches: expectedURL, mode: match) {
+                return BrowserNavigationVerification(
+                    ok: true,
+                    code: "url_matched",
+                    message: "browser tab URL matched expected \(match) value",
+                    requestedURL: requestedURL,
+                    expectedURL: expectedURL,
+                    currentURL: currentURL,
+                    match: match,
+                    matched: true
+                )
+            }
+
+            if Date() >= deadline {
+                break
+            }
+            Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+        } while true
+
+        return BrowserNavigationVerification(
+            ok: false,
+            code: "url_mismatch",
+            message: "browser tab URL did not match expected \(match) value before timeout",
+            requestedURL: requestedURL,
+            expectedURL: expectedURL,
+            currentURL: currentURL,
+            match: match,
+            matched: false
+        )
+    }
+
+    private func browserURL(_ currentURL: String?, matches expectedURL: String, mode: String) -> Bool {
+        guard let currentURL else {
+            return false
+        }
+
+        switch mode {
+        case "exact":
+            return currentURL == expectedURL
+        case "prefix":
+            return currentURL.hasPrefix(expectedURL)
+        case "contains":
+            return currentURL.contains(expectedURL)
+        default:
+            return false
+        }
+    }
+
+    private func browserURLMatchMode(_ rawMode: String) throws -> String {
+        switch rawMode {
+        case "exact", "prefix", "contains":
+            return rawMode
+        default:
+            throw CommandError(description: "unsupported browser URL match mode '\(rawMode)'. Use exact, prefix, or contains.")
+        }
+    }
+
+    private func validatedBrowserNavigationURL(_ rawURL: String) throws -> String {
+        guard let url = URL(string: rawURL),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme) else {
+            throw CommandError(description: "browser navigation URL must be an absolute http or https URL")
+        }
+        return url.absoluteString
+    }
+
+    private func validatedBrowserExpectedURL(_ rawURL: String) throws -> String {
+        guard !rawURL.isEmpty else {
+            throw CommandError(description: "browser expected URL must not be empty")
+        }
+        if rawURL.contains("://") {
+            return try validatedBrowserNavigationURL(rawURL)
+        }
+        return rawURL
+    }
+
     private func evaluateCDPRuntimeExpression(
         _ expression: String,
         at webSocketURL: URL,
@@ -3239,6 +3579,90 @@ final class ZeroThreeCLI {
         session.finishTasksAndInvalidate()
         return try result.get()?.get() ?? {
             throw CommandError(description: "Chrome DevTools Runtime.evaluate did not produce a response")
+        }()
+    }
+
+    private func sendCDPCommand(
+        method: String,
+        params: [String: Any],
+        at webSocketURL: URL,
+        timeout: TimeInterval
+    ) throws -> CDPCommandResponse {
+        guard ["ws", "wss"].contains(webSocketURL.scheme?.lowercased() ?? "") else {
+            throw CommandError(description: "unsupported DevTools debugger URL scheme '\(webSocketURL.scheme ?? "")'. Use ws or wss.")
+        }
+
+        let requestID = 1
+        let payload: [String: Any] = [
+            "id": requestID,
+            "method": method,
+            "params": params
+        ]
+        let requestData = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let semaphore = DispatchSemaphore(value: 0)
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: webSocketURL)
+        let result = CDPCommandResponseBox()
+
+        @Sendable func receiveResponse(remainingMessages: Int) {
+            guard remainingMessages > 0 else {
+                result.set(.failure(CommandError(description: "Chrome DevTools did not return \(method) response")))
+                semaphore.signal()
+                return
+            }
+
+            task.receive { messageResult in
+                switch messageResult {
+                case .failure(let error):
+                    result.set(.failure(error))
+                    semaphore.signal()
+                case .success(let message):
+                    do {
+                        let data: Data
+                        switch message {
+                        case .data(let messageData):
+                            data = messageData
+                        case .string(let string):
+                            data = Data(string.utf8)
+                        @unknown default:
+                            throw CommandError(description: "unsupported WebSocket message from Chrome DevTools")
+                        }
+
+                        let response = try JSONDecoder().decode(CDPCommandResponse.self, from: data)
+                        if response.id == requestID {
+                            result.set(.success(response))
+                            semaphore.signal()
+                        } else {
+                            receiveResponse(remainingMessages: remainingMessages - 1)
+                        }
+                    } catch {
+                        result.set(.failure(error))
+                        semaphore.signal()
+                    }
+                }
+            }
+        }
+
+        task.resume()
+        task.send(.data(requestData)) { error in
+            if let error {
+                result.set(.failure(error))
+                semaphore.signal()
+                return
+            }
+            receiveResponse(remainingMessages: 20)
+        }
+
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            task.cancel(with: .goingAway, reason: nil)
+            session.invalidateAndCancel()
+            throw CommandError(description: "timed out waiting for Chrome DevTools \(method) response")
+        }
+
+        task.cancel(with: .normalClosure, reason: nil)
+        session.finishTasksAndInvalidate()
+        return try result.get()?.get() ?? {
+            throw CommandError(description: "Chrome DevTools \(method) did not produce a response")
         }()
     }
 
@@ -3835,7 +4259,7 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab":
             return "low"
-        case "browser.readText", "browser.readDOM", "browser.fillFormField":
+        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -3900,6 +4324,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -4149,7 +4574,8 @@ final class ZeroThreeCLI {
                     { "name": "browser.inspectTab", "risk": "low", "mutates": false },
                     { "name": "browser.readText", "risk": "medium", "mutates": false },
                     { "name": "browser.readDOM", "risk": "medium", "mutates": false },
-                    { "name": "browser.fillFormField", "risk": "medium", "mutates": true }
+                    { "name": "browser.fillFormField", "risk": "medium", "mutates": true },
+                    { "name": "browser.navigate", "risk": "medium", "mutates": true }
                   ]
                 }
               ]
@@ -4222,6 +4648,25 @@ final class ZeroThreeCLI {
               "targetTagName": "input",
               "targetInputType": "text",
               "resultingValueLength": 12,
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "browserNavigate": {
+            "command": "03 browser navigate --endpoint http://127.0.0.1:9222 --id devtools-target-id --url https://example.com/next --allow-risk medium",
+            "result": {
+              "action": "browser.navigate",
+              "risk": "medium",
+              "requestedURL": "https://example.com/next",
+              "expectedURL": "https://example.com/next",
+              "match": "exact",
+              "verification": {
+                "ok": true,
+                "code": "url_matched",
+                "message": "browser tab URL matched expected exact value",
+                "currentURL": "https://example.com/next",
+                "matched": true
+              },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -4443,6 +4888,7 @@ final class ZeroThreeCLI {
           03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -4474,6 +4920,7 @@ final class ZeroThreeCLI {
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
+          - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
         """)
     }
 

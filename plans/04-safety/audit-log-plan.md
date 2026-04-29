@@ -31,6 +31,7 @@ The system should keep a structured history of task intent, actions taken, permi
 - Browser page text audit: `03 browser text` records tab metadata, text length, text digest, reason, policy decision, and outcome without storing extracted page text in the audit log.
 - Browser DOM audit: `03 browser dom` records tab metadata, DOM element count, DOM digest, reason, policy decision, and outcome without storing the structured DOM payload in the audit log.
 - Browser form fill audit: `03 browser fill` records tab metadata, selector, entered text length, entered text digest, reason, policy decision, verification, and outcome without storing the entered text in the audit log.
+- Browser navigation audit: `03 browser navigate` records tab metadata, requested URL, verified current URL, reason, policy decision, verification, and outcome for browser-native navigation.
 
 ## Relationship To The Product
 
