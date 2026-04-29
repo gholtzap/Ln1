@@ -23,6 +23,7 @@ The system should understand open tabs, active pages, page content, forms, links
 ## Implemented Increments
 
 - DevTools tab discovery: `03 browser tabs` and `03 browser tab` read Chrome DevTools `/json/list` from an explicit endpoint and return structured tab target metadata, filtering non-page targets by default.
+- DevTools page text extraction: `03 browser text` reads bounded visible page text through a tab's Chrome DevTools WebSocket after medium-risk policy approval and records only tab metadata plus text length/digest in the audit log.
 
 ## Relationship To The Product
 

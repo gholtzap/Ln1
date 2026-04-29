@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser inspection actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection actions are listed as low-risk, non-mutating reads.
 
 ## Inspect Running Apps
 
@@ -315,7 +315,15 @@ Inspect one tab from the same structured source:
 .build/debug/03 browser tab --endpoint http://127.0.0.1:9222 --id TARGET_ID
 ```
 
-This adapter does not click in the browser and does not require Accessibility access. It is the first browser substrate increment: page DOM, form actions, and navigation verification still need follow-on work through the tab's DevTools WebSocket.
+Read the visible text from a page through the tab's DevTools WebSocket:
+
+```sh
+.build/debug/03 browser text --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-characters 16384 --reason "Extract page text for summarization"
+```
+
+`browser.readText` is a medium-risk read action because page text can contain private web-app content. The command returns bounded text to the caller, but its audit record stores only the tab ID, type, title, URL, text length, digest, policy decision, reason, and outcome. It does not click in the browser and does not require Accessibility access.
+
+This adapter is now using browser-native DevTools metadata and page text. Form actions, DOM element trees, and navigation verification still need follow-on work through the tab's DevTools WebSocket.
 
 ## Product Direction
 

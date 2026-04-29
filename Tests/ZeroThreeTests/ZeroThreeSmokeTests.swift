@@ -43,6 +43,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.inspectTab"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.inspectTab"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.inspectTab"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.readText"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.readText"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.readText"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -224,6 +227,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.readText"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == false
+        })
 
         let tabResult = try runZeroThree([
             "browser",
@@ -239,6 +247,125 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(tab["webSocketDebuggerURL"] as? String, "ws://127.0.0.1/devtools/page/page-2")
         XCTAssertEqual(tab["devtoolsFrontendURL"] as? String, "/devtools/inspector.html?ws=127.0.0.1/page-2")
         XCTAssertEqual(tab["faviconURL"] as? String, "https://example.com/favicon.ico")
+    }
+
+    func testBrowserTextReadsPageTextWithPolicyAndAuditsSummaryOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-text-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "id": 1,
+          "result": {
+            "result": {
+              "type": "string",
+              "value": "Line one\\nLine two"
+            }
+          }
+        }
+        """.write(to: cdpResponse, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Readable Page",
+            "url": "https://example.com/readable",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "text",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "text",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--allow-risk", "medium",
+            "--max-characters", "11",
+            "--audit-log", auditLog.path,
+            "--reason", "read visible page text"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.readText")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["text"] as? String, "Line one\nLi")
+        XCTAssertEqual(object["textLength"] as? Int, 17)
+        XCTAssertEqual(object["truncated"] as? Bool, true)
+        XCTAssertEqual(object["maxCharacters"] as? Int, 11)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertNil(object["contents"])
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.text",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.readText")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["id"] as? String, "page-1")
+        XCTAssertNil(deniedBrowserTab["textLength"])
+        XCTAssertNil(deniedBrowserTab["textDigest"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.text",
+            "--code", "read_text",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.text")
+        XCTAssertEqual(entry["action"] as? String, "browser.readText")
+        XCTAssertEqual(entry["reason"] as? String, "read visible page text")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Readable Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/readable")
+        XCTAssertEqual(browserTab["textLength"] as? Int, 17)
+        XCTAssertNotNil(browserTab["textDigest"])
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_text")
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {

@@ -207,6 +207,32 @@ struct BrowserTabState: Codable {
     let tab: BrowserTab
 }
 
+struct BrowserAuditSummary: Codable {
+    let id: String
+    let type: String
+    let title: String?
+    let url: String?
+    let textLength: Int?
+    let textDigest: String?
+}
+
+struct BrowserTextResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let text: String
+    let textLength: Int
+    let textDigest: String
+    let truncated: Bool
+    let maxCharacters: Int
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct ClipboardAuditSummary: Codable {
     let pasteboard: String
     let changeCount: Int
@@ -257,6 +283,7 @@ struct ActionAuditRecord: Codable {
     var clipboard: ClipboardAuditSummary? = nil
     var clipboardBefore: ClipboardAuditSummary? = nil
     var clipboardAfter: ClipboardAuditSummary? = nil
+    var browserTab: BrowserAuditSummary? = nil
     let outcome: AuditOutcome
 }
 
@@ -437,6 +464,44 @@ private struct DevToolsTarget: Decodable {
     let devtoolsFrontendUrl: String?
     let faviconUrl: String?
     let attached: Bool?
+}
+
+private struct CDPEvaluateResponse: Decodable {
+    let id: Int?
+    let result: CDPEvaluateResult?
+    let error: CDPError?
+}
+
+private struct CDPEvaluateResult: Decodable {
+    let result: CDPRemoteObject
+}
+
+private struct CDPRemoteObject: Decodable {
+    let type: String?
+    let value: String?
+    let description: String?
+}
+
+private struct CDPError: Decodable {
+    let code: Int
+    let message: String
+}
+
+private final class CDPResponseBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<CDPEvaluateResponse, Error>?
+
+    func set(_ newValue: Result<CDPEvaluateResponse, Error>) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> Result<CDPEvaluateResponse, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -941,6 +1006,10 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let includeNonPageTargets = flag("--include-non-page")
             try writeJSON(browserTab(id: id, includeNonPageTargets: includeNonPageTargets))
+        case "text":
+            let id = try requiredOption("--id")
+            let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 16_384)
+            try writeJSON(browserText(id: id, maxCharacters: maxCharacters))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -2060,9 +2129,264 @@ final class ZeroThreeCLI {
                     name: "browser.inspectTab",
                     risk: browserActionRisk(for: "browser.inspectTab"),
                     mutates: false
+                ),
+                BrowserAction(
+                    name: "browser.readText",
+                    risk: browserActionRisk(for: "browser.readText"),
+                    mutates: false
                 )
             ]
         )
+    }
+
+    private func browserText(id: String, maxCharacters: Int) throws -> BrowserTextResult {
+        let action = "browser.readText"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.text",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let text = try readBrowserInnerText(from: webSocketURL)
+            let digest = sha256Digest(text)
+            let returnedText: String
+            let truncated: Bool
+            if text.count > maxCharacters {
+                returnedText = String(text.prefix(maxCharacters))
+                truncated = true
+            } else {
+                returnedText = text
+                truncated = false
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: text.count,
+                textDigest: digest
+            )
+
+            let message = truncated
+                ? "Read truncated browser page text from tab \(id)."
+                : "Read browser page text from tab \(id)."
+            try writeAudit(ok: true, code: "read_text", message: message)
+
+            return BrowserTextResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                text: returnedText,
+                textLength: text.count,
+                textDigest: digest,
+                truncated: truncated,
+                maxCharacters: maxCharacters,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
+        let expression = """
+        (() => {
+          const root = document.body || document.documentElement;
+          return root ? root.innerText : "";
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        if let value = remoteObject.value {
+            return value
+        }
+        if remoteObject.type == "undefined" {
+            return ""
+        }
+        throw CommandError(description: "Chrome DevTools Runtime.evaluate returned \(remoteObject.type ?? "unknown") instead of string text")
+    }
+
+    private func evaluateCDPRuntimeExpression(
+        _ expression: String,
+        at webSocketURL: URL,
+        timeout: TimeInterval
+    ) throws -> CDPEvaluateResponse {
+        if webSocketURL.isFileURL {
+            let data = try Data(contentsOf: webSocketURL)
+            return try Self.decodeCDPEvaluateResponse(from: data)
+        }
+
+        guard ["ws", "wss"].contains(webSocketURL.scheme?.lowercased() ?? "") else {
+            throw CommandError(description: "unsupported DevTools debugger URL scheme '\(webSocketURL.scheme ?? "")'. Use ws or wss.")
+        }
+
+        let requestID = 1
+        let payload: [String: Any] = [
+            "id": requestID,
+            "method": "Runtime.evaluate",
+            "params": [
+                "expression": expression,
+                "awaitPromise": true,
+                "returnByValue": true
+            ]
+        ]
+        let requestData = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let semaphore = DispatchSemaphore(value: 0)
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: webSocketURL)
+        let result = CDPResponseBox()
+
+        @Sendable func receiveResponse(remainingMessages: Int) {
+            guard remainingMessages > 0 else {
+                result.set(.failure(CommandError(description: "Chrome DevTools did not return Runtime.evaluate response")))
+                semaphore.signal()
+                return
+            }
+
+            task.receive { messageResult in
+                switch messageResult {
+                case .failure(let error):
+                    result.set(.failure(error))
+                    semaphore.signal()
+                case .success(let message):
+                    do {
+                        let data: Data
+                        switch message {
+                        case .data(let messageData):
+                            data = messageData
+                        case .string(let string):
+                            data = Data(string.utf8)
+                        @unknown default:
+                            throw CommandError(description: "unsupported WebSocket message from Chrome DevTools")
+                        }
+
+                        let response = try Self.decodeCDPEvaluateResponse(from: data)
+                        if response.id == requestID {
+                            result.set(.success(response))
+                            semaphore.signal()
+                        } else {
+                            receiveResponse(remainingMessages: remainingMessages - 1)
+                        }
+                    } catch {
+                        result.set(.failure(error))
+                        semaphore.signal()
+                    }
+                }
+            }
+        }
+
+        task.resume()
+        task.send(.data(requestData)) { error in
+            if let error {
+                result.set(.failure(error))
+                semaphore.signal()
+                return
+            }
+            receiveResponse(remainingMessages: 20)
+        }
+
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            task.cancel(with: .goingAway, reason: nil)
+            session.invalidateAndCancel()
+            throw CommandError(description: "timed out waiting for Chrome DevTools Runtime.evaluate response")
+        }
+
+        task.cancel(with: .normalClosure, reason: nil)
+        session.finishTasksAndInvalidate()
+        return try result.get()?.get() ?? {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not produce a response")
+        }()
+    }
+
+    private static func decodeCDPEvaluateResponse(from data: Data) throws -> CDPEvaluateResponse {
+        do {
+            return try JSONDecoder().decode(CDPEvaluateResponse.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response was not valid JSON: \(error.localizedDescription)")
+        }
     }
 
     private func browserEndpoint() throws -> URL {
@@ -2642,6 +2966,8 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab":
             return "low"
+        case "browser.readText":
+            return "medium"
         default:
             return "unknown"
         }
@@ -2691,6 +3017,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -3121,6 +3448,7 @@ final class ZeroThreeCLI {
           03 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           03 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
           03 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
+          03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -3147,6 +3475,7 @@ final class ZeroThreeCLI {
           - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text.
           - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
+          - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
         """)
     }
 
