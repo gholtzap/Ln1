@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, and `clipboard write-text` use these risk levels when evaluating `--allow-risk`.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, and `clipboard write-text` use these risk levels when evaluating `--allow-risk`; browser inspection actions are listed as low-risk, non-mutating reads.
 
 ## Inspect Running Apps
 
@@ -251,6 +251,29 @@ Write plain text to the clipboard only after explicitly allowing medium-risk cli
 ```
 
 `clipboard.writeText` is a medium-risk mutating action because it replaces the current plain-text pasteboard contents. The command records before/after pasteboard metadata, text lengths, digests, policy decision, verification result, reason, and outcome without storing either the previous or new clipboard text in the audit log. The command verifies the write by checking that the clipboard contains text with the requested length and SHA-256 digest.
+
+## Inspect Browser Tabs
+
+Start Chrome or another Chromium browser with a DevTools endpoint, then ask 03 for browser-native tab metadata:
+
+```sh
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+.build/debug/03 browser tabs --endpoint http://127.0.0.1:9222
+```
+
+`browser.listTabs` is a low-risk read action. It reads `/json/list` from the explicit DevTools endpoint and returns structured tab records with target IDs, type, title, URL, DevTools frontend URL, WebSocket debugger URL, favicon URL, attachment state, and available typed browser actions. Non-page DevTools targets such as service workers are hidden by default; include them when relevant:
+
+```sh
+.build/debug/03 browser tabs --endpoint http://127.0.0.1:9222 --include-non-page
+```
+
+Inspect one tab from the same structured source:
+
+```sh
+.build/debug/03 browser tab --endpoint http://127.0.0.1:9222 --id TARGET_ID
+```
+
+This adapter does not click in the browser and does not require Accessibility access. It is the first browser substrate increment: page DOM, form actions, and navigation verification still need follow-on work through the tab's DevTools WebSocket.
 
 ## Product Direction
 

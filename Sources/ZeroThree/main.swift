@@ -172,6 +172,41 @@ struct ClipboardWriteResult: Codable {
     let message: String
 }
 
+struct BrowserAction: Codable {
+    let name: String
+    let risk: String
+    let mutates: Bool
+}
+
+struct BrowserTab: Codable {
+    let id: String
+    let type: String
+    let title: String?
+    let url: String?
+    let description: String?
+    let webSocketDebuggerURL: String?
+    let devtoolsFrontendURL: String?
+    let faviconURL: String?
+    let attached: Bool?
+    let actions: [BrowserAction]
+}
+
+struct BrowserTabsState: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let includeNonPageTargets: Bool
+    let count: Int
+    let tabs: [BrowserTab]
+}
+
+struct BrowserTabState: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+}
+
 struct ClipboardAuditSummary: Codable {
     let pasteboard: String
     let changeCount: Int
@@ -366,6 +401,18 @@ struct FileRollbackResult: Codable {
     let auditLogPath: String
 }
 
+private struct DevToolsTarget: Decodable {
+    let id: String
+    let type: String?
+    let title: String?
+    let url: String?
+    let description: String?
+    let webSocketDebuggerUrl: String?
+    let devtoolsFrontendUrl: String?
+    let faviconUrl: String?
+    let attached: Bool?
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
@@ -413,6 +460,8 @@ final class ZeroThreeCLI {
             try files()
         case "clipboard":
             try clipboard()
+        case "browser":
+            try browser()
         case "schema":
             schema()
         case "help", "--help", "-h":
@@ -786,6 +835,22 @@ final class ZeroThreeCLI {
             try writeJSON(writeClipboardText(text, to: pasteboard))
         default:
             throw CommandError(description: "unknown clipboard mode '\(mode)'")
+        }
+    }
+
+    private func browser() throws {
+        let mode = arguments.dropFirst().first ?? "tabs"
+
+        switch mode {
+        case "tabs":
+            let includeNonPageTargets = flag("--include-non-page")
+            try writeJSON(browserTabs(includeNonPageTargets: includeNonPageTargets))
+        case "tab":
+            let id = try requiredOption("--id")
+            let includeNonPageTargets = flag("--include-non-page")
+            try writeJSON(browserTab(id: id, includeNonPageTargets: includeNonPageTargets))
+        default:
+            throw CommandError(description: "unknown browser mode '\(mode)'")
         }
     }
 
@@ -1825,6 +1890,108 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func browserTabs(includeNonPageTargets: Bool) throws -> BrowserTabsState {
+        let endpoint = try browserEndpoint()
+        let tabs = try fetchBrowserTabs(
+            from: endpoint,
+            includeNonPageTargets: includeNonPageTargets
+        )
+
+        return BrowserTabsState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            includeNonPageTargets: includeNonPageTargets,
+            count: tabs.count,
+            tabs: tabs
+        )
+    }
+
+    private func browserTab(id: String, includeNonPageTargets: Bool) throws -> BrowserTabState {
+        let endpoint = try browserEndpoint()
+        let tabs = try fetchBrowserTabs(
+            from: endpoint,
+            includeNonPageTargets: includeNonPageTargets
+        )
+        guard let tab = tabs.first(where: { $0.id == id }) else {
+            throw CommandError(description: "no browser tab found with id \(id)")
+        }
+
+        return BrowserTabState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            tab: tab
+        )
+    }
+
+    private func fetchBrowserTabs(
+        from endpoint: URL,
+        includeNonPageTargets: Bool
+    ) throws -> [BrowserTab] {
+        let listURL = browserListURL(for: endpoint)
+        let data: Data
+        do {
+            data = try Data(contentsOf: listURL)
+        } catch {
+            throw CommandError(description: "could not read browser DevTools target list at \(listURL.absoluteString): \(error.localizedDescription)")
+        }
+
+        let targets: [DevToolsTarget]
+        do {
+            targets = try JSONDecoder().decode([DevToolsTarget].self, from: data)
+        } catch {
+            throw CommandError(description: "browser DevTools target list at \(listURL.absoluteString) was not valid JSON: \(error.localizedDescription)")
+        }
+
+        return targets
+            .filter { includeNonPageTargets || ($0.type ?? "page") == "page" }
+            .map(browserTab)
+            .sorted { left, right in
+                (left.title ?? left.url ?? left.id) < (right.title ?? right.url ?? right.id)
+            }
+    }
+
+    private func browserTab(from target: DevToolsTarget) -> BrowserTab {
+        BrowserTab(
+            id: target.id,
+            type: target.type ?? "page",
+            title: target.title,
+            url: target.url,
+            description: target.description,
+            webSocketDebuggerURL: target.webSocketDebuggerUrl,
+            devtoolsFrontendURL: target.devtoolsFrontendUrl,
+            faviconURL: target.faviconUrl,
+            attached: target.attached,
+            actions: [
+                BrowserAction(
+                    name: "browser.inspectTab",
+                    risk: browserActionRisk(for: "browser.inspectTab"),
+                    mutates: false
+                )
+            ]
+        )
+    }
+
+    private func browserEndpoint() throws -> URL {
+        let rawEndpoint = option("--endpoint") ?? "http://127.0.0.1:9222"
+        if let url = URL(string: rawEndpoint), url.scheme != nil {
+            guard ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else {
+                throw CommandError(description: "unsupported browser endpoint scheme '\(url.scheme ?? "")'. Use http, https, or file.")
+            }
+            return url
+        }
+
+        return URL(fileURLWithPath: expandedPath(rawEndpoint)).standardizedFileURL
+    }
+
+    private func browserListURL(for endpoint: URL) -> URL {
+        if endpoint.path.hasSuffix("/json/list") {
+            return endpoint
+        }
+        return endpoint.appendingPathComponent("json/list")
+    }
+
     private func fileChecksum(
         for url: URL,
         algorithm: String,
@@ -2239,6 +2406,15 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func browserActionRisk(for action: String) -> String {
+        switch action {
+        case "browser.listTabs", "browser.inspectTab":
+            return "low"
+        default:
+            return "unknown"
+        }
+    }
+
     private func knownPolicyActions() -> [PolicyActionRecord] {
         [
             PolicyActionRecord(name: kAXPressAction as String, domain: "accessibility", risk: "low", mutates: true),
@@ -2258,7 +2434,9 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.rollbackMove", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "clipboard.state", domain: "clipboard", risk: "low", mutates: false),
             PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false),
-            PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true)
+            PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false)
         ]
     }
 
@@ -2440,6 +2618,36 @@ final class ZeroThreeCLI {
               },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "browserTabs": {
+            "command": "03 browser tabs --endpoint http://127.0.0.1:9222",
+            "result": {
+              "endpoint": "http://127.0.0.1:9222",
+              "includeNonPageTargets": false,
+              "count": 1,
+              "tabs": [
+                {
+                  "id": "devtools-target-id",
+                  "type": "page",
+                  "title": "Page title",
+                  "url": "https://example.com",
+                  "webSocketDebuggerURL": "ws://127.0.0.1:9222/devtools/page/devtools-target-id",
+                  "actions": [
+                    { "name": "browser.inspectTab", "risk": "low", "mutates": false }
+                  ]
+                }
+              ]
+            }
+          },
+          "browserTab": {
+            "command": "03 browser tab --endpoint http://127.0.0.1:9222 --id devtools-target-id",
+            "result": {
+              "tab": {
+                "id": "devtools-target-id",
+                "title": "Page title",
+                "url": "https://example.com"
+              }
             }
           },
           "files": {
@@ -2629,10 +2837,12 @@ final class ZeroThreeCLI {
           03 clipboard state [--pasteboard NAME]
           03 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           03 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
+          03 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
+          03 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           03 schema
 
         Notes:
-          - Run `03 trust` first and grant Accessibility access when prompted.
+          - Run `03 trust` before Accessibility-backed `state` or `perform` commands.
           - `policy` describes known action risk levels and mutation behavior.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
@@ -2652,6 +2862,8 @@ final class ZeroThreeCLI {
           - `clipboard state` reports pasteboard metadata and text digest without returning clipboard text.
           - `clipboard read-text` returns bounded text only after medium-risk policy approval and audits metadata without storing text.
           - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text.
+          - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.
+          - `browser tab` inspects one DevTools target by id from the same structured browser source.
         """)
     }
 

@@ -37,6 +37,93 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["clipboard.writeText"]?["domain"] as? String, "clipboard")
         XCTAssertEqual(actionByName["clipboard.writeText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["clipboard.writeText"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.listTabs"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.listTabs"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.listTabs"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.inspectTab"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.inspectTab"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.inspectTab"]?["mutates"] as? Bool, false)
+    }
+
+    func testBrowserTabsReturnsStructuredDevToolsPageTargets() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-2",
+            "type": "page",
+            "title": "Second Page",
+            "url": "https://example.com/second",
+            "description": "",
+            "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/page-2",
+            "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1/page-2",
+            "faviconUrl": "https://example.com/favicon.ico",
+            "attached": false
+          },
+          {
+            "id": "worker-1",
+            "type": "service_worker",
+            "title": "Worker",
+            "url": "https://example.com/sw.js"
+          },
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "First Page",
+            "url": "https://example.com/first",
+            "attached": true
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "tabs",
+            "--endpoint", directory.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tabs = try XCTUnwrap(object["tabs"] as? [[String: Any]])
+        let ids = Set(tabs.compactMap { $0["id"] as? String })
+        let firstPage = try XCTUnwrap(tabs.first { $0["id"] as? String == "page-1" })
+        let firstPageActions = try XCTUnwrap(firstPage["actions"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["includeNonPageTargets"] as? Bool, false)
+        XCTAssertEqual(object["count"] as? Int, 2)
+        XCTAssertTrue(ids.contains("page-1"))
+        XCTAssertTrue(ids.contains("page-2"))
+        XCTAssertFalse(ids.contains("worker-1"))
+        XCTAssertEqual(firstPage["type"] as? String, "page")
+        XCTAssertEqual(firstPage["title"] as? String, "First Page")
+        XCTAssertEqual(firstPage["url"] as? String, "https://example.com/first")
+        XCTAssertEqual(firstPage["attached"] as? Bool, true)
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.inspectTab"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+
+        let tabResult = try runZeroThree([
+            "browser",
+            "tab",
+            "--endpoint", directory.path,
+            "--id", "page-2"
+        ])
+
+        XCTAssertEqual(tabResult.status, 0, tabResult.stderr)
+        let tabObject = try decodeJSONObject(tabResult.stdout)
+        let tab = try XCTUnwrap(tabObject["tab"] as? [String: Any])
+        XCTAssertEqual(tab["id"] as? String, "page-2")
+        XCTAssertEqual(tab["webSocketDebuggerURL"] as? String, "ws://127.0.0.1/devtools/page/page-2")
+        XCTAssertEqual(tab["devtoolsFrontendURL"] as? String, "/devtools/inspector.html?ws=127.0.0.1/page-2")
+        XCTAssertEqual(tab["faviconURL"] as? String, "https://example.com/favicon.ico")
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {

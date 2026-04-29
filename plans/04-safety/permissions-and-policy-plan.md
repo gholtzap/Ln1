@@ -28,6 +28,7 @@ The system should classify observations and actions by risk, enforce user-config
 - Rollback risk enforcement: `03 files rollback --audit-id` is classified as a medium-risk mutating filesystem action and is denied by default unless the caller explicitly allows medium risk.
 - Clipboard privacy enforcement: `03 clipboard read-text` is classified as a medium-risk read action and is denied by default unless the caller explicitly allows medium risk.
 - Clipboard mutation enforcement: `03 clipboard write-text` is classified as a medium-risk mutating clipboard action and is denied by default unless the caller explicitly allows medium risk.
+- Browser tab read classification: `03 browser tabs` and `03 browser tab` expose DevTools tab metadata as low-risk, non-mutating browser inspection actions.
 
 ## Relationship To The Product
 

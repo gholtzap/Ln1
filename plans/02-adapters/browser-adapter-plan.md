@@ -20,6 +20,10 @@ The system should understand open tabs, active pages, page content, forms, links
 - The assistant can verify page changes after interaction.
 - The assistant can avoid brittle coordinate-based web automation when DOM access is available.
 
+## Implemented Increments
+
+- DevTools tab discovery: `03 browser tabs` and `03 browser tab` read Chrome DevTools `/json/list` from an explicit endpoint and return structured tab target metadata, filtering non-page targets by default.
+
 ## Relationship To The Product
 
 The browser adapter is likely one of the highest-leverage adapters because it turns web apps from visual surfaces into inspectable software environments.
