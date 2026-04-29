@@ -30,6 +30,7 @@ The system should classify observations and actions by risk, enforce user-config
 - Clipboard mutation enforcement: `03 clipboard write-text` is classified as a medium-risk mutating clipboard action and is denied by default unless the caller explicitly allows medium risk.
 - Browser tab read classification: `03 browser tabs` and `03 browser tab` expose DevTools tab metadata as low-risk, non-mutating browser inspection actions.
 - Browser page text privacy enforcement: `03 browser text` is classified as a medium-risk read action because page contents may include private web-app data.
+- Browser DOM privacy enforcement: `03 browser dom` is classified as a medium-risk read action because structured page text, links, labels, and form metadata may expose private web-app state.
 - Task memory privacy enforcement: `03 task start`, `03 task record`, `03 task finish`, and `03 task show` are classified as medium-risk task memory actions because they persist or reveal private workflow context.
 
 ## Relationship To The Product

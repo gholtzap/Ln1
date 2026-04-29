@@ -24,7 +24,7 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection actions are listed as low-risk, non-mutating reads.
 
 ## Inspect Running Apps
 
@@ -126,7 +126,7 @@ Filter audit records before applying the limit:
 .build/debug/03 audit --command files.move --code moved --limit 10
 ```
 
-`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, or `clipboard.read-text`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_text`.
+`--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `read_text`, or `read_dom`.
 
 ## Track Task Memory
 
@@ -323,7 +323,15 @@ Read the visible text from a page through the tab's DevTools WebSocket:
 
 `browser.readText` is a medium-risk read action because page text can contain private web-app content. The command returns bounded text to the caller, but its audit record stores only the tab ID, type, title, URL, text length, digest, policy decision, reason, and outcome. It does not click in the browser and does not require Accessibility access.
 
-This adapter is now using browser-native DevTools metadata and page text. Form actions, DOM element trees, and navigation verification still need follow-on work through the tab's DevTools WebSocket.
+Read bounded structured page state from the DOM:
+
+```sh
+.build/debug/03 browser dom --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-elements 200 --max-text-characters 120 --reason "Inspect page controls before acting"
+```
+
+`browser.readDOM` is also a medium-risk read action because labels, links, visible text, and form metadata can expose private web-app state. The result includes bounded DOM elements with IDs, parent IDs, depth, tag names, inferred roles, bounded text snippets, selected safe attributes, links, and form metadata such as input type, checked/disabled state, and value length. It intentionally does not return form values and suppresses value metadata for password and hidden inputs. The audit record stores only tab metadata, DOM element count, DOM digest, policy decision, reason, and outcome; it does not store the DOM payload.
+
+This adapter is now using browser-native DevTools metadata, page text, and structured DOM snapshots. Form actions and navigation verification still need follow-on work through the tab's DevTools WebSocket.
 
 ## Product Direction
 

@@ -29,6 +29,7 @@ The system should keep a structured history of task intent, actions taken, permi
 - Clipboard read audit: `03 clipboard read-text` records pasteboard metadata, text length, text digest, reason, policy decision, and outcome without storing clipboard text in the audit log.
 - Clipboard write audit: `03 clipboard write-text` records before/after pasteboard metadata, text length, text digest, reason, policy decision, verification result, and outcome without storing previous or written clipboard text in the audit log.
 - Browser page text audit: `03 browser text` records tab metadata, text length, text digest, reason, policy decision, and outcome without storing extracted page text in the audit log.
+- Browser DOM audit: `03 browser dom` records tab metadata, DOM element count, DOM digest, reason, policy decision, and outcome without storing the structured DOM payload in the audit log.
 
 ## Relationship To The Product
 

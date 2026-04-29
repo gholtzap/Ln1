@@ -214,6 +214,8 @@ struct BrowserAuditSummary: Codable {
     let url: String?
     let textLength: Int?
     let textDigest: String?
+    let domNodeCount: Int?
+    let domDigest: String?
 }
 
 struct BrowserTextResult: Codable {
@@ -228,6 +230,50 @@ struct BrowserTextResult: Codable {
     let textDigest: String
     let truncated: Bool
     let maxCharacters: Int
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserDOMElement: Codable {
+    let id: String
+    let parentID: String?
+    let depth: Int
+    let tagName: String
+    let role: String?
+    let text: String?
+    let textLength: Int
+    let attributes: [String: String]
+    let inputType: String?
+    let checked: Bool?
+    let disabled: Bool?
+    let hasValue: Bool?
+    let valueLength: Int?
+}
+
+struct BrowserDOMSnapshotPayload: Codable {
+    let url: String?
+    let title: String?
+    let elements: [BrowserDOMElement]
+    let elementCount: Int
+    let truncated: Bool
+}
+
+struct BrowserDOMResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let url: String?
+    let title: String?
+    let elements: [BrowserDOMElement]
+    let elementCount: Int
+    let truncated: Bool
+    let maxElements: Int
+    let maxTextCharacters: Int
+    let digest: String
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -1010,6 +1056,11 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 16_384)
             try writeJSON(browserText(id: id, maxCharacters: maxCharacters))
+        case "dom":
+            let id = try requiredOption("--id")
+            let maxElements = max(0, option("--max-elements").flatMap(Int.init) ?? 200)
+            let maxTextCharacters = max(0, option("--max-text-characters").flatMap(Int.init) ?? 120)
+            try writeJSON(browserDOM(id: id, maxElements: maxElements, maxTextCharacters: maxTextCharacters))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -2134,6 +2185,11 @@ final class ZeroThreeCLI {
                     name: "browser.readText",
                     risk: browserActionRisk(for: "browser.readText"),
                     mutates: false
+                ),
+                BrowserAction(
+                    name: "browser.readDOM",
+                    risk: browserActionRisk(for: "browser.readDOM"),
+                    mutates: false
                 )
             ]
         )
@@ -2152,7 +2208,9 @@ final class ZeroThreeCLI {
             title: nil,
             url: nil,
             textLength: nil,
-            textDigest: nil
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil
         )
         var auditWritten = false
 
@@ -2194,7 +2252,9 @@ final class ZeroThreeCLI {
                 title: tab.title,
                 url: tab.url,
                 textLength: nil,
-                textDigest: nil
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil
             )
 
             guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
@@ -2222,7 +2282,9 @@ final class ZeroThreeCLI {
                 title: tab.title,
                 url: tab.url,
                 textLength: text.count,
-                textDigest: digest
+                textDigest: digest,
+                domNodeCount: nil,
+                domDigest: nil
             )
 
             let message = truncated
@@ -2242,6 +2304,132 @@ final class ZeroThreeCLI {
                 textDigest: digest,
                 truncated: truncated,
                 maxCharacters: maxCharacters,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserDOM(id: String, maxElements: Int, maxTextCharacters: Int) throws -> BrowserDOMResult {
+        let action = "browser.readDOM"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.dom",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let snapshot = try readBrowserDOMSnapshot(
+                from: webSocketURL,
+                maxElements: maxElements,
+                maxTextCharacters: maxTextCharacters
+            )
+            let snapshotData = try JSONEncoder().encode(snapshot)
+            let digest = sha256Digest(String(decoding: snapshotData, as: UTF8.self))
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: snapshot.elementCount,
+                domDigest: digest
+            )
+
+            let message = snapshot.truncated
+                ? "Read truncated browser DOM snapshot from tab \(id)."
+                : "Read browser DOM snapshot from tab \(id)."
+            try writeAudit(ok: true, code: "read_dom", message: message)
+
+            return BrowserDOMResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                url: snapshot.url,
+                title: snapshot.title,
+                elements: snapshot.elements,
+                elementCount: snapshot.elementCount,
+                truncated: snapshot.truncated,
+                maxElements: maxElements,
+                maxTextCharacters: maxTextCharacters,
+                digest: digest,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -2287,6 +2475,126 @@ final class ZeroThreeCLI {
             return ""
         }
         throw CommandError(description: "Chrome DevTools Runtime.evaluate returned \(remoteObject.type ?? "unknown") instead of string text")
+    }
+
+    private func readBrowserDOMSnapshot(
+        from webSocketURL: URL,
+        maxElements: Int,
+        maxTextCharacters: Int
+    ) throws -> BrowserDOMSnapshotPayload {
+        let expression = """
+        (() => {
+          const maxElements = \(maxElements);
+          const maxTextCharacters = \(maxTextCharacters);
+          const root = document.body || document.documentElement;
+          const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+          const attrNames = ["id", "class", "name", "aria-label", "placeholder", "title", "href", "type"];
+          const elements = [];
+          const ids = new Map();
+          const queue = root ? [{ element: root, depth: 0 }] : [];
+
+          const normalizedText = (element) => {
+            const raw = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+            return {
+              text: raw.length > maxTextCharacters ? raw.slice(0, maxTextCharacters) : raw,
+              length: raw.length
+            };
+          };
+
+          const inferredRole = (element) => {
+            const explicit = element.getAttribute("role");
+            if (explicit) return explicit;
+            const tag = element.tagName.toLowerCase();
+            if (tag === "a" && element.href) return "link";
+            if (tag === "button") return "button";
+            if (tag === "select") return "combobox";
+            if (tag === "textarea") return "textbox";
+            if (tag === "form") return "form";
+            if (/^h[1-6]$/.test(tag)) return "heading";
+            if (tag === "nav") return "navigation";
+            if (tag === "main") return "main";
+            if (tag === "header") return "banner";
+            if (tag === "footer") return "contentinfo";
+            if (tag === "input") {
+              const type = (element.getAttribute("type") || "text").toLowerCase();
+              if (type === "checkbox") return "checkbox";
+              if (type === "radio") return "radio";
+              if (type === "button" || type === "submit" || type === "reset") return "button";
+              return "textbox";
+            }
+            return null;
+          };
+
+          while (queue.length && elements.length < maxElements) {
+            const { element, depth } = queue.shift();
+            if (ignoredTags.has(element.tagName)) continue;
+
+            const id = `dom.${elements.length}`;
+            ids.set(element, id);
+            const attributes = {};
+            for (const name of attrNames) {
+              let value = element.getAttribute(name);
+              if (name === "href" && element.href) value = element.href;
+              if (value) attributes[name] = value;
+            }
+
+            const text = normalizedText(element);
+            const inputType = element.tagName === "INPUT" ? (element.getAttribute("type") || "text").toLowerCase() : null;
+            const suppressValueMetadata = inputType === "password" || inputType === "hidden";
+            const value = !suppressValueMetadata && "value" in element ? String(element.value || "") : null;
+            elements.push({
+              id,
+              parentID: ids.get(element.parentElement) || null,
+              depth,
+              tagName: element.tagName.toLowerCase(),
+              role: inferredRole(element),
+              text: text.text || null,
+              textLength: text.length,
+              attributes,
+              inputType,
+              checked: "checked" in element ? Boolean(element.checked) : null,
+              disabled: "disabled" in element ? Boolean(element.disabled) : null,
+              hasValue: value === null ? null : value.length > 0,
+              valueLength: value === null ? null : value.length
+            });
+
+            for (const child of element.children) {
+              queue.push({ element: child, depth: depth + 1 });
+            }
+          }
+
+          return JSON.stringify({
+            url: location.href,
+            title: document.title || null,
+            elements,
+            elementCount: elements.length,
+            truncated: queue.length > 0
+          });
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a DOM snapshot string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools DOM snapshot was not valid UTF-8")
+        }
+        do {
+            return try JSONDecoder().decode(BrowserDOMSnapshotPayload.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools DOM snapshot was not valid JSON: \(error.localizedDescription)")
+        }
     }
 
     private func evaluateCDPRuntimeExpression(
@@ -2966,7 +3274,7 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab":
             return "low"
-        case "browser.readText":
+        case "browser.readText", "browser.readDOM":
             return "medium"
         default:
             return "unknown"
@@ -3018,6 +3326,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -3239,7 +3548,9 @@ final class ZeroThreeCLI {
                   "url": "https://example.com",
                   "webSocketDebuggerURL": "ws://127.0.0.1:9222/devtools/page/devtools-target-id",
                   "actions": [
-                    { "name": "browser.inspectTab", "risk": "low", "mutates": false }
+                    { "name": "browser.inspectTab", "risk": "low", "mutates": false },
+                    { "name": "browser.readText", "risk": "medium", "mutates": false },
+                    { "name": "browser.readDOM", "risk": "medium", "mutates": false }
                   ]
                 }
               ]
@@ -3253,6 +3564,47 @@ final class ZeroThreeCLI {
                 "title": "Page title",
                 "url": "https://example.com"
               }
+            }
+          },
+          "browserDOM": {
+            "command": "03 browser dom --endpoint http://127.0.0.1:9222 --id devtools-target-id --allow-risk medium --max-elements 200 --max-text-characters 120",
+            "result": {
+              "action": "browser.readDOM",
+              "risk": "medium",
+              "elementCount": 2,
+              "truncated": false,
+              "elements": [
+                {
+                  "id": "dom.0",
+                  "parentID": null,
+                  "depth": 0,
+                  "tagName": "body",
+                  "role": null,
+                  "text": "Visible page text",
+                  "textLength": 17,
+                  "attributes": {},
+                  "inputType": null,
+                  "checked": null,
+                  "disabled": null,
+                  "hasValue": null,
+                  "valueLength": null
+                },
+                {
+                  "id": "dom.1",
+                  "parentID": "dom.0",
+                  "depth": 1,
+                  "tagName": "input",
+                  "role": "textbox",
+                  "text": null,
+                  "textLength": 0,
+                  "attributes": { "name": "q", "placeholder": "Search" },
+                  "inputType": "search",
+                  "checked": false,
+                  "disabled": false,
+                  "hasValue": true,
+                  "valueLength": 6
+                }
+              ]
             }
           },
           "files": {
@@ -3449,6 +3801,7 @@ final class ZeroThreeCLI {
           03 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
           03 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 schema
 
         Notes:
@@ -3476,6 +3829,7 @@ final class ZeroThreeCLI {
           - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
+          - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
         """)
     }
 
