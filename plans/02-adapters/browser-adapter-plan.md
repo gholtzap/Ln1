@@ -31,6 +31,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - DevTools navigation: `03 browser navigate` sends a typed tab navigation through Chrome DevTools after medium-risk policy approval, verifies the resulting tab URL from structured DevTools target metadata, and records requested/current URLs plus verification in the audit log.
 - DevTools URL waiting: `03 browser wait-url` waits for a tab URL to match expected exact, prefix, or contains criteria using structured DevTools tab metadata.
 - DevTools selector waiting: `03 browser wait-selector` waits for a selector to become attached or visible using read-only DevTools runtime evaluation.
+- DevTools text waiting: `03 browser wait-text` waits for page text to match while returning only text lengths and digests.
 
 ## Relationship To The Product
 

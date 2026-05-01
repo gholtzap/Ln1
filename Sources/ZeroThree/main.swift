@@ -527,6 +527,33 @@ struct BrowserTextResult: Codable {
     let message: String
 }
 
+struct BrowserTextWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let currentTextLength: Int?
+    let currentTextDigest: String?
+    let currentURL: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserTextWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserTextWaitVerification
+    let message: String
+}
+
 struct BrowserDOMElement: Codable {
     let id: String
     let parentID: String?
@@ -1524,12 +1551,14 @@ final class ZeroThreeCLI {
             return workflowPreflightWaitBrowserURL()
         case "wait-browser-selector":
             return workflowPreflightWaitBrowserSelector()
+        case "wait-browser-text":
+            return workflowPreflightWaitBrowserText()
         case "move-file":
             return try workflowPreflightMoveFile()
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-text, move-file, or wait-file.")
         }
     }
 
@@ -2029,6 +2058,96 @@ final class ZeroThreeCLI {
 
         return workflowPreflightResult(
             operation: "wait-browser-selector",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightWaitBrowserText() -> WorkflowPreflight {
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let endpoint = try? browserEndpoint()
+        let browserCheck = doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        let requiredBrowserCheck = DoctorCheck(
+            name: browserCheck.name,
+            status: browserCheck.status == "pass" ? "pass" : "fail",
+            required: true,
+            message: browserCheck.message,
+            remediation: browserCheck.status == "pass" ? nil : browserCheck.remediation
+        )
+        var prerequisites = [requiredBrowserCheck]
+        let id = option("--id")
+        let text = option("--text")
+        let match = option("--match")
+        if id == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserTabID",
+                status: "fail",
+                required: true,
+                message: "No browser tab ID was provided for wait-browser-text.",
+                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+            ))
+        }
+        if let text {
+            do {
+                _ = try validatedBrowserExpectedText(text)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserText",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass non-empty expected text with `--text TEXT`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserText",
+                status: "fail",
+                required: true,
+                message: "No expected text was provided for wait-browser-text.",
+                remediation: "Pass `--text TEXT` for the expected page text."
+            ))
+        }
+        if let match {
+            do {
+                _ = try browserTextMatchMode(match)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserTextMatch",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--match contains` or `--match exact`."
+                ))
+            }
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let id, let text {
+            var arguments = ["03", "browser", "wait-text"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += [
+                "--id", id,
+                "--text", text,
+                "--match", match ?? "contains",
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-browser-text",
             risk: "low",
             mutates: false,
             prerequisites: prerequisites,
@@ -3277,6 +3396,10 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
             try writeJSON(browserWaitSelector(id: id, selector: selector))
+        case "wait-text":
+            let id = try requiredOption("--id")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitText(id: id, expectedText: text))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -4721,6 +4844,11 @@ final class ZeroThreeCLI {
                     name: "browser.waitSelector",
                     risk: browserActionRisk(for: "browser.waitSelector"),
                     mutates: false
+                ),
+                BrowserAction(
+                    name: "browser.waitText",
+                    risk: browserActionRisk(for: "browser.waitText"),
+                    mutates: false
                 )
             ]
         )
@@ -5518,6 +5646,38 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func browserWaitText(id: String, expectedText: String) throws -> BrowserTextWaitResult {
+        let endpoint = try browserEndpoint()
+        let normalizedExpectedText = try validatedBrowserExpectedText(expectedText)
+        let match = try browserTextMatchMode(option("--match") ?? "contains")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = try waitForBrowserText(
+            tabID: id,
+            expectedText: normalizedExpectedText,
+            match: match,
+            endpoint: endpoint,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+        let message = verification.ok
+            ? "Browser tab \(id) reached the expected text state."
+            : "Timed out waiting for browser tab \(id) to reach the expected text state."
+        return BrowserTextWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            tabID: id,
+            expectedTextLength: normalizedExpectedText.count,
+            expectedTextDigest: sha256Digest(normalizedExpectedText),
+            match: match,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: message
+        )
+    }
+
     private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
         let expression = """
         (() => {
@@ -6149,6 +6309,71 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func waitForBrowserText(
+        tabID: String,
+        expectedText: String,
+        match: String,
+        endpoint: URL,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> BrowserTextWaitVerification {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var currentText: String?
+        var currentURL: String?
+        let expectedDigest = sha256Digest(expectedText)
+
+        repeat {
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == tabID }) else {
+                if Date() >= deadline {
+                    break
+                }
+                Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+                continue
+            }
+
+            currentURL = tab.url
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                throw CommandError(description: "browser tab \(tabID) does not expose a valid webSocketDebuggerURL")
+            }
+            currentText = try readBrowserInnerText(from: webSocketURL)
+            if browserText(currentText, matches: expectedText, mode: match) {
+                return BrowserTextWaitVerification(
+                    ok: true,
+                    code: "text_matched",
+                    message: "browser tab text matched expected \(match) value",
+                    expectedTextLength: expectedText.count,
+                    expectedTextDigest: expectedDigest,
+                    currentTextLength: currentText?.count,
+                    currentTextDigest: currentText.map(sha256Digest),
+                    currentURL: currentURL,
+                    match: match,
+                    matched: true
+                )
+            }
+
+            if Date() >= deadline {
+                break
+            }
+            Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+        } while true
+
+        return BrowserTextWaitVerification(
+            ok: false,
+            code: currentText == nil ? "text_unavailable" : "text_mismatch",
+            message: "browser tab text did not match expected \(match) value before timeout",
+            expectedTextLength: expectedText.count,
+            expectedTextDigest: expectedDigest,
+            currentTextLength: currentText?.count,
+            currentTextDigest: currentText.map(sha256Digest),
+            currentURL: currentURL,
+            match: match,
+            matched: false
+        )
+    }
+
     private func browserURL(_ currentURL: String?, matches expectedURL: String, mode: String) -> Bool {
         guard let currentURL else {
             return false
@@ -6163,6 +6388,30 @@ final class ZeroThreeCLI {
             return currentURL.contains(expectedURL)
         default:
             return false
+        }
+    }
+
+    private func browserText(_ currentText: String?, matches expectedText: String, mode: String) -> Bool {
+        guard let currentText else {
+            return false
+        }
+
+        switch mode {
+        case "exact":
+            return currentText == expectedText
+        case "contains":
+            return currentText.contains(expectedText)
+        default:
+            return false
+        }
+    }
+
+    private func browserTextMatchMode(_ rawMode: String) throws -> String {
+        switch rawMode {
+        case "exact", "contains":
+            return rawMode
+        default:
+            throw CommandError(description: "unsupported browser text match mode '\(rawMode)'. Use exact or contains.")
         }
     }
 
@@ -6208,6 +6457,13 @@ final class ZeroThreeCLI {
             return try validatedBrowserNavigationURL(rawURL)
         }
         return rawURL
+    }
+
+    private func validatedBrowserExpectedText(_ rawText: String) throws -> String {
+        guard !rawText.isEmpty else {
+            throw CommandError(description: "browser expected text must not be empty")
+        }
+        return rawText
     }
 
     private func evaluateCDPRuntimeExpression(
@@ -7090,7 +7346,7 @@ final class ZeroThreeCLI {
 
     private func browserActionRisk(for action: String) -> String {
         switch action {
-        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector":
+        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitText":
             return "low"
         case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.clickElement", "browser.navigate":
             return "medium"
@@ -7172,6 +7428,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.waitURL", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitSelector", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "browser.waitText", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -7735,7 +7992,8 @@ final class ZeroThreeCLI {
                     { "name": "browser.clickElement", "risk": "medium", "mutates": true },
                     { "name": "browser.navigate", "risk": "medium", "mutates": true },
                     { "name": "browser.waitURL", "risk": "low", "mutates": false },
-                    { "name": "browser.waitSelector", "risk": "low", "mutates": false }
+                    { "name": "browser.waitSelector", "risk": "low", "mutates": false },
+                    { "name": "browser.waitText", "risk": "low", "mutates": false }
                   ]
                 }
               ]
@@ -7891,6 +8149,26 @@ final class ZeroThreeCLI {
                 "message": "The selector reached 'visible' state.",
                 "currentURL": "https://example.com/form",
                 "tagName": "button",
+                "matched": true
+              }
+            }
+          },
+          "browserWaitText": {
+            "command": "03 browser wait-text --endpoint http://127.0.0.1:9222 --id devtools-target-id --text 'Saved successfully' --match contains --timeout-ms 5000",
+            "result": {
+              "tabID": "devtools-target-id",
+              "expectedTextLength": 18,
+              "expectedTextDigest": "hex encoded SHA-256 digest",
+              "match": "contains",
+              "timeoutMilliseconds": 5000,
+              "intervalMilliseconds": 100,
+              "verification": {
+                "ok": true,
+                "code": "text_matched",
+                "message": "browser tab text matched expected contains value",
+                "currentTextLength": 120,
+                "currentTextDigest": "hex encoded SHA-256 digest",
+                "currentURL": "https://example.com/form",
                 "matched": true
               }
             }
@@ -8097,10 +8375,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible]
-          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--state attached|visible] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible]
+          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--text TEXT] [--state attached|visible] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -8138,6 +8416,7 @@ final class ZeroThreeCLI {
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
           03 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible] [--timeout-ms N] [--interval-ms N]
+          03 browser wait-text --id TARGET_ID --text TEXT [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
           03 schema
 
         Notes:
@@ -8173,9 +8452,11 @@ final class ZeroThreeCLI {
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
           - `browser wait-selector` waits for one DOM selector to become attached or visible without mutating the page.
+          - `browser wait-text` waits for page text to match without returning page text contents.
           - Workflow fill-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
           - Workflow wait-browser-selector waits for dynamic page UI readiness before the next browser action.
+          - Workflow wait-browser-text waits for page text readiness without fixed sleeps.
         """)
     }
 

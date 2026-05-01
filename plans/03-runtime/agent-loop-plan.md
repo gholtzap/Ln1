@@ -37,6 +37,7 @@ The system should support task execution as a sequence of observations and actio
 - Browser URL wait resume: after a successful `wait-browser-url` transcript, `03 workflow resume --operation wait-browser-url` suggests a dry-run DOM inspection for the arrived tab.
 - Browser selector wait workflow: `03 workflow run --operation wait-browser-selector ... --dry-run false` waits for dynamic DOM readiness before the next browser action.
 - Browser selector wait resume: after a successful `wait-browser-selector` transcript, `03 workflow resume --operation wait-browser-selector` suggests a direct fill or click command when selector metadata is actionable.
+- Browser text wait workflow: `03 workflow run --operation wait-browser-text ... --dry-run false` waits for success/error text without returning page contents.
 
 ## Relationship To The Product
 
