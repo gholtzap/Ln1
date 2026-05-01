@@ -444,7 +444,7 @@ Read bounded structured page state from the DOM:
 .build/debug/03 browser dom --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-elements 200 --max-text-characters 120 --reason "Inspect page controls before acting"
 ```
 
-`browser.readDOM` is also a medium-risk read action because labels, links, visible text, and form metadata can expose private web-app state. The result includes bounded DOM elements with IDs, parent IDs, depth, tag names, inferred roles, bounded text snippets, selected safe attributes, links, and form metadata such as input type, checked/disabled state, and value length. It intentionally does not return form values and suppresses value metadata for password and hidden inputs. The audit record stores only tab metadata, DOM element count, DOM digest, policy decision, reason, and outcome; it does not store the DOM payload.
+`browser.readDOM` is also a medium-risk read action because labels, links, visible text, and form metadata can expose private web-app state. The result includes bounded DOM elements with IDs, parent IDs, depth, actionable CSS selectors, tag names, inferred roles, bounded text snippets, selected safe attributes, links, and form metadata such as input type, checked/disabled state, and value length. It intentionally does not return form values and suppresses value metadata for password and hidden inputs. The audit record stores only tab metadata, DOM element count, DOM digest, policy decision, reason, and outcome; it does not store the DOM payload.
 
 Fill one browser form field through the tab's DevTools WebSocket:
 

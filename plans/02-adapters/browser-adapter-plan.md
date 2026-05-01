@@ -24,7 +24,7 @@ The system should understand open tabs, active pages, page content, forms, links
 
 - DevTools tab discovery: `03 browser tabs` and `03 browser tab` read Chrome DevTools `/json/list` from an explicit endpoint and return structured tab target metadata, filtering non-page targets by default.
 - DevTools page text extraction: `03 browser text` reads bounded visible page text through a tab's Chrome DevTools WebSocket after medium-risk policy approval and records only tab metadata plus text length/digest in the audit log.
-- DevTools DOM snapshot: `03 browser dom` reads bounded structured page state through a tab's Chrome DevTools WebSocket after medium-risk policy approval, returning DOM elements, inferred roles, safe attributes, links, and form metadata while auditing only element count plus digest.
+- DevTools DOM snapshot: `03 browser dom` reads bounded structured page state through a tab's Chrome DevTools WebSocket after medium-risk policy approval, returning DOM elements, actionable CSS selectors, inferred roles, safe attributes, links, and form metadata while auditing only element count plus digest.
 - DevTools form filling: `03 browser fill` writes one field by CSS selector through a tab's Chrome DevTools WebSocket after medium-risk policy approval, dispatches input/change events, verifies the resulting value length, and audits only selector plus text length/digest.
 - DevTools navigation: `03 browser navigate` sends a typed tab navigation through Chrome DevTools after medium-risk policy approval, verifies the resulting tab URL from structured DevTools target metadata, and records requested/current URLs plus verification in the audit log.
 

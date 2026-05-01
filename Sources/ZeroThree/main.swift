@@ -529,6 +529,7 @@ struct BrowserDOMElement: Codable {
     let id: String
     let parentID: String?
     let depth: Int
+    let selector: String?
     let tagName: String
     let role: String?
     let text: String?
@@ -4589,6 +4590,63 @@ final class ZeroThreeCLI {
           const elements = [];
           const ids = new Map();
           const queue = root ? [{ element: root, depth: 0 }] : [];
+          const cssEscape = (value) => {
+            if (window.CSS && typeof window.CSS.escape === "function") {
+              return window.CSS.escape(value);
+            }
+            return String(value).replace(/[^a-zA-Z0-9_-]/g, (character) => {
+              const codePoint = character.codePointAt(0).toString(16);
+              return `\\${codePoint} `;
+            });
+          };
+          const cssString = (value) => String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+          const isUniqueSelector = (selector) => {
+            try {
+              return document.querySelectorAll(selector).length === 1;
+            } catch {
+              return false;
+            }
+          };
+          const selectorFor = (element) => {
+            const tag = element.tagName.toLowerCase();
+            if (element.id) {
+              const candidate = `#${cssEscape(element.id)}`;
+              if (isUniqueSelector(candidate)) return candidate;
+            }
+
+            for (const name of ["name", "aria-label", "placeholder", "title", "href", "type"]) {
+              const value = element.getAttribute(name);
+              if (!value) continue;
+              const candidate = `${tag}[${name}="${cssString(value)}"]`;
+              if (isUniqueSelector(candidate)) return candidate;
+            }
+
+            const parts = [];
+            let current = element;
+            while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.documentElement) {
+              let part = current.tagName.toLowerCase();
+              if (current.id) {
+                parts.unshift(`#${cssEscape(current.id)}`);
+                const candidate = parts.join(" > ");
+                if (isUniqueSelector(candidate)) return candidate;
+                current = current.parentElement;
+                continue;
+              }
+
+              let index = 1;
+              let sibling = current;
+              while ((sibling = sibling.previousElementSibling)) {
+                if (sibling.tagName === current.tagName) index += 1;
+              }
+              part += `:nth-of-type(${index})`;
+              parts.unshift(part);
+
+              const candidate = parts.join(" > ");
+              if (isUniqueSelector(candidate)) return candidate;
+              current = current.parentElement;
+            }
+            return parts.join(" > ") || tag;
+          };
 
           const normalizedText = (element) => {
             const raw = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
@@ -4643,6 +4701,7 @@ final class ZeroThreeCLI {
               id,
               parentID: ids.get(element.parentElement) || null,
               depth,
+              selector: selectorFor(element),
               tagName: element.tagName.toLowerCase(),
               role: inferredRole(element),
               text: text.text || null,
@@ -6409,6 +6468,7 @@ final class ZeroThreeCLI {
                   "id": "dom.0",
                   "parentID": null,
                   "depth": 0,
+                  "selector": "body",
                   "tagName": "body",
                   "role": null,
                   "text": "Visible page text",
@@ -6424,6 +6484,7 @@ final class ZeroThreeCLI {
                   "id": "dom.1",
                   "parentID": "dom.0",
                   "depth": 1,
+                  "selector": "input[name=\\"q\\"]",
                   "tagName": "input",
                   "role": "textbox",
                   "text": null,

@@ -993,6 +993,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
                     "id": "dom.0",
                     "parentID": NSNull(),
                     "depth": 0,
+                    "selector": "body",
                     "tagName": "body",
                     "role": NSNull(),
                     "text": "Welcome Search",
@@ -1008,6 +1009,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
                     "id": "dom.1",
                     "parentID": "dom.0",
                     "depth": 1,
+                    "selector": "a[href=\"https://example.com/docs\"]",
                     "tagName": "a",
                     "role": "link",
                     "text": "Docs",
@@ -1023,6 +1025,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
                     "id": "dom.2",
                     "parentID": "dom.0",
                     "depth": 1,
+                    "selector": "input[name=\"q\"]",
                     "tagName": "input",
                     "role": "textbox",
                     "text": NSNull(),
@@ -1104,9 +1107,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["maxTextCharacters"] as? Int, 40)
         XCTAssertNotNil(object["digest"])
         XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(link["selector"] as? String, "a[href=\"https://example.com/docs\"]")
         XCTAssertEqual(link["role"] as? String, "link")
         XCTAssertEqual(link["text"] as? String, "Docs")
         XCTAssertEqual(linkAttributes["href"] as? String, "https://example.com/docs")
+        XCTAssertEqual(input["selector"] as? String, "input[name=\"q\"]")
         XCTAssertEqual(input["role"] as? String, "textbox")
         XCTAssertEqual(input["inputType"] as? String, "search")
         XCTAssertEqual(input["hasValue"] as? Bool, true)
