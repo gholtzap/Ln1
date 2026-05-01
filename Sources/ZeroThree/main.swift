@@ -686,7 +686,9 @@ struct BrowserSelectorWaitVerification: Codable {
     let matched: Bool
     let currentURL: String?
     let tagName: String?
+    let inputType: String?
     let disabled: Bool?
+    let readOnly: Bool?
     let href: String?
     let textLength: Int?
 }
@@ -2307,6 +2309,14 @@ final class ZeroThreeCLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "wait-browser-selector" {
+            return workflowBrowserSelectorWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                workflowURL: workflowURL
+            )
+        }
 
         guard latestOperation == "read-browser" else {
             return nil
@@ -2366,6 +2376,68 @@ final class ZeroThreeCLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser URL wait completed; dry-run DOM inspection for the arrived page."
+        )
+    }
+
+    private func workflowBrowserSelectorWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let verification = outputJSON["verification"] as? [String: Any],
+              verification["ok"] as? Bool == true else {
+            return nil
+        }
+        guard let tabID = outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+        guard let selector = outputJSON["selector"] as? String
+            ?? verification["selector"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--selector") else {
+            return nil
+        }
+
+        if workflowSelectorWaitAcceptsText(verification) {
+            return (
+                arguments: [
+                    "03", "browser", "fill",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--text", "Describe text",
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser selector wait found a ready text field; fill it by selector after replacing the text and reason."
+            )
+        }
+
+        if workflowSelectorWaitCanClick(verification) {
+            return (
+                arguments: [
+                    "03", "browser", "click",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser selector wait found a ready actionable element; click it by selector after confirming intent."
+            )
+        }
+
+        return (
+            arguments: [
+                "03", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser selector wait completed; dry-run DOM inspection to choose the next action."
         )
     }
 
@@ -2460,6 +2532,28 @@ final class ZeroThreeCLI {
             || tagName == "button"
             || tagName == "a"
             || attributes?["href"] != nil
+    }
+
+    private func workflowSelectorWaitAcceptsText(_ verification: [String: Any]) -> Bool {
+        if verification["disabled"] as? Bool == true || verification["readOnly"] as? Bool == true {
+            return false
+        }
+        let tagName = verification["tagName"] as? String
+        let inputType = verification["inputType"] as? String
+        if tagName == "textarea" {
+            return true
+        }
+        return tagName == "input" && workflowInputTypeAcceptsText(inputType)
+    }
+
+    private func workflowSelectorWaitCanClick(_ verification: [String: Any]) -> Bool {
+        if verification["disabled"] as? Bool == true {
+            return false
+        }
+        let tagName = verification["tagName"] as? String
+        return tagName == "button"
+            || tagName == "a"
+            || verification["href"] as? String != nil
     }
 
     private func workflowArgumentValue(in arguments: [String]?, for option: String) -> String? {
@@ -5806,7 +5900,9 @@ final class ZeroThreeCLI {
             matched: extra.matched || false,
             currentURL: location.href || null,
             tagName: extra.tagName || null,
+            inputType: extra.inputType || null,
             disabled: extra.disabled ?? null,
+            readOnly: extra.readOnly ?? null,
             href: extra.href || null,
             textLength: extra.textLength ?? null
           });
@@ -5823,10 +5919,12 @@ final class ZeroThreeCLI {
           }
 
           const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const inputType = tagName === "input" ? (element.getAttribute("type") || "text").toLowerCase() : null;
           const disabled = "disabled" in element ? Boolean(element.disabled) : null;
+          const readOnly = "readOnly" in element ? Boolean(element.readOnly) : null;
           const href = element.href || element.getAttribute?.("href") || null;
           const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
-          const metadata = { tagName, disabled, href, textLength: text.length, matched: true };
+          const metadata = { tagName, inputType, disabled, readOnly, href, textLength: text.length, matched: true };
 
           if (state === "visible") {
             const style = window.getComputedStyle(element);
@@ -5878,7 +5976,9 @@ final class ZeroThreeCLI {
                     matched: verification.matched,
                     currentURL: currentURL,
                     tagName: verification.tagName,
+                    inputType: verification.inputType,
                     disabled: verification.disabled,
+                    readOnly: verification.readOnly,
                     href: verification.href,
                     textLength: verification.textLength
                 )
@@ -5997,7 +6097,9 @@ final class ZeroThreeCLI {
                     matched: false,
                     currentURL: nil,
                     tagName: nil,
+                    inputType: nil,
                     disabled: nil,
+                    readOnly: nil,
                     href: nil,
                     textLength: nil
                 )
@@ -6039,7 +6141,9 @@ final class ZeroThreeCLI {
             matched: false,
             currentURL: lastVerification?.currentURL,
             tagName: lastVerification?.tagName,
+            inputType: lastVerification?.inputType,
             disabled: lastVerification?.disabled,
+            readOnly: lastVerification?.readOnly,
             href: lastVerification?.href,
             textLength: lastVerification?.textLength
         )
@@ -7789,6 +7893,20 @@ final class ZeroThreeCLI {
                 "tagName": "button",
                 "matched": true
               }
+            }
+          },
+          "workflowResumeWaitSelector": {
+            "command": "03 workflow resume --allow-risk medium --operation wait-browser-selector",
+            "result": {
+              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "operation": "wait-browser-selector",
+              "status": "completed",
+              "transcriptID": "UUID",
+              "latestOperation": "wait-browser-selector",
+              "blockers": [],
+              "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "message": "Latest browser selector wait found a ready actionable element; click it by selector after confirming intent."
             }
           },
           "files": {

@@ -102,6 +102,8 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
+After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
+
 Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
 
 ```sh
