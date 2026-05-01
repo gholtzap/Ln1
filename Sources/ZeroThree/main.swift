@@ -97,6 +97,19 @@ struct DoctorReport: Codable {
     let checks: [DoctorCheck]
 }
 
+struct WorkflowPreflight: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let risk: String
+    let mutates: Bool
+    let canProceed: Bool
+    let prerequisites: [DoctorCheck]
+    let blockers: [String]
+    let nextCommand: String?
+    let message: String
+}
+
 struct DesktopWindowRecord: Codable {
     let id: String
     let stableIdentity: StableIdentity
@@ -818,6 +831,8 @@ final class ZeroThreeCLI {
             try policy()
         case "observe":
             try observe()
+        case "workflow":
+            try workflow()
         case "apps":
             try apps()
         case "desktop":
@@ -1086,6 +1101,227 @@ final class ZeroThreeCLI {
                 windowLimit: windowLimit
             )
         ))
+    }
+
+    private func workflow() throws {
+        let mode = arguments.dropFirst().first ?? "preflight"
+        switch mode {
+        case "preflight":
+            try workflowPreflight()
+        default:
+            throw CommandError(description: "unknown workflow mode '\(mode)'")
+        }
+    }
+
+    private func workflowPreflight() throws {
+        let operation = try requiredOption("--operation")
+        let result: WorkflowPreflight
+        switch operation {
+        case "inspect-active-app":
+            result = workflowPreflightInspectActiveApp()
+        case "control-active-app":
+            result = workflowPreflightControlActiveApp()
+        case "read-browser":
+            result = workflowPreflightReadBrowser()
+        case "move-file":
+            result = try workflowPreflightMoveFile()
+        default:
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, or move-file.")
+        }
+        try writeJSON(result)
+    }
+
+    private func workflowPreflightInspectActiveApp() -> WorkflowPreflight {
+        let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let prerequisites = [
+            doctorAccessibilityCheck(),
+            doctorDesktopMetadataCheck()
+        ]
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextCommand = blockers.isEmpty
+            ? "03 state\(activePid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80"
+            : workflowRemediationCommand(for: prerequisites)
+        return workflowPreflightResult(
+            operation: "inspect-active-app",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextCommand
+        )
+    }
+
+    private func workflowPreflightControlActiveApp() -> WorkflowPreflight {
+        let action = option("--action") ?? kAXPressAction as String
+        let risk = riskLevel(for: action)
+        let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        var prerequisites = [
+            doctorAccessibilityCheck(),
+            doctorAuditLogCheck()
+        ]
+
+        let element = option("--element")
+        if element == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.element",
+                status: "fail",
+                required: true,
+                message: "No target element was provided for control-active-app.",
+                remediation: "Run `03 state\(activePid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80` and choose an element ID plus stableIdentity."
+            ))
+        }
+
+        if option("--expect-identity") == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.expectedIdentity",
+                status: "warn",
+                required: false,
+                message: "No expected stable identity was provided, so perform cannot guard against stale element paths.",
+                remediation: "Pass `--expect-identity` from the element's stableIdentity.id and `--min-identity-confidence medium`."
+            ))
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextCommand: String?
+        if blockers.isEmpty, let element {
+            let pidArgument = activePid.map { " --pid \($0)" } ?? ""
+            let identityArgument = option("--expect-identity").map { " --expect-identity \($0)" } ?? ""
+            let confidenceArgument = option("--min-identity-confidence").map { " --min-identity-confidence \($0)" } ?? " --min-identity-confidence medium"
+            nextCommand = "03 perform\(pidArgument) --element \(element)\(identityArgument)\(confidenceArgument) --action \(action) --allow-risk \(risk) --reason \"Describe intent\""
+        } else {
+            nextCommand = workflowRemediationCommand(for: prerequisites)
+        }
+
+        return workflowPreflightResult(
+            operation: "control-active-app",
+            risk: risk,
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextCommand
+        )
+    }
+
+    private func workflowPreflightReadBrowser() -> WorkflowPreflight {
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 1_000)
+        let endpoint = try? browserEndpoint()
+        let browserCheck = doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        let requiredBrowserCheck = DoctorCheck(
+            name: browserCheck.name,
+            status: browserCheck.status == "pass" ? "pass" : "fail",
+            required: true,
+            message: browserCheck.message,
+            remediation: browserCheck.status == "pass" ? nil : browserCheck.remediation
+        )
+        let prerequisites = [requiredBrowserCheck]
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextCommand: String?
+        if blockers.isEmpty, let id = option("--id") {
+            nextCommand = "03 browser dom --id \(id) --allow-risk medium --max-elements 200 --max-text-characters 120 --reason \"Inspect browser state\""
+        } else if blockers.isEmpty {
+            nextCommand = "03 browser tabs --endpoint \(endpoint?.absoluteString ?? "http://127.0.0.1:9222")"
+        } else {
+            nextCommand = workflowRemediationCommand(for: prerequisites)
+        }
+
+        return workflowPreflightResult(
+            operation: "read-browser",
+            risk: "medium",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextCommand
+        )
+    }
+
+    private func workflowPreflightMoveFile() throws -> WorkflowPreflight {
+        var prerequisites = [doctorAuditLogCheck()]
+        let sourcePath = option("--path")
+        let destinationPath = option("--to")
+        if sourcePath == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.sourcePath",
+                status: "fail",
+                required: true,
+                message: "No source path was provided for move-file.",
+                remediation: "Pass `--path SOURCE`."
+            ))
+        }
+        if destinationPath == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.destinationPath",
+                status: "fail",
+                required: true,
+                message: "No destination path was provided for move-file.",
+                remediation: "Pass `--to DESTINATION`."
+            ))
+        }
+
+        if sourcePath != nil, destinationPath != nil {
+            let preflight = try fileOperationPreflight(operation: "move")
+            prerequisites.append(contentsOf: preflight.checks.map { check in
+                DoctorCheck(
+                    name: "filesystem.\(check.name)",
+                    status: check.ok ? "pass" : "fail",
+                    required: true,
+                    message: check.message,
+                    remediation: check.ok ? nil : "Resolve filesystem preflight check \(check.name) before moving."
+                )
+            })
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextCommand: String?
+        if blockers.isEmpty, let sourcePath, let destinationPath {
+            nextCommand = "03 files move --path \(sourcePath) --to \(destinationPath) --allow-risk medium --reason \"Describe intent\""
+        } else if sourcePath != nil, destinationPath != nil {
+            nextCommand = "03 files plan --operation move --path \(sourcePath!) --to \(destinationPath!) --allow-risk medium"
+        } else {
+            nextCommand = workflowRemediationCommand(for: prerequisites)
+        }
+
+        return workflowPreflightResult(
+            operation: "move-file",
+            risk: "medium",
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextCommand
+        )
+    }
+
+    private func workflowPreflightResult(
+        operation: String,
+        risk: String,
+        mutates: Bool,
+        prerequisites: [DoctorCheck],
+        blockers: [String],
+        nextCommand: String?
+    ) -> WorkflowPreflight {
+        WorkflowPreflight(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: operation,
+            risk: risk,
+            mutates: mutates,
+            canProceed: blockers.isEmpty,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextCommand,
+            message: blockers.isEmpty
+                ? "\(operation) can proceed with the suggested command."
+                : "\(operation) is blocked; resolve required prerequisites first."
+        )
+    }
+
+    private func workflowBlockers(from prerequisites: [DoctorCheck]) -> [String] {
+        prerequisites
+            .filter { $0.required && $0.status != "pass" }
+            .map(\.name)
+    }
+
+    private func workflowRemediationCommand(for prerequisites: [DoctorCheck]) -> String? {
+        prerequisites.first { $0.required && $0.status != "pass" }?.remediation
     }
 
     private func observationBlockers(
@@ -4947,6 +5183,26 @@ final class ZeroThreeCLI {
               ]
             }
           },
+          "workflowPreflight": {
+            "command": "03 workflow preflight --operation inspect-active-app",
+            "result": {
+              "operation": "inspect-active-app",
+              "risk": "low",
+              "mutates": false,
+              "canProceed": true,
+              "prerequisites": [
+                {
+                  "name": "accessibility",
+                  "status": "pass",
+                  "required": true,
+                  "message": "Accessibility permission is enabled."
+                }
+              ],
+              "blockers": [],
+              "nextCommand": "03 state --pid 123 --depth 3 --max-children 80",
+              "message": "inspect-active-app can proceed with the suggested command."
+            }
+          },
           "observe": {
             "command": "03 observe --app-limit 20 --window-limit 20",
             "result": {
@@ -5514,6 +5770,7 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]

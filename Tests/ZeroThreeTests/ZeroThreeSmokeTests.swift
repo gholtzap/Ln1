@@ -192,6 +192,63 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(checkByName["browser.devTools"]?["required"] as? Bool, false)
     }
 
+    func testWorkflowPreflightReportsInspectActiveAppBlockersAndNextCommand() throws {
+        let result = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-active-app"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-active-app")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertNotNil(object["canProceed"] as? Bool)
+        XCTAssertNotNil(object["blockers"] as? [String])
+        XCTAssertFalse(prerequisites.isEmpty)
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "accessibility" })
+        XCTAssertNotNil(object["nextCommand"] as? String)
+    }
+
+    func testWorkflowPreflightMoveFileUsesFilesystemPlanChecks() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-\(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source.txt")
+        let destination = directory.appendingPathComponent("destination.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "move-file",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "move-file")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertTrue((object["nextCommand"] as? String)?.contains("03 files move") == true)
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "filesystem.sourceExists" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
         let result = try runZeroThree(["schema"])
 

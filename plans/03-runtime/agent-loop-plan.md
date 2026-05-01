@@ -23,6 +23,7 @@ The system should support task execution as a sequence of observations and actio
 ## Implemented Increments
 
 - Initial observation checkpoint: `03 observe` gives the assistant a structured starting snapshot with blockers and suggested next typed actions before choosing an observe-plan-act path.
+- Workflow preflight: `03 workflow preflight --operation ...` maps intended tasks to risk, mutation status, prerequisites, blockers, and the safest next command before execution.
 
 ## Relationship To The Product
 

@@ -48,6 +48,22 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 
 `observe` is the safest first command before acting. It returns Accessibility trust status, the active app, a bounded running-app list, visible desktop windows with stable identities, current blockers, and suggested next typed commands. It does not require Accessibility permission; when Accessibility is not trusted, the snapshot reports that blocker and suggests `03 trust` instead of trying to inspect or control app UI.
 
+## Preflight A Workflow
+
+```sh
+.build/debug/03 workflow preflight --operation inspect-active-app
+```
+
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, and `move-file`.
+
+Examples:
+
+```sh
+.build/debug/03 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
+.build/debug/03 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
+.build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
+```
+
 ## Inspect Running Apps
 
 ```sh
