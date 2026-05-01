@@ -2130,8 +2130,8 @@ final class ZeroThreeCLI {
         for latest: [String: Any],
         workflowURL: URL
     ) -> (arguments: [String], message: String)? {
-        guard latest["operation"] as? String == "read-browser",
-              let execution = latest["execution"] as? [String: Any],
+        let latestOperation = latest["operation"] as? String
+        guard let execution = latest["execution"] as? [String: Any],
               let outputJSON = execution["outputJSON"] as? [String: Any] else {
             return nil
         }
@@ -2139,6 +2139,19 @@ final class ZeroThreeCLI {
         let endpoint = outputJSON["endpoint"] as? String
             ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--endpoint")
             ?? "http://127.0.0.1:9222"
+
+        if latestOperation == "wait-browser-url" {
+            return workflowBrowserURLWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                workflowURL: workflowURL
+            )
+        }
+
+        guard latestOperation == "read-browser" else {
+            return nil
+        }
 
         if let domRecommendation = workflowBrowserDOMRecommendation(
             outputJSON: outputJSON,
@@ -2165,6 +2178,35 @@ final class ZeroThreeCLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
+        )
+    }
+
+    private func workflowBrowserURLWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        let verification = outputJSON["verification"] as? [String: Any]
+        guard verification?["ok"] as? Bool == true else {
+            return nil
+        }
+
+        guard let tabID = outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "03", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser URL wait completed; dry-run DOM inspection for the arrived page."
         )
     }
 
@@ -6820,6 +6862,20 @@ final class ZeroThreeCLI {
               "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
               "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
               "message": "Latest browser DOM inspection found an actionable element; click it by selector after confirming intent."
+            }
+          },
+          "workflowResumeWaitURL": {
+            "command": "03 workflow resume --allow-risk medium --operation wait-browser-url",
+            "result": {
+              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "operation": "wait-browser-url",
+              "status": "completed",
+              "transcriptID": "UUID",
+              "latestOperation": "wait-browser-url",
+              "blockers": [],
+              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
+              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "message": "Latest browser URL wait completed; dry-run DOM inspection for the arrived page."
             }
           },
           "workflowWaitFile": {
