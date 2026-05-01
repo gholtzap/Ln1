@@ -2312,7 +2312,7 @@ final class ZeroThreeCLI {
                     status: "fail",
                     required: true,
                     message: (error as? CommandError)?.description ?? error.localizedDescription,
-                    remediation: "Use `--state attached` or `--state visible`."
+                    remediation: "Use `--state attached`, `--state visible`, `--state hidden`, or `--state detached`."
                 ))
             }
         }
@@ -7859,6 +7859,11 @@ final class ZeroThreeCLI {
           }
 
           if (!element) {
+            if (state === "detached" || state === "hidden") {
+              return result(true, state === "detached" ? "selector_detached" : "selector_hidden", `The selector reached '${state}' state.`, {
+                matched: true
+              });
+            }
             return result(false, "selector_missing", `No element matches selector '${selector}'.`);
           }
 
@@ -7869,22 +7874,35 @@ final class ZeroThreeCLI {
           const href = element.href || element.getAttribute?.("href") || null;
           const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
           const metadata = { tagName, inputType, disabled, readOnly, href, textLength: text.length, matched: true };
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          const visible = rect.width > 0
+            && rect.height > 0
+            && style.display !== "none"
+            && style.visibility !== "hidden"
+            && style.visibility !== "collapse"
+            && style.opacity !== "0";
 
           if (state === "visible") {
-            const style = window.getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
-            const visible = rect.width > 0
-              && rect.height > 0
-              && style.display !== "none"
-              && style.visibility !== "hidden"
-              && style.visibility !== "collapse"
-              && style.opacity !== "0";
             if (!visible) {
               return result(false, "selector_not_visible", "The matched element is not visible.", {
                 ...metadata,
                 matched: false
               });
             }
+          } else if (state === "hidden") {
+            if (visible) {
+              return result(false, "selector_still_visible", "The matched element is still visible.", {
+                ...metadata,
+                matched: false
+              });
+            }
+            return result(true, "selector_hidden", "The selector reached 'hidden' state.", metadata);
+          } else if (state === "detached") {
+            return result(false, "selector_still_attached", "The matched element is still attached.", {
+              ...metadata,
+              matched: false
+            });
           }
 
           return result(true, "selector_matched", `The selector reached '${state}' state.`, metadata);
@@ -8568,10 +8586,10 @@ final class ZeroThreeCLI {
 
     private func browserSelectorWaitState(_ rawState: String) throws -> String {
         switch rawState {
-        case "attached", "visible":
+        case "attached", "visible", "hidden", "detached":
             return rawState
         default:
-            throw CommandError(description: "unsupported browser selector wait state '\(rawState)'. Use attached or visible.")
+            throw CommandError(description: "unsupported browser selector wait state '\(rawState)'. Use attached, visible, hidden, or detached.")
         }
     }
 
@@ -10755,10 +10773,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|loading|interactive|complete]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|loading|interactive|complete]
-          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--text TEXT] [--title TITLE] [--checked true|false] [--match exact|prefix|contains] [--state attached|visible|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--text TEXT] [--title TITLE] [--checked true|false] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -10797,7 +10815,7 @@ final class ZeroThreeCLI {
           03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible] [--timeout-ms N] [--interval-ms N]
+          03 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible|hidden|detached] [--timeout-ms N] [--interval-ms N]
           03 browser wait-text --id TARGET_ID --text TEXT [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
           03 browser wait-value --id TARGET_ID --selector CSS_SELECTOR --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
           03 browser wait-ready --id TARGET_ID [--endpoint URL_OR_PATH] [--state loading|interactive|complete] [--timeout-ms N] [--interval-ms N]
@@ -10839,7 +10857,7 @@ final class ZeroThreeCLI {
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
-          - `browser wait-selector` waits for one DOM selector to become attached or visible without mutating the page.
+          - `browser wait-selector` waits for one DOM selector to become attached, visible, hidden, or detached without mutating the page.
           - `browser wait-text` waits for page text to match without returning page text contents.
           - `browser wait-value` waits for one input, textarea, or select value without returning value contents.
           - `browser wait-ready` waits for one tab document readiness state without mutating the page.
@@ -10847,7 +10865,7 @@ final class ZeroThreeCLI {
           - `browser wait-checked` waits for one checkbox or radio checked state without mutating the page.
           - Workflow fill-browser, select-browser, check-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
-          - Workflow wait-browser-selector waits for dynamic page UI readiness before the next browser action.
+          - Workflow wait-browser-selector waits for dynamic page UI readiness or disappearance before the next browser action.
           - Workflow wait-browser-text waits for page text readiness without fixed sleeps.
           - Workflow wait-browser-value waits for field value readiness without exposing value contents.
           - Workflow wait-browser-ready waits for document readiness before inspecting or acting.

@@ -32,7 +32,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - Verified DevTools clicking: `03 browser click --expect-url ...` waits for an expected post-click tab URL and returns structured URL verification evidence with the click result.
 - DevTools navigation: `03 browser navigate` sends a typed tab navigation through Chrome DevTools after medium-risk policy approval, verifies the resulting tab URL from structured DevTools target metadata, and records requested/current URLs plus verification in the audit log.
 - DevTools URL waiting: `03 browser wait-url` waits for a tab URL to match expected exact, prefix, or contains criteria using structured DevTools tab metadata.
-- DevTools selector waiting: `03 browser wait-selector` waits for a selector to become attached or visible using read-only DevTools runtime evaluation.
+- DevTools selector waiting: `03 browser wait-selector` waits for a selector to become attached, visible, hidden, or detached using read-only DevTools runtime evaluation.
 - DevTools text waiting: `03 browser wait-text` waits for page text to match while returning only text lengths and digests.
 - DevTools value waiting: `03 browser wait-value` waits for one input, textarea, or select value to match while returning only lengths and digests.
 - DevTools ready-state waiting: `03 browser wait-ready` waits for `document.readyState` to reach loading, interactive, or complete before the next inspection or action.

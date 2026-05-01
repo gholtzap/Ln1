@@ -35,7 +35,7 @@ The system should support task execution as a sequence of observations and actio
 - Verified click preflight: `03 workflow preflight --operation click-browser --expect-url ...` carries post-click URL expectations into the typed browser click command.
 - Browser URL wait workflow: `03 workflow run --operation wait-browser-url ... --dry-run false` waits for a tab URL to match expected exact, prefix, or contains criteria and returns typed verification evidence.
 - Browser URL wait resume: after a successful `wait-browser-url` transcript, `03 workflow resume --operation wait-browser-url` suggests a dry-run DOM inspection for the arrived tab.
-- Browser selector wait workflow: `03 workflow run --operation wait-browser-selector ... --dry-run false` waits for dynamic DOM readiness before the next browser action.
+- Browser selector wait workflow: `03 workflow run --operation wait-browser-selector ... --dry-run false` waits for dynamic DOM readiness or disappearance before the next browser action.
 - Browser selector wait resume: after a successful `wait-browser-selector` transcript, `03 workflow resume --operation wait-browser-selector` suggests a direct fill, select, check, or click command when selector metadata is actionable.
 - Browser text wait workflow: `03 workflow run --operation wait-browser-text ... --dry-run false` waits for success/error text without returning page contents.
 - Browser text wait resume: after a successful `wait-browser-text` transcript, `03 workflow resume --operation wait-browser-text` suggests a dry-run DOM inspection for the matched page state.

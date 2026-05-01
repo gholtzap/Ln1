@@ -105,7 +105,7 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 `wait-browser-url` is a non-mutating workflow operation for bounded browser navigation verification after clicks, submissions, or external navigation. It polls structured tab metadata until the URL matches `--expect-url` with `--match exact|prefix|contains`, then returns typed verification evidence.
 
-`wait-browser-selector` is a non-mutating workflow operation for bounded browser UI readiness checks. It polls the tab's DevTools runtime until `--selector` is attached to the DOM or visible with `--state visible`, then returns selector metadata for the next action.
+`wait-browser-selector` is a non-mutating workflow operation for bounded browser UI readiness checks. It polls the tab's DevTools runtime until `--selector` is attached, visible, hidden, or detached with `--state attached|visible|hidden|detached`, then returns selector metadata for the next action.
 
 `wait-browser-text` is a non-mutating workflow operation for bounded page text readiness checks. It polls visible page text until `--text` matches with `--match contains|exact`, returning only text lengths and SHA-256 digests rather than page text contents.
 
@@ -534,13 +534,13 @@ Wait for one browser tab to reach an expected URL without mutating the page:
 
 `browser.waitURL` is a low-risk read action. It polls structured DevTools tab metadata until the current URL matches the expected value, returning the same URL verification shape used by navigation.
 
-Wait for one selector to become ready without mutating the page:
+Wait for one selector to become ready, hidden, or detached without mutating the page:
 
 ```sh
 .build/debug/03 browser wait-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible --timeout-ms 5000
 ```
 
-`browser.waitSelector` is a low-risk read action. It polls `document.querySelector` through the tab's DevTools runtime until the selector is attached or visible, returning tag, disabled, href, text-length, and current URL metadata.
+`browser.waitSelector` is a low-risk read action. It polls `document.querySelector` through the tab's DevTools runtime until the selector is attached, visible, hidden, or detached, returning tag, disabled, href, text-length, and current URL metadata when an element is present.
 
 Wait for visible page text without returning page contents:
 
