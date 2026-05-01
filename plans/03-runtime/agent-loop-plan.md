@@ -31,7 +31,7 @@ The system should support task execution as a sequence of observations and actio
 - File wait workflow: `03 workflow run --operation wait-file ...` adds a safe wait primitive for file appearance/disappearance with an outer workflow deadline.
 - Workflow transcript: `03 workflow run ...` appends a JSONL record, and `03 workflow log --allow-risk medium` reads recent runs for resume/debug context.
 - Workflow resume: `03 workflow resume --allow-risk medium` summarizes the latest transcript status and returns a conservative next command, including browser tab-list-to-DOM-inspection and DOM-selector-to-browser-action follow-ups.
-- Browser action preflight: `03 workflow preflight --operation fill-browser|click-browser ...` validates DevTools, audit-log readiness, tab IDs, selectors, and text before returning typed browser action argv arrays.
+- Browser action preflight: `03 workflow preflight --operation fill-browser|click-browser|navigate-browser ...` validates DevTools, audit-log readiness, tab IDs, selectors, text, URLs, and match modes before returning typed browser action argv arrays.
 
 ## Relationship To The Product
 

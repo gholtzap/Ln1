@@ -334,6 +334,36 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
+
+        let navigate = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "navigate-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--url", "https://example.com/next",
+            "--expect-url", "https://example.com/next",
+            "--match", "exact",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(navigate.status, 0, navigate.stderr)
+        let navigateObject = try decodeJSONObject(navigate.stdout)
+        let navigateBlockers = try XCTUnwrap(navigateObject["blockers"] as? [String])
+        XCTAssertEqual(navigateObject["operation"] as? String, "navigate-browser")
+        XCTAssertEqual(navigateObject["risk"] as? String, "medium")
+        XCTAssertEqual(navigateObject["mutates"] as? Bool, true)
+        XCTAssertTrue(navigateBlockers.isEmpty)
+        XCTAssertEqual(navigateObject["nextArguments"] as? [String], [
+            "03", "browser", "navigate",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--url", "https://example.com/next",
+            "--expect-url", "https://example.com/next",
+            "--match", "exact",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
     }
 
     func testWorkflowNextReturnsStructuredArgvWithoutExecutingMove() throws {

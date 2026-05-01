@@ -1473,12 +1473,14 @@ final class ZeroThreeCLI {
             return workflowPreflightBrowserAction(kind: "fill")
         case "click-browser":
             return workflowPreflightBrowserAction(kind: "click")
+        case "navigate-browser":
+            return workflowPreflightBrowserAction(kind: "navigate")
         case "move-file":
             return try workflowPreflightMoveFile()
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, move-file, or wait-file.")
         }
     }
 
@@ -1642,6 +1644,9 @@ final class ZeroThreeCLI {
         let id = option("--id")
         let selector = option("--selector")
         let text = option("--text")
+        let url = option("--url")
+        let expectedURL = option("--expect-url")
+        let match = option("--match")
         if id == nil {
             prerequisites.append(DoctorCheck(
                 name: "workflow.browserTabID",
@@ -1651,7 +1656,7 @@ final class ZeroThreeCLI {
                 remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
-        if selector == nil {
+        if kind == "fill" || kind == "click", selector == nil {
             prerequisites.append(DoctorCheck(
                 name: "workflow.browserSelector",
                 status: "fail",
@@ -1669,11 +1674,79 @@ final class ZeroThreeCLI {
                 remediation: "Pass `--text TEXT` for the target field."
             ))
         }
+        let normalizedURL: String?
+        if kind == "navigate" {
+            if let url {
+                do {
+                    normalizedURL = try validatedBrowserNavigationURL(url)
+                } catch {
+                    normalizedURL = nil
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserURL",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Pass an absolute HTTP(S) URL with `--url URL`."
+                    ))
+                }
+            } else {
+                normalizedURL = nil
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserURL",
+                    status: "fail",
+                    required: true,
+                    message: "No URL was provided for navigate-browser.",
+                    remediation: "Pass `--url URL` for the target navigation."
+                ))
+            }
+            if let expectedURL {
+                do {
+                    _ = try validatedBrowserExpectedURL(expectedURL)
+                } catch {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserExpectedURL",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Pass a non-empty URL or text fragment with `--expect-url VALUE`."
+                    ))
+                }
+            }
+            if let match {
+                do {
+                    _ = try browserURLMatchMode(match)
+                } catch {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserURLMatch",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Use `--match exact`, `--match prefix`, or `--match contains`."
+                    ))
+                }
+            }
+        } else {
+            normalizedURL = nil
+        }
 
         let blockers = workflowBlockers(from: prerequisites)
         let operation = "\(kind)-browser"
         let nextArguments: [String]?
-        if blockers.isEmpty, let id, let selector {
+        if blockers.isEmpty, kind == "navigate", let id, let normalizedURL {
+            var arguments = ["03", "browser", "navigate"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += ["--id", id, "--url", normalizedURL]
+            if let expectedURL {
+                arguments += ["--expect-url", expectedURL]
+            }
+            if let match {
+                arguments += ["--match", match]
+            }
+            arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
+            nextArguments = arguments
+        } else if blockers.isEmpty, let id, let selector {
             var arguments = ["03", "browser", kind]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
@@ -6490,9 +6563,9 @@ final class ZeroThreeCLI {
             }
           },
           "workflowBrowserAction": {
-            "command": "03 workflow preflight --operation click-browser --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]'",
+            "command": "03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id page-id --url https://example.com/next --expect-url https://example.com/next --match exact",
             "result": {
-              "operation": "click-browser",
+              "operation": "navigate-browser",
               "risk": "medium",
               "mutates": true,
               "canProceed": true,
@@ -6511,9 +6584,9 @@ final class ZeroThreeCLI {
                 }
               ],
               "blockers": [],
-              "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
-              "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
-              "message": "click-browser can proceed with the suggested command."
+              "nextCommand": "03 browser navigate --endpoint http://127.0.0.1:9222 --id page-id --url https://example.com/next --expect-url https://example.com/next --match exact --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["03", "browser", "navigate", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--url", "https://example.com/next", "--expect-url", "https://example.com/next", "--match", "exact", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "message": "navigate-browser can proceed with the suggested command."
             }
           },
           "workflowRun": {
@@ -7207,10 +7280,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL]
           03 workflow run --operation inspect-active-app|read-browser|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -7279,7 +7352,7 @@ final class ZeroThreeCLI {
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
-          - Workflow fill-browser and click-browser preflight browser actions before returning typed mutating browser argv arrays for review.
+          - Workflow fill-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
         """)
     }
 

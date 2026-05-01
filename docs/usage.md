@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `click-browser`, `navigate-browser`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -63,6 +63,7 @@ Examples:
 .build/debug/03 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
 .build/debug/03 workflow preflight --operation click-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]'
 .build/debug/03 workflow preflight --operation fill-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query"
+.build/debug/03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
@@ -81,7 +82,7 @@ For a bounded run decision that still does not execute or mutate anything, use d
 .build/debug/03 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run true
 ```
 
-`workflow run --dry-run true` returns whether the workflow is ready, whether it would execute, the command that would be used, and the embedded preflight evidence. This mode is intentionally non-executing. Browser fill/click workflows are mutating, so dry-run is the safe way to validate tab IDs, selectors, policy, and audit-log readiness before running the returned browser command directly.
+`workflow run --dry-run true` returns whether the workflow is ready, whether it would execute, the command that would be used, and the embedded preflight evidence. This mode is intentionally non-executing. Browser fill/click/navigation workflows are mutating, so dry-run is the safe way to validate tab IDs, selectors, URLs, policy, and audit-log readiness before running the returned browser command directly.
 
 Execution mode is limited to non-mutating workflows:
 
