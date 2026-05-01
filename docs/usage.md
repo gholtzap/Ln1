@@ -62,6 +62,8 @@ By default `desktop windows` reports visible non-desktop, normal-layer windows. 
 
 The output is JSON with app metadata, windows, elements, frames, values, and available actions.
 
+Each Accessibility node includes the path-style `id` used by `perform` plus a semantic `stableIdentity`. The stable identity summarizes owner, role, title or help text, actions, and coarse frame when available, then reports a digest, confidence, readable label, components, and reasons. Use the confidence and reasons to decide whether a repeated observation still refers to the same control before acting.
+
 By default this targets the frontmost app. To walk every running GUI app macOS exposes through Accessibility:
 
 ```sh

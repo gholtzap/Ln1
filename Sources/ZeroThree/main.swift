@@ -22,6 +22,7 @@ struct AppRecord: Codable {
 
 struct ElementNode: Codable {
     let id: String
+    let stableIdentity: StableIdentity
     let role: String?
     let subrole: String?
     let title: String?
@@ -4404,6 +4405,18 @@ final class ZeroThreeCLI {
             "windows": [
               {
                 "id": "w0.3.1",
+                "stableIdentity": {
+                  "id": "accessibilityElement:stable-semantic-digest",
+                  "kind": "accessibilityElement",
+                  "confidence": "high",
+                  "label": "Save AXButton in com.example.App",
+                  "components": {
+                    "owner": "com.example.app",
+                    "role": "AXButton",
+                    "title": "save"
+                  },
+                  "reasons": ["owner bundle identifier or name", "role", "title"]
+                },
                 "role": "AXButton",
                 "subrole": null,
                 "title": "Save",
@@ -4425,6 +4438,18 @@ final class ZeroThreeCLI {
                 "windows": [
                   {
                     "id": "a0.w0.3.1",
+                    "stableIdentity": {
+                      "id": "accessibilityElement:stable-semantic-digest",
+                      "kind": "accessibilityElement",
+                      "confidence": "high",
+                      "label": "Save AXButton in Finder",
+                      "components": {
+                        "owner": "com.apple.finder",
+                        "role": "AXButton",
+                        "title": "save"
+                      },
+                      "reasons": ["owner bundle identifier or name", "role", "title"]
+                    },
                     "role": "AXButton",
                     "actions": ["AXPress"],
                     "children": []
@@ -5640,7 +5665,14 @@ final class ZeroThreeCLI {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         let windows = accessibilityArray(axApp, kAXWindowsAttribute)
         let nodes = windows.enumerated().map { index, window in
-            buildNode(window, id: "\(idPrefix)\(index)", depth: depth, maxChildren: maxChildren)
+            buildNode(
+                window,
+                id: "\(idPrefix)\(index)",
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier,
+                depth: depth,
+                maxChildren: maxChildren
+            )
         }
 
         return AppState(
@@ -5744,13 +5776,46 @@ final class ZeroThreeCLI {
     }
 
     private func buildNode(_ element: AXUIElement, id: String, depth: Int, maxChildren: Int) -> ElementNode {
+        buildNode(
+            element,
+            id: id,
+            ownerName: nil,
+            ownerBundleIdentifier: nil,
+            depth: depth,
+            maxChildren: maxChildren
+        )
+    }
+
+    private func buildNode(
+        _ element: AXUIElement,
+        id: String,
+        ownerName: String?,
+        ownerBundleIdentifier: String?,
+        depth: Int,
+        maxChildren: Int
+    ) -> ElementNode {
+        let role = stringAttribute(element, kAXRoleAttribute)
+        let subrole = stringAttribute(element, kAXSubroleAttribute)
+        let title = stringAttribute(element, kAXTitleAttribute)
+        let value = stringLikeAttribute(element, kAXValueAttribute)
+        let help = stringAttribute(element, kAXHelpAttribute)
+        let enabled = boolAttribute(element, kAXEnabledAttribute)
+        let elementFrame = frame(element)
+        let actions = actionNames(element)
         let children: [ElementNode]
         if depth > 0 {
             children = accessibilityArray(element, kAXChildrenAttribute)
                 .prefix(maxChildren)
                 .enumerated()
                 .map { index, child in
-                    buildNode(child, id: "\(id).\(index)", depth: depth - 1, maxChildren: maxChildren)
+                    buildNode(
+                        child,
+                        id: "\(id).\(index)",
+                        ownerName: ownerName,
+                        ownerBundleIdentifier: ownerBundleIdentifier,
+                        depth: depth - 1,
+                        maxChildren: maxChildren
+                    )
                 }
         } else {
             children = []
@@ -5758,15 +5823,125 @@ final class ZeroThreeCLI {
 
         return ElementNode(
             id: id,
-            role: stringAttribute(element, kAXRoleAttribute),
-            subrole: stringAttribute(element, kAXSubroleAttribute),
-            title: stringAttribute(element, kAXTitleAttribute),
-            value: stringLikeAttribute(element, kAXValueAttribute),
-            help: stringAttribute(element, kAXHelpAttribute),
-            enabled: boolAttribute(element, kAXEnabledAttribute),
-            frame: frame(element),
-            actions: actionNames(element),
+            stableIdentity: accessibilityElementStableIdentity(
+                pathID: id,
+                ownerName: ownerName,
+                ownerBundleIdentifier: ownerBundleIdentifier,
+                role: role,
+                subrole: subrole,
+                title: title,
+                help: help,
+                frame: elementFrame,
+                actions: actions
+            ),
+            role: role,
+            subrole: subrole,
+            title: title,
+            value: value,
+            help: help,
+            enabled: enabled,
+            frame: elementFrame,
+            actions: actions,
             children: children
+        )
+    }
+
+    private func accessibilityElementStableIdentity(
+        pathID: String,
+        ownerName: String?,
+        ownerBundleIdentifier: String?,
+        role: String?,
+        subrole: String?,
+        title: String?,
+        help: String?,
+        frame: Rect?,
+        actions: [String]
+    ) -> StableIdentity {
+        let normalizedOwnerName = normalizedIdentityText(ownerName)
+        let owner = ownerBundleIdentifier.flatMap(normalizedIdentityText)
+            ?? normalizedOwnerName
+            ?? "unknown-owner"
+        let readableOwner = cleanIdentityText(ownerName)
+            ?? ownerBundleIdentifier
+            ?? "unknown app"
+        var components = ["owner": owner]
+        var reasons = owner == "unknown-owner"
+            ? ["owner unavailable"]
+            : ["owner bundle identifier or name"]
+        var fingerprintParts = [
+            "accessibilityElement",
+            "owner:\(owner)"
+        ]
+
+        if let role {
+            components["role"] = role
+            reasons.append("role")
+            fingerprintParts.append("role:\(role)")
+        }
+        if let subrole {
+            components["subrole"] = subrole
+            reasons.append("subrole")
+            fingerprintParts.append("subrole:\(subrole)")
+        }
+        if let normalizedTitle = normalizedIdentityText(title) {
+            components["title"] = normalizedTitle
+            reasons.append("title")
+            fingerprintParts.append("title:\(normalizedTitle)")
+        } else if let normalizedHelp = normalizedIdentityText(help) {
+            components["help"] = normalizedHelp
+            reasons.append("help")
+            fingerprintParts.append("help:\(normalizedHelp)")
+        }
+
+        if !actions.isEmpty {
+            let joinedActions = actions.joined(separator: ",")
+            components["actions"] = joinedActions
+            reasons.append("available actions")
+            fingerprintParts.append("actions:\(joinedActions)")
+        }
+
+        if let frame {
+            let coarseFrame = coarseBoundsIdentityComponent(frame)
+            components["coarseFrame"] = coarseFrame
+            reasons.append("coarse frame")
+            fingerprintParts.append("frame:\(coarseFrame)")
+        } else if components["title"] == nil, components["help"] == nil {
+            components["pathFallback"] = pathID
+            reasons.append("path fallback")
+            fingerprintParts.append("path:\(pathID)")
+        }
+
+        let hasOwner = owner != "unknown-owner"
+        let hasRole = role != nil
+        let hasSemanticLabel = components["title"] != nil || components["help"] != nil
+        let confidence: String
+        if hasOwner, hasRole, hasSemanticLabel, frame != nil {
+            confidence = "high"
+        } else if hasOwner, hasRole, hasSemanticLabel || frame != nil {
+            confidence = "medium"
+        } else {
+            confidence = "low"
+        }
+
+        let label: String
+        if let title = cleanIdentityText(title) {
+            label = "\(title) \(role ?? "element") in \(readableOwner)"
+        } else if let help = cleanIdentityText(help) {
+            label = "\(help) \(role ?? "element") in \(readableOwner)"
+        } else if let frame {
+            label = "\(role ?? "element") in \(readableOwner) near \(Int(frame.x)),\(Int(frame.y))"
+        } else {
+            label = "\(role ?? "element") at \(pathID) in \(readableOwner)"
+        }
+
+        let digest = String(sha256Digest(fingerprintParts.joined(separator: "|")).prefix(24))
+        return StableIdentity(
+            id: "accessibilityElement:\(digest)",
+            kind: "accessibilityElement",
+            confidence: confidence,
+            label: label,
+            components: components,
+            reasons: reasons
         )
     }
 

@@ -20,6 +20,10 @@ The system should inspect accessible UI hierarchy across running apps, understan
 - The assistant can recognize when an app exposes poor or incomplete accessibility data.
 - The adapter can feed a normalized state model used by the rest of the product.
 
+## Implemented Increments
+
+- Semantic element identity: `03 state` emits `stableIdentity` metadata for Accessibility nodes so callers can pair path-based action IDs with a confidence-scored semantic reference before acting.
+
 ## Relationship To The Product
 
 This adapter is the first bridge between existing macOS apps and the AI-readable computer layer. It gives immediate coverage without requiring apps to adopt a new protocol.

@@ -116,6 +116,28 @@ final class ZeroThreeSmokeTests: XCTestCase {
         }
     }
 
+    func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
+        let result = try runZeroThree(["schema"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let state = try XCTUnwrap(object["state"] as? [String: Any])
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        let firstWindow = try XCTUnwrap(windows.first)
+        let stableIdentity = try XCTUnwrap(firstWindow["stableIdentity"] as? [String: Any])
+        let components = try XCTUnwrap(stableIdentity["components"] as? [String: String])
+        let reasons = try XCTUnwrap(stableIdentity["reasons"] as? [String])
+
+        XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
+        XCTAssertEqual(stableIdentity["confidence"] as? String, "high")
+        XCTAssertNotNil(stableIdentity["id"] as? String)
+        XCTAssertNotNil(stableIdentity["label"] as? String)
+        XCTAssertEqual(components["role"], "AXButton")
+        XCTAssertEqual(components["title"], "save")
+        XCTAssertTrue(reasons.contains("role"))
+        XCTAssertTrue(reasons.contains("title"))
+    }
+
     func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {
         let memoryLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-task-memory-\(UUID().uuidString).jsonl")
