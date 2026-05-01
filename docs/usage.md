@@ -105,7 +105,7 @@ To resume after an interruption, ask for a recommendation from the latest transc
 .build/debug/03 workflow resume --allow-risk medium
 ```
 
-`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array.
+`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array. For completed browser tab listings, it can suggest a dry-run DOM inspection for the first tab.
 
 ## Inspect Running Apps
 

@@ -1789,14 +1789,23 @@ final class ZeroThreeCLI {
             message = "Latest workflow timed out; inspect the dry-run plan or rerun with a larger --run-timeout-ms."
         } else if executed, exitCode == 0 {
             status = "completed"
-            nextArguments = [
-                "03", "workflow", "log",
-                "--workflow-log", workflowURL.path,
-                "--allow-risk", "medium",
-                "--limit", "5"
-            ]
-            nextCommand = workflowDisplayCommand(nextArguments!)
-            message = "Latest workflow completed; inspect recent transcript context before choosing the next operation."
+            if let recommendation = workflowCompletedRecommendation(
+                for: latest,
+                workflowURL: workflowURL
+            ) {
+                nextArguments = recommendation.arguments
+                nextCommand = workflowDisplayCommand(recommendation.arguments)
+                message = recommendation.message
+            } else {
+                nextArguments = [
+                    "03", "workflow", "log",
+                    "--workflow-log", workflowURL.path,
+                    "--allow-risk", "medium",
+                    "--limit", "5"
+                ]
+                nextCommand = workflowDisplayCommand(nextArguments!)
+                message = "Latest workflow completed; inspect recent transcript context before choosing the next operation."
+            }
         } else if executed {
             status = "failed"
             nextArguments = workflowDryRunArguments(for: latestOperation)
@@ -1826,6 +1835,47 @@ final class ZeroThreeCLI {
             latest: try JSONValue(any: latest),
             message: message
         )
+    }
+
+    private func workflowCompletedRecommendation(
+        for latest: [String: Any],
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard latest["operation"] as? String == "read-browser",
+              let execution = latest["execution"] as? [String: Any],
+              let outputJSON = execution["outputJSON"] as? [String: Any],
+              let tabs = outputJSON["tabs"] as? [[String: Any]],
+              let firstTab = tabs.first,
+              let tabID = firstTab["id"] as? String else {
+            return nil
+        }
+
+        let endpoint = outputJSON["endpoint"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--endpoint")
+            ?? "http://127.0.0.1:9222"
+        return (
+            arguments: [
+                "03", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
+        )
+    }
+
+    private func workflowArgumentValue(in arguments: [String]?, for option: String) -> String? {
+        guard let arguments,
+              let index = arguments.firstIndex(of: option) else {
+            return nil
+        }
+        let valueIndex = arguments.index(after: index)
+        guard arguments.indices.contains(valueIndex) else {
+            return nil
+        }
+        return arguments[valueIndex]
     }
 
     private func workflowDryRunArguments(for operation: String?) -> [String]? {
@@ -6026,9 +6076,9 @@ final class ZeroThreeCLI {
               "transcriptID": "UUID",
               "latestOperation": "read-browser",
               "blockers": [],
-              "nextCommand": "03 workflow log --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl' --allow-risk medium --limit 5",
-              "nextArguments": ["03", "workflow", "log", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl", "--allow-risk", "medium", "--limit", "5"],
-              "message": "Latest workflow completed; inspect recent transcript context before choosing the next operation."
+              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
+              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "message": "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
             }
           },
           "workflowWaitFile": {

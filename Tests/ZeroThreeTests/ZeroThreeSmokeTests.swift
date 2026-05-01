@@ -569,12 +569,16 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(resumeObject["status"] as? String, "completed")
         XCTAssertEqual(resumeObject["transcriptID"] as? String, transcriptID)
         XCTAssertEqual(resumeObject["latestOperation"] as? String, "read-browser")
+        let expectedEndpoint = try XCTUnwrap(outputJSON["endpoint"] as? String)
         XCTAssertEqual(resumeObject["nextArguments"] as? [String], [
-            "03", "workflow", "log",
-            "--workflow-log", workflowLog.path,
-            "--allow-risk", "medium",
-            "--limit", "5"
+            "03", "workflow", "run",
+            "--operation", "read-browser",
+            "--endpoint", expectedEndpoint,
+            "--id", "page-1",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
         ])
+        XCTAssertTrue((resumeObject["message"] as? String)?.contains("DOM inspection") == true)
         XCTAssertEqual(latest["transcriptID"] as? String, transcriptID)
     }
 
