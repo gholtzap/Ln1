@@ -60,6 +60,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.selectOption"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.selectOption"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.selectOption"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.setChecked"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.setChecked"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.setChecked"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["browser.clickElement"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.clickElement"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.clickElement"]?["mutates"] as? Bool, true)
@@ -351,6 +354,34 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "select[name=\"country\"]",
             "--value", "ca",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
+        let check = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "check-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name=\"subscribe\"]",
+            "--checked", "true",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(check.status, 0, check.stderr)
+        let checkObject = try decodeJSONObject(check.stdout)
+        let checkBlockers = try XCTUnwrap(checkObject["blockers"] as? [String])
+        XCTAssertEqual(checkObject["operation"] as? String, "check-browser")
+        XCTAssertEqual(checkObject["risk"] as? String, "medium")
+        XCTAssertEqual(checkObject["mutates"] as? Bool, true)
+        XCTAssertTrue(checkBlockers.isEmpty)
+        XCTAssertEqual(checkObject["nextArguments"] as? [String], [
+            "03", "browser", "check",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "input[name=\"subscribe\"]",
+            "--checked", "true",
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -1631,6 +1662,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.setChecked"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.clickElement"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -2294,6 +2330,152 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "option_selected")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "selected")
+    }
+
+    func testBrowserCheckSetsCheckedStateWithPolicyVerificationAndAudit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-check-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let checkedPayload: [String: Any] = [
+            "ok": true,
+            "code": "checked",
+            "message": "The requested checked state was applied.",
+            "selector": "input[name='subscribe']",
+            "tagName": "input",
+            "inputType": "checkbox",
+            "disabled": false,
+            "readOnly": false,
+            "requestedChecked": true,
+            "currentChecked": true,
+            "matched": true
+        ]
+        let checkedData = try JSONSerialization.data(withJSONObject: checkedPayload, options: [.sortedKeys])
+        let checkedJSONString = String(decoding: checkedData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": checkedJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Preferences Page",
+            "url": "https://example.com/preferences",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "check",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='subscribe']",
+            "--checked", "true",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "check",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='subscribe']",
+            "--checked", "true",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "enable subscription"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.setChecked")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["selector"] as? String, "input[name='subscribe']")
+        XCTAssertEqual(object["requestedChecked"] as? Bool, true)
+        XCTAssertEqual(object["targetTagName"] as? String, "input")
+        XCTAssertEqual(object["targetInputType"] as? String, "checkbox")
+        XCTAssertEqual(object["targetDisabled"] as? Bool, false)
+        XCTAssertEqual(object["targetReadOnly"] as? Bool, false)
+        XCTAssertEqual(object["currentChecked"] as? Bool, true)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "checked_matched")
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.check",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.setChecked")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["formSelector"] as? String, "input[name='subscribe']")
+        XCTAssertEqual(deniedBrowserTab["formChecked"] as? Bool, true)
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.check",
+            "--code", "checked",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.check")
+        XCTAssertEqual(entry["action"] as? String, "browser.setChecked")
+        XCTAssertEqual(entry["reason"] as? String, "enable subscription")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Preferences Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/preferences")
+        XCTAssertEqual(browserTab["formSelector"] as? String, "input[name='subscribe']")
+        XCTAssertEqual(browserTab["formChecked"] as? Bool, true)
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "checked_matched")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "checked")
     }
 
     func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {

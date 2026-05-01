@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-ready`, `wait-browser-title`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-ready`, `wait-browser-title`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -64,6 +64,7 @@ Examples:
 .build/debug/03 workflow preflight --operation click-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]'
 .build/debug/03 workflow preflight --operation fill-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query"
 .build/debug/03 workflow preflight --operation select-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'select[name=country]' --value ca
+.build/debug/03 workflow preflight --operation check-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
 .build/debug/03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
@@ -491,6 +492,14 @@ Choose one option in a browser select control through the tab's DevTools WebSock
 
 `browser.selectOption` is a medium-risk mutating action because it changes page state and may affect downstream form behavior. The command targets one `<select>` selector, accepts either `--value` or `--label`, dispatches `input` and `change` events, and verifies the selected option. The result and audit record store selector, option length/digest, target metadata, verification, and outcome without storing option text.
 
+Set one checkbox or radio control through the tab's DevTools WebSocket:
+
+```sh
+.build/debug/03 browser check --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true --allow-risk medium --reason "Set subscription preference"
+```
+
+`browser.setChecked` is a medium-risk mutating action because it changes page state and may affect form submission or web-app preferences. The command targets one checkbox or radio selector, defaults `--checked` to `true`, dispatches `input` and `change` events, and verifies the checked state. The audit record stores tab metadata, selector, requested checked state, policy decision, reason, verification, and outcome.
+
 Click one browser element through the tab's DevTools WebSocket:
 
 ```sh
@@ -547,7 +556,7 @@ Wait for one tab title to match without mutating the page or reading page conten
 
 `browser.waitTitle` is a low-risk read action. It polls structured DevTools tab metadata until the title matches, returning title, URL, and match status.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded document readiness checks, and bounded title readiness checks.
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded document readiness checks, and bounded title readiness checks.
 
 ## Product Direction
 

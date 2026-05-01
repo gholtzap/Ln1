@@ -503,6 +503,7 @@ struct BrowserAuditSummary: Codable {
     var formSelector: String? = nil
     var formTextLength: Int? = nil
     var formTextDigest: String? = nil
+    var formChecked: Bool? = nil
     var navigationURL: String? = nil
     var currentURL: String? = nil
     var urlMatched: Bool? = nil
@@ -672,6 +673,20 @@ struct BrowserSelectOptionPayload: Codable {
     let matched: Bool
 }
 
+struct BrowserCheckedPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let readOnly: Bool?
+    let requestedChecked: Bool
+    let currentChecked: Bool?
+    let matched: Bool
+}
+
 struct BrowserFormFillResult: Codable {
     let generatedAt: String
     let platform: String
@@ -712,6 +727,26 @@ struct BrowserSelectOptionResult: Codable {
     let selectedIndex: Int?
     let selectedValueLength: Int?
     let selectedLabelLength: Int?
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserCheckedResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let selector: String
+    let requestedChecked: Bool
+    let verification: FileOperationVerification
+    let targetTagName: String?
+    let targetInputType: String?
+    let targetDisabled: Bool?
+    let targetReadOnly: Bool?
+    let currentChecked: Bool?
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -1629,6 +1664,8 @@ final class ZeroThreeCLI {
             return workflowPreflightBrowserAction(kind: "fill")
         case "select-browser":
             return workflowPreflightBrowserAction(kind: "select")
+        case "check-browser":
+            return workflowPreflightBrowserAction(kind: "check")
         case "click-browser":
             return workflowPreflightBrowserAction(kind: "click")
         case "navigate-browser":
@@ -1648,7 +1685,7 @@ final class ZeroThreeCLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-text, wait-browser-ready, wait-browser-title, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-text, wait-browser-ready, wait-browser-title, move-file, or wait-file.")
         }
     }
 
@@ -1814,6 +1851,7 @@ final class ZeroThreeCLI {
         let text = option("--text")
         let value = option("--value")
         let label = option("--label")
+        let checked = option("--checked")
         let url = option("--url")
         let expectedURL = option("--expect-url")
         let match = option("--match")
@@ -1826,7 +1864,7 @@ final class ZeroThreeCLI {
                 remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
-        if kind == "fill" || kind == "select" || kind == "click", selector == nil {
+        if kind == "fill" || kind == "select" || kind == "check" || kind == "click", selector == nil {
             prerequisites.append(DoctorCheck(
                 name: "workflow.browserSelector",
                 status: "fail",
@@ -1888,6 +1926,19 @@ final class ZeroThreeCLI {
                         remediation: "Pass a non-empty option label with `--label LABEL`."
                     ))
                 }
+            }
+        }
+        if kind == "check", let checked {
+            do {
+                _ = try browserCheckedValue(checked)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserChecked",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--checked true` or `--checked false`."
+                ))
             }
         }
         let normalizedURL: String?
@@ -2006,6 +2057,9 @@ final class ZeroThreeCLI {
                 if let label {
                     arguments += ["--label", label]
                 }
+            }
+            if kind == "check" {
+                arguments += ["--checked", checked ?? "true"]
             }
             if kind == "click", let expectedURL {
                 arguments += ["--expect-url", expectedURL, "--match", match ?? "exact"]
@@ -3795,6 +3849,10 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
             try writeJSON(browserSelect(id: id, selector: selector))
+        case "check":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserCheck(id: id, selector: selector))
         case "click":
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
@@ -5253,6 +5311,11 @@ final class ZeroThreeCLI {
                     mutates: true
                 ),
                 BrowserAction(
+                    name: "browser.setChecked",
+                    risk: browserActionRisk(for: "browser.setChecked"),
+                    mutates: true
+                ),
+                BrowserAction(
                     name: "browser.clickElement",
                     risk: browserActionRisk(for: "browser.clickElement"),
                     mutates: true
@@ -5815,6 +5878,136 @@ final class ZeroThreeCLI {
                 selectedIndex: payload.selectedIndex,
                 selectedValueLength: payload.selectedValueLength,
                 selectedLabelLength: payload.selectedLabelLength,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserCheck(id: String, selector: String) throws -> BrowserCheckedResult {
+        let action = "browser.setChecked"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let requestedChecked = try browserCheckedValue(option("--checked") ?? "true")
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            formSelector: selector,
+            formChecked: requestedChecked
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String, verification: FileOperationVerification? = nil) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.check",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                formSelector: selector,
+                formChecked: requestedChecked
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let payload = try setBrowserCheckedState(
+                selector: selector,
+                checked: requestedChecked,
+                at: webSocketURL
+            )
+            let verification = FileOperationVerification(
+                ok: payload.ok && payload.matched && payload.currentChecked == requestedChecked,
+                code: payload.ok && payload.matched && payload.currentChecked == requestedChecked ? "checked_matched" : payload.code,
+                message: payload.ok && payload.matched && payload.currentChecked == requestedChecked
+                    ? "browser control checked state matches the requested value"
+                    : payload.message
+            )
+
+            guard verification.ok else {
+                try writeAudit(ok: false, code: payload.code, message: payload.message, verification: verification)
+                throw CommandError(description: payload.message)
+            }
+
+            let message = "Set browser checked state matching selector '\(selector)' in tab \(id)."
+            try writeAudit(ok: true, code: "checked", message: message, verification: verification)
+
+            return BrowserCheckedResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                selector: selector,
+                requestedChecked: requestedChecked,
+                verification: verification,
+                targetTagName: payload.tagName,
+                targetInputType: payload.inputType,
+                targetDisabled: payload.disabled,
+                targetReadOnly: payload.readOnly,
+                currentChecked: payload.currentChecked,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -6733,6 +6926,91 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func setBrowserCheckedState(
+        selector: String,
+        checked: Bool,
+        at webSocketURL: URL
+    ) throws -> BrowserCheckedPayload {
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const requestedChecked = \(checked ? "true" : "false");
+          const element = document.querySelector(selector);
+
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            tagName: extra.tagName || null,
+            inputType: extra.inputType || null,
+            disabled: extra.disabled ?? null,
+            readOnly: extra.readOnly ?? null,
+            requestedChecked,
+            currentChecked: extra.currentChecked ?? null,
+            matched: extra.matched || false
+          });
+
+          if (!element) {
+            return result(false, "element_missing", `No element matches selector '${selector}'.`);
+          }
+
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const inputType = tagName === "input" ? (element.getAttribute("type") || "text").toLowerCase() : null;
+          const disabled = "disabled" in element ? Boolean(element.disabled) : null;
+          const readOnly = "readOnly" in element ? Boolean(element.readOnly) : null;
+          const metadata = { tagName, inputType, disabled, readOnly, currentChecked: "checked" in element ? Boolean(element.checked) : null };
+
+          if (tagName !== "input" || !["checkbox", "radio"].includes(inputType)) {
+            return result(false, "unsupported_element", "The matched element is not a checkbox or radio input.", metadata);
+          }
+          if (disabled) {
+            return result(false, "element_disabled", "The matched input is disabled.", metadata);
+          }
+          if (readOnly) {
+            return result(false, "element_readonly", "The matched input is read-only.", metadata);
+          }
+          if (inputType === "radio" && requestedChecked === false) {
+            return result(false, "unsupported_radio_uncheck", "Radio inputs can only be checked by this command.", metadata);
+          }
+
+          element.checked = requestedChecked;
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+
+          const currentChecked = Boolean(element.checked);
+          return result(true, "checked", "The requested checked state was applied.", {
+            ...metadata,
+            currentChecked,
+            matched: currentChecked === requestedChecked
+          });
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a checked-state result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools checked-state result was not valid UTF-8")
+        }
+        do {
+            return try JSONDecoder().decode(BrowserCheckedPayload.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools checked-state result was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
     private func clickBrowserElement(
         selector: String,
         at webSocketURL: URL
@@ -7393,6 +7671,17 @@ final class ZeroThreeCLI {
             return rawState
         default:
             throw CommandError(description: "unsupported browser ready state '\(rawState)'. Use loading, interactive, or complete.")
+        }
+    }
+
+    private func browserCheckedValue(_ rawValue: String) throws -> Bool {
+        switch rawValue.lowercased() {
+        case "true", "1", "yes", "y":
+            return true
+        case "false", "0", "no", "n":
+            return false
+        default:
+            throw CommandError(description: "unsupported browser checked value '\(rawValue)'. Use true or false.")
         }
     }
 
@@ -8325,7 +8614,7 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitText", "browser.waitReady", "browser.waitTitle":
             return "low"
-        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.clickElement", "browser.navigate":
+        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -8402,6 +8691,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.selectOption", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.setChecked", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.waitURL", domain: "browser", risk: "low", mutates: false),
@@ -8970,6 +9260,7 @@ final class ZeroThreeCLI {
                     { "name": "browser.readDOM", "risk": "medium", "mutates": false },
                     { "name": "browser.fillFormField", "risk": "medium", "mutates": true },
                     { "name": "browser.selectOption", "risk": "medium", "mutates": true },
+                    { "name": "browser.setChecked", "risk": "medium", "mutates": true },
                     { "name": "browser.clickElement", "risk": "medium", "mutates": true },
                     { "name": "browser.navigate", "risk": "medium", "mutates": true },
                     { "name": "browser.waitURL", "risk": "low", "mutates": false },
@@ -9074,6 +9365,27 @@ final class ZeroThreeCLI {
               "selectedIndex": 2,
               "selectedValueLength": 2,
               "selectedLabelLength": 6,
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "browserCheck": {
+            "command": "03 browser check --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=subscribe]' --checked true --allow-risk medium",
+            "result": {
+              "action": "browser.setChecked",
+              "risk": "medium",
+              "selector": "input[name=subscribe]",
+              "requestedChecked": true,
+              "verification": {
+                "ok": true,
+                "code": "checked_matched",
+                "message": "browser control checked state matches the requested value"
+              },
+              "targetTagName": "input",
+              "targetInputType": "checkbox",
+              "targetDisabled": false,
+              "targetReadOnly": false,
+              "currentChecked": true,
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -9458,10 +9770,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible|loading|interactive|complete]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible|loading|interactive|complete]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible|loading|interactive|complete]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible|loading|interactive|complete]
           03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--text TEXT] [--title TITLE] [--state attached|visible|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-text|wait-browser-ready|wait-browser-title|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -9496,6 +9808,7 @@ final class ZeroThreeCLI {
           03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser check --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
@@ -9535,6 +9848,7 @@ final class ZeroThreeCLI {
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
           - `browser select` chooses one select option through Chrome DevTools only after medium-risk policy approval, verifies the selection, and audits selector plus option length/digest without storing option text.
+          - `browser check` sets one checkbox or radio input through Chrome DevTools only after medium-risk policy approval and audits selector plus requested checked state.
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
@@ -9542,7 +9856,7 @@ final class ZeroThreeCLI {
           - `browser wait-text` waits for page text to match without returning page text contents.
           - `browser wait-ready` waits for one tab document readiness state without mutating the page.
           - `browser wait-title` waits for one tab title to match without reading page contents.
-          - Workflow fill-browser, select-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
+          - Workflow fill-browser, select-browser, check-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
           - Workflow wait-browser-selector waits for dynamic page UI readiness before the next browser action.
           - Workflow wait-browser-text waits for page text readiness without fixed sleeps.
