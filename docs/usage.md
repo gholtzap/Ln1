@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-ready`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -67,6 +67,7 @@ Examples:
 .build/debug/03 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
 .build/debug/03 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
+.build/debug/03 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
@@ -103,11 +104,15 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 `wait-browser-text` is a non-mutating workflow operation for bounded page text readiness checks. It polls visible page text until `--text` matches with `--match contains|exact`, returning only text lengths and SHA-256 digests rather than page text contents.
 
+`wait-browser-ready` is a non-mutating workflow operation for bounded page load readiness checks. It polls `document.readyState` until the tab reaches `--state loading|interactive|complete`, defaulting to `complete`.
+
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
 After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
 
 After a successful `wait-browser-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched page state.
+
+After a successful `wait-browser-ready` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the loaded page state.
 
 Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
 
@@ -512,7 +517,15 @@ Wait for visible page text without returning page contents:
 
 `browser.waitText` is a low-risk read action. It polls page inner text until the expected value matches, returning only lengths, digests, URL, and match status.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, and bounded text readiness checks.
+Wait for one page to reach a document readiness state without mutating the page:
+
+```sh
+.build/debug/03 browser wait-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete --timeout-ms 5000
+```
+
+`browser.waitReady` is a low-risk read action. It polls `document.readyState` and treats `complete` as satisfying `interactive`, returning the current state, URL, and match status.
+
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, and bounded document readiness checks.
 
 ## Product Direction
 
