@@ -66,6 +66,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitURL"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitURL"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitURL"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitSelector"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitSelector"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitSelector"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -423,6 +426,35 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--expect-url", "https://example.com/next",
             "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitSelector = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-selector",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--state", "visible",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitSelector.status, 0, waitSelector.stderr)
+        let waitSelectorObject = try decodeJSONObject(waitSelector.stdout)
+        let waitSelectorBlockers = try XCTUnwrap(waitSelectorObject["blockers"] as? [String])
+        XCTAssertEqual(waitSelectorObject["operation"] as? String, "wait-browser-selector")
+        XCTAssertEqual(waitSelectorObject["risk"] as? String, "low")
+        XCTAssertEqual(waitSelectorObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitSelectorBlockers.isEmpty)
+        XCTAssertEqual(waitSelectorObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-selector",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--state", "visible",
             "--timeout-ms", "500",
             "--interval-ms", "50"
         ])
@@ -1186,6 +1218,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitURL"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitSelector"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -2066,6 +2103,81 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "url_matched")
         XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/done")
+    }
+
+    func testBrowserWaitSelectorReturnsVerificationWithoutMutating() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-selector-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let selectorPayload: [String: Any] = [
+            "ok": true,
+            "code": "selector_matched",
+            "message": "The selector reached 'visible' state.",
+            "selector": "button[type='submit']",
+            "state": "visible",
+            "matched": true,
+            "currentURL": "https://example.com/form",
+            "tagName": "button",
+            "disabled": false,
+            "href": NSNull(),
+            "textLength": 6
+        ]
+        let selectorData = try JSONSerialization.data(withJSONObject: selectorPayload, options: [.sortedKeys])
+        let selectorJSONString = String(decoding: selectorData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": selectorJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Form Page",
+            "url": "https://example.com/form",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-selector",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type='submit']",
+            "--state", "visible",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["selector"] as? String, "button[type='submit']")
+        XCTAssertEqual(object["state"] as? String, "visible")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "selector_matched")
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/form")
+        XCTAssertEqual(verification["tagName"] as? String, "button")
+        XCTAssertEqual(verification["disabled"] as? Bool, false)
+        XCTAssertEqual(verification["textLength"] as? Int, 6)
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {

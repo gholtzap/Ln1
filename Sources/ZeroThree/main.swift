@@ -677,6 +677,33 @@ struct BrowserURLWaitResult: Codable {
     let message: String
 }
 
+struct BrowserSelectorWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let state: String
+    let matched: Bool
+    let currentURL: String?
+    let tagName: String?
+    let disabled: Bool?
+    let href: String?
+    let textLength: Int?
+}
+
+struct BrowserSelectorWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let state: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserSelectorWaitVerification
+    let message: String
+}
+
 struct ClipboardAuditSummary: Codable {
     let pasteboard: String
     let changeCount: Int
@@ -1493,12 +1520,14 @@ final class ZeroThreeCLI {
             return workflowPreflightBrowserAction(kind: "navigate")
         case "wait-browser-url":
             return workflowPreflightWaitBrowserURL()
+        case "wait-browser-selector":
+            return workflowPreflightWaitBrowserSelector()
         case "move-file":
             return try workflowPreflightMoveFile()
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, wait-browser-url, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, move-file, or wait-file.")
         }
     }
 
@@ -1908,6 +1937,96 @@ final class ZeroThreeCLI {
 
         return workflowPreflightResult(
             operation: "wait-browser-url",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightWaitBrowserSelector() -> WorkflowPreflight {
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let endpoint = try? browserEndpoint()
+        let browserCheck = doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        let requiredBrowserCheck = DoctorCheck(
+            name: browserCheck.name,
+            status: browserCheck.status == "pass" ? "pass" : "fail",
+            required: true,
+            message: browserCheck.message,
+            remediation: browserCheck.status == "pass" ? nil : browserCheck.remediation
+        )
+        var prerequisites = [requiredBrowserCheck]
+        let id = option("--id")
+        let selector = option("--selector")
+        let state = option("--state")
+        if id == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserTabID",
+                status: "fail",
+                required: true,
+                message: "No browser tab ID was provided for wait-browser-selector.",
+                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+            ))
+        }
+        if let selector {
+            do {
+                _ = try validatedBrowserSelector(selector)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserSelector",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-empty CSS selector with `--selector CSS_SELECTOR`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserSelector",
+                status: "fail",
+                required: true,
+                message: "No CSS selector was provided for wait-browser-selector.",
+                remediation: "Pass `--selector CSS_SELECTOR` for the target element."
+            ))
+        }
+        if let state {
+            do {
+                _ = try browserSelectorWaitState(state)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserSelectorState",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--state attached` or `--state visible`."
+                ))
+            }
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let id, let selector {
+            var arguments = ["03", "browser", "wait-selector"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += [
+                "--id", id,
+                "--selector", selector,
+                "--state", state ?? "attached",
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-browser-selector",
             risk: "low",
             mutates: false,
             prerequisites: prerequisites,
@@ -3060,6 +3179,10 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let expectedURL = try requiredOption("--expect-url")
             try writeJSON(browserWaitURL(id: id, expectedURL: expectedURL))
+        case "wait-selector":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserWaitSelector(id: id, selector: selector))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -4499,6 +4622,11 @@ final class ZeroThreeCLI {
                     name: "browser.waitURL",
                     risk: browserActionRisk(for: "browser.waitURL"),
                     mutates: false
+                ),
+                BrowserAction(
+                    name: "browser.waitSelector",
+                    risk: browserActionRisk(for: "browser.waitSelector"),
+                    mutates: false
                 )
             ]
         )
@@ -5265,6 +5393,37 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func browserWaitSelector(id: String, selector: String) throws -> BrowserSelectorWaitResult {
+        let endpoint = try browserEndpoint()
+        let normalizedSelector = try validatedBrowserSelector(selector)
+        let state = try browserSelectorWaitState(option("--state") ?? "attached")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = try waitForBrowserSelector(
+            tabID: id,
+            selector: normalizedSelector,
+            state: state,
+            endpoint: endpoint,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+        let message = verification.ok
+            ? "Browser tab \(id) reached the expected selector state."
+            : "Timed out waiting for browser tab \(id) to reach the expected selector state."
+        return BrowserSelectorWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            tabID: id,
+            selector: normalizedSelector,
+            state: state,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: message
+        )
+    }
+
     private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
         let expression = """
         (() => {
@@ -5628,6 +5787,108 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func inspectBrowserSelector(
+        selector: String,
+        state: String,
+        currentURL: String?,
+        at webSocketURL: URL
+    ) throws -> BrowserSelectorWaitVerification {
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const state = \(try javascriptStringLiteral(state));
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            state,
+            matched: extra.matched || false,
+            currentURL: location.href || null,
+            tagName: extra.tagName || null,
+            disabled: extra.disabled ?? null,
+            href: extra.href || null,
+            textLength: extra.textLength ?? null
+          });
+
+          let element = null;
+          try {
+            element = document.querySelector(selector);
+          } catch {
+            return result(false, "selector_invalid", "The CSS selector is invalid.");
+          }
+
+          if (!element) {
+            return result(false, "selector_missing", `No element matches selector '${selector}'.`);
+          }
+
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const disabled = "disabled" in element ? Boolean(element.disabled) : null;
+          const href = element.href || element.getAttribute?.("href") || null;
+          const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+          const metadata = { tagName, disabled, href, textLength: text.length, matched: true };
+
+          if (state === "visible") {
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            const visible = rect.width > 0
+              && rect.height > 0
+              && style.display !== "none"
+              && style.visibility !== "hidden"
+              && style.visibility !== "collapse"
+              && style.opacity !== "0";
+            if (!visible) {
+              return result(false, "selector_not_visible", "The matched element is not visible.", {
+                ...metadata,
+                matched: false
+              });
+            }
+          }
+
+          return result(true, "selector_matched", `The selector reached '${state}' state.`, metadata);
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a selector wait result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools selector wait result was not valid UTF-8")
+        }
+        do {
+            var verification = try JSONDecoder().decode(BrowserSelectorWaitVerification.self, from: data)
+            if verification.currentURL == nil, let currentURL {
+                verification = BrowserSelectorWaitVerification(
+                    ok: verification.ok,
+                    code: verification.code,
+                    message: verification.message,
+                    selector: verification.selector,
+                    state: verification.state,
+                    matched: verification.matched,
+                    currentURL: currentURL,
+                    tagName: verification.tagName,
+                    disabled: verification.disabled,
+                    href: verification.href,
+                    textLength: verification.textLength
+                )
+            }
+            return verification
+        } catch {
+            throw CommandError(description: "Chrome DevTools selector wait result was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
     private func navigateBrowserPage(
         tabID: String,
         requestedURL: String,
@@ -5712,6 +5973,78 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func waitForBrowserSelector(
+        tabID: String,
+        selector: String,
+        state: String,
+        endpoint: URL,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> BrowserSelectorWaitVerification {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var lastVerification: BrowserSelectorWaitVerification?
+
+        repeat {
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == tabID }) else {
+                lastVerification = BrowserSelectorWaitVerification(
+                    ok: false,
+                    code: "tab_missing",
+                    message: "No browser page tab found with id \(tabID).",
+                    selector: selector,
+                    state: state,
+                    matched: false,
+                    currentURL: nil,
+                    tagName: nil,
+                    disabled: nil,
+                    href: nil,
+                    textLength: nil
+                )
+                if Date() >= deadline {
+                    break
+                }
+                Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+                continue
+            }
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                throw CommandError(description: "browser tab \(tabID) does not expose a valid webSocketDebuggerURL")
+            }
+
+            let verification = try inspectBrowserSelector(
+                selector: selector,
+                state: state,
+                currentURL: tab.url,
+                at: webSocketURL
+            )
+            lastVerification = verification
+            if verification.ok || verification.code == "selector_invalid" {
+                return verification
+            }
+
+            if Date() >= deadline {
+                break
+            }
+            Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+        } while true
+
+        return BrowserSelectorWaitVerification(
+            ok: false,
+            code: lastVerification?.code ?? "selector_missing",
+            message: "browser selector did not reach \(state) state before timeout",
+            selector: selector,
+            state: state,
+            matched: false,
+            currentURL: lastVerification?.currentURL,
+            tagName: lastVerification?.tagName,
+            disabled: lastVerification?.disabled,
+            href: lastVerification?.href,
+            textLength: lastVerification?.textLength
+        )
+    }
+
     private func browserURL(_ currentURL: String?, matches expectedURL: String, mode: String) -> Bool {
         guard let currentURL else {
             return false
@@ -5736,6 +6069,22 @@ final class ZeroThreeCLI {
         default:
             throw CommandError(description: "unsupported browser URL match mode '\(rawMode)'. Use exact, prefix, or contains.")
         }
+    }
+
+    private func browserSelectorWaitState(_ rawState: String) throws -> String {
+        switch rawState {
+        case "attached", "visible":
+            return rawState
+        default:
+            throw CommandError(description: "unsupported browser selector wait state '\(rawState)'. Use attached or visible.")
+        }
+    }
+
+    private func validatedBrowserSelector(_ rawSelector: String) throws -> String {
+        guard !rawSelector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CommandError(description: "browser selector must not be empty")
+        }
+        return rawSelector
     }
 
     private func validatedBrowserNavigationURL(_ rawURL: String) throws -> String {
@@ -6637,7 +6986,7 @@ final class ZeroThreeCLI {
 
     private func browserActionRisk(for action: String) -> String {
         switch action {
-        case "browser.listTabs", "browser.inspectTab", "browser.waitURL":
+        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector":
             return "low"
         case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.clickElement", "browser.navigate":
             return "medium"
@@ -6718,6 +7067,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.waitURL", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "browser.waitSelector", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -7280,7 +7630,8 @@ final class ZeroThreeCLI {
                     { "name": "browser.fillFormField", "risk": "medium", "mutates": true },
                     { "name": "browser.clickElement", "risk": "medium", "mutates": true },
                     { "name": "browser.navigate", "risk": "medium", "mutates": true },
-                    { "name": "browser.waitURL", "risk": "low", "mutates": false }
+                    { "name": "browser.waitURL", "risk": "low", "mutates": false },
+                    { "name": "browser.waitSelector", "risk": "low", "mutates": false }
                   ]
                 }
               ]
@@ -7418,6 +7769,24 @@ final class ZeroThreeCLI {
                 "code": "url_matched",
                 "message": "browser tab URL matched expected exact value",
                 "currentURL": "https://example.com/next",
+                "matched": true
+              }
+            }
+          },
+          "browserWaitSelector": {
+            "command": "03 browser wait-selector --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --state visible --timeout-ms 5000",
+            "result": {
+              "tabID": "devtools-target-id",
+              "selector": "button[type=submit]",
+              "state": "visible",
+              "timeoutMilliseconds": 5000,
+              "intervalMilliseconds": 100,
+              "verification": {
+                "ok": true,
+                "code": "selector_matched",
+                "message": "The selector reached 'visible' state.",
+                "currentURL": "https://example.com/form",
+                "tagName": "button",
                 "matched": true
               }
             }
@@ -7610,10 +7979,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT]
-          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible]
+          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--state attached|visible] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--state attached|visible] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -7650,6 +8019,7 @@ final class ZeroThreeCLI {
           03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
+          03 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible] [--timeout-ms N] [--interval-ms N]
           03 schema
 
         Notes:
@@ -7684,8 +8054,10 @@ final class ZeroThreeCLI {
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
+          - `browser wait-selector` waits for one DOM selector to become attached or visible without mutating the page.
           - Workflow fill-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
+          - Workflow wait-browser-selector waits for dynamic page UI readiness before the next browser action.
         """)
     }
 

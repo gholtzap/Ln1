@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -65,6 +65,7 @@ Examples:
 .build/debug/03 workflow preflight --operation fill-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query"
 .build/debug/03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
+.build/debug/03 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
@@ -96,6 +97,8 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline.
 
 `wait-browser-url` is a non-mutating workflow operation for bounded browser navigation verification after clicks, submissions, or external navigation. It polls structured tab metadata until the URL matches `--expect-url` with `--match exact|prefix|contains`, then returns typed verification evidence.
+
+`wait-browser-selector` is a non-mutating workflow operation for bounded browser UI readiness checks. It polls the tab's DevTools runtime until `--selector` is attached to the DOM or visible with `--state visible`, then returns selector metadata for the next action.
 
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
@@ -486,7 +489,15 @@ Wait for one browser tab to reach an expected URL without mutating the page:
 
 `browser.waitURL` is a low-risk read action. It polls structured DevTools tab metadata until the current URL matches the expected value, returning the same URL verification shape used by navigation.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed element clicking, verified navigation, and bounded URL waiting.
+Wait for one selector to become ready without mutating the page:
+
+```sh
+.build/debug/03 browser wait-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible --timeout-ms 5000
+```
+
+`browser.waitSelector` is a low-risk read action. It polls `document.querySelector` through the tab's DevTools runtime until the selector is attached or visible, returning tag, disabled, href, text-length, and current URL metadata.
+
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed element clicking, verified navigation, bounded URL waiting, and bounded selector readiness checks.
 
 ## Product Direction
 
