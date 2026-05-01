@@ -262,6 +262,80 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-browser-action-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Workflow Browser Page",
+            "url": "https://example.com/form"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fill = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "fill-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--text", "search text",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(fill.status, 0, fill.stderr)
+        let fillObject = try decodeJSONObject(fill.stdout)
+        let fillBlockers = try XCTUnwrap(fillObject["blockers"] as? [String])
+        XCTAssertEqual(fillObject["operation"] as? String, "fill-browser")
+        XCTAssertEqual(fillObject["risk"] as? String, "medium")
+        XCTAssertEqual(fillObject["mutates"] as? Bool, true)
+        XCTAssertTrue(fillBlockers.isEmpty)
+        XCTAssertEqual(fillObject["nextArguments"] as? [String], [
+            "03", "browser", "fill",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--text", "search text",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
+        let click = try runZeroThree([
+            "workflow",
+            "next",
+            "--operation", "click-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(click.status, 0, click.stderr)
+        let clickObject = try decodeJSONObject(click.stdout)
+        let command = try XCTUnwrap(clickObject["command"] as? [String: Any])
+        XCTAssertEqual(clickObject["operation"] as? String, "click-browser")
+        XCTAssertEqual(clickObject["ready"] as? Bool, true)
+        XCTAssertEqual(clickObject["risk"] as? String, "medium")
+        XCTAssertEqual(clickObject["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "03", "browser", "click",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+    }
+
     func testWorkflowNextReturnsStructuredArgvWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03 workflow next \(UUID().uuidString)")
