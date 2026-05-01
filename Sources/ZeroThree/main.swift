@@ -132,7 +132,63 @@ struct WorkflowNextPlan: Codable {
     let message: String
 }
 
-struct WorkflowRunPlan: Codable {
+enum JSONValue: Encodable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(any value: Any) throws {
+        switch value {
+        case let string as String:
+            self = .string(string)
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                self = .bool(number.boolValue)
+            } else {
+                self = .number(number.doubleValue)
+            }
+        case let dictionary as [String: Any]:
+            self = .object(try dictionary.mapValues(JSONValue.init(any:)))
+        case let array as [Any]:
+            self = .array(try array.map(JSONValue.init(any:)))
+        case _ as NSNull:
+            self = .null
+        default:
+            throw CommandError(description: "unsupported JSON value in workflow execution output")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
+    }
+}
+
+struct WorkflowExecutionResult: Encodable {
+    let argv: [String]
+    let exitCode: Int32
+    let stdout: String
+    let stderr: String
+    let outputJSON: JSONValue?
+}
+
+struct WorkflowRunPlan: Encodable {
     let generatedAt: String
     let platform: String
     let operation: String
@@ -145,6 +201,7 @@ struct WorkflowRunPlan: Codable {
     let mutates: Bool
     let blockers: [String]
     let command: WorkflowCommand?
+    let execution: WorkflowExecutionResult?
     let preflight: WorkflowPreflight
     let message: String
 }
@@ -1194,10 +1251,6 @@ final class ZeroThreeCLI {
 
     private func workflowRun() throws {
         let dryRun = option("--dry-run").map(parseBool) ?? true
-        guard dryRun else {
-            throw CommandError(description: "workflow run currently supports dry-run only. Pass `--dry-run true` to inspect the run decision without executing.")
-        }
-
         let preflight = try workflowPreflightForOperation()
         let command: WorkflowCommand?
         if preflight.canProceed, let argv = preflight.nextArguments {
@@ -1212,21 +1265,34 @@ final class ZeroThreeCLI {
             command = nil
         }
 
+        if !dryRun, command?.mutates == true {
+            throw CommandError(description: "workflow run execution currently supports non-mutating commands only. Use `--dry-run true` to inspect mutating workflows.")
+        }
+
+        let execution: WorkflowExecutionResult?
+        if !dryRun, let command {
+            execution = try workflowExecute(command)
+        } else {
+            execution = nil
+        }
+        let executed = execution != nil
+
         try writeJSON(WorkflowRunPlan(
             generatedAt: ISO8601DateFormatter().string(from: Date()),
             platform: "macOS",
             operation: preflight.operation,
-            mode: "dry-run",
-            dryRun: true,
+            mode: dryRun ? "dry-run" : "execute",
+            dryRun: dryRun,
             ready: command != nil,
             wouldExecute: command != nil,
-            executed: false,
+            executed: executed,
             risk: preflight.risk,
             mutates: preflight.mutates,
             blockers: preflight.blockers,
             command: command,
+            execution: execution,
             preflight: preflight,
-            message: workflowRunMessage(command: command)
+            message: workflowRunMessage(command: command, dryRun: dryRun, executed: executed)
         ))
     }
 
@@ -1498,14 +1564,79 @@ final class ZeroThreeCLI {
         prerequisites.first { $0.required && $0.status != "pass" }?.remediation
     }
 
-    private func workflowRunMessage(command: WorkflowCommand?) -> String {
+    private func workflowExecute(_ command: WorkflowCommand) throws -> WorkflowExecutionResult {
+        var childArguments = command.argv
+        guard !childArguments.isEmpty else {
+            throw CommandError(description: "workflow command argv was empty")
+        }
+        childArguments.removeFirst()
+
+        let process = Process()
+        process.executableURL = try workflowExecutableURL()
+        process.arguments = childArguments
+        process.currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdoutText = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderrText = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let jsonOutput = try workflowJSONOutput(from: stdoutText)
+
+        return WorkflowExecutionResult(
+            argv: command.argv,
+            exitCode: process.terminationStatus,
+            stdout: stdoutText,
+            stderr: stderrText,
+            outputJSON: jsonOutput
+        )
+    }
+
+    private func workflowExecutableURL() throws -> URL {
+        if let executableURL = Bundle.main.executableURL {
+            return executableURL
+        }
+
+        let rawPath = CommandLine.arguments.first ?? "03"
+        if rawPath.hasPrefix("/") {
+            return URL(fileURLWithPath: rawPath)
+        }
+
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(rawPath)
+    }
+
+    private func workflowJSONOutput(from stdout: String) throws -> JSONValue? {
+        guard let data = stdout.data(using: .utf8), !data.isEmpty else {
+            return nil
+        }
+        do {
+            let object = try JSONSerialization.jsonObject(with: data)
+            return try JSONValue(any: object)
+        } catch {
+            return nil
+        }
+    }
+
+    private func workflowRunMessage(command: WorkflowCommand?, dryRun: Bool, executed: Bool) -> String {
         guard let command else {
             return "Workflow run is blocked; resolve required prerequisites before execution."
         }
-        if command.mutates {
+        if dryRun && command.mutates {
             return "Dry run only. This workflow is ready but mutating; review the argv array and provide an explicit reason before executing it outside dry-run mode."
         }
-        return "Dry run only. This non-mutating workflow is ready to execute when execution mode is added."
+        if dryRun {
+            return "Dry run only. This non-mutating workflow is ready to execute with `--dry-run false`."
+        }
+        if executed {
+            return "Workflow executed a non-mutating command and captured its output."
+        }
+        return "Workflow did not execute."
     }
 
     private func workflowDisplayCommand(_ arguments: [String]) -> String {
@@ -5420,25 +5551,35 @@ final class ZeroThreeCLI {
             }
           },
           "workflowRun": {
-            "command": "03 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run true",
+            "command": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false",
             "result": {
-              "operation": "move-file",
-              "mode": "dry-run",
-              "dryRun": true,
+              "operation": "read-browser",
+              "mode": "execute",
+              "dryRun": false,
               "ready": true,
               "wouldExecute": true,
-              "executed": false,
+              "executed": true,
               "risk": "medium",
-              "mutates": true,
+              "mutates": false,
               "blockers": [],
               "command": {
-                "display": "03 files move --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --reason 'Describe intent'",
-                "argv": ["03", "files", "move", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/b.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
+                "display": "03 browser tabs --endpoint http://127.0.0.1:9222",
+                "argv": ["03", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
                 "risk": "medium",
-                "mutates": true,
-                "requiresReason": true
+                "mutates": false,
+                "requiresReason": false
               },
-              "message": "Dry run only. This workflow is ready but mutating; review the argv array and provide an explicit reason before executing it outside dry-run mode."
+              "execution": {
+                "argv": ["03", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
+                "exitCode": 0,
+                "stdout": "{...}",
+                "stderr": "",
+                "outputJSON": {
+                  "count": 1,
+                  "tabs": []
+                }
+              },
+              "message": "Workflow executed a non-mutating command and captured its output."
             }
           },
           "observe": {
@@ -6010,6 +6151,7 @@ final class ZeroThreeCLI {
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 workflow next --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
+          03 workflow run --operation inspect-active-app|read-browser --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID]
           03 workflow run --operation inspect-active-app|control-active-app|read-browser|move-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]

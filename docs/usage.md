@@ -80,6 +80,14 @@ For a bounded run decision that still does not execute or mutate anything, use d
 
 `workflow run --dry-run true` returns whether the workflow is ready, whether it would execute, the command that would be used, and the embedded preflight evidence. This mode is intentionally non-executing.
 
+Execution mode is limited to non-mutating workflows:
+
+```sh
+.build/debug/03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false
+```
+
+For non-mutating workflows, `workflow run --dry-run false` executes the next command and captures its exit code, stdout, stderr, and parsed JSON output. Mutating workflow execution is refused; use dry-run output to inspect the proposed command first.
+
 ## Inspect Running Apps
 
 ```sh

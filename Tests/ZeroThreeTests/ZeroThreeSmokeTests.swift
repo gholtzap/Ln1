@@ -348,19 +348,81 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
-    func testWorkflowRunRejectsExecutionModeUntilImplemented() throws {
+    func testWorkflowRunExecutesNonMutatingBrowserReadAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-run-browser-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Workflow Page",
+            "url": "https://example.com/workflow"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "read-browser",
+            "--endpoint", directory.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let tabs = try XCTUnwrap(outputJSON["tabs"] as? [[String: Any]])
+        let firstTab = try XCTUnwrap(tabs.first)
+
+        XCTAssertEqual(object["operation"] as? String, "read-browser")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["wouldExecute"] as? Bool, true)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["mutates"] as? Bool, false)
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["count"] as? Int, 1)
+        XCTAssertEqual(firstTab["id"] as? String, "page-1")
+        XCTAssertEqual(firstTab["title"] as? String, "Workflow Page")
+        XCTAssertTrue((execution["stdout"] as? String)?.contains("\"tabs\"") == true)
+        XCTAssertEqual(execution["stderr"] as? String, "")
+    }
+
+    func testWorkflowRunRejectsMutatingExecutionMode() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03 workflow run reject \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source file.txt")
+        let destination = directory.appendingPathComponent("destination file.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
         let result = try runZeroThree([
             "workflow",
             "run",
             "--operation", "move-file",
-            "--path", "/tmp/source.txt",
-            "--to", "/tmp/destination.txt",
+            "--path", source.path,
+            "--to", destination.path,
             "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
             "--dry-run", "false"
         ])
 
         XCTAssertNotEqual(result.status, 0)
-        XCTAssertTrue(result.stderr.contains("workflow run currently supports dry-run only"))
+        XCTAssertTrue(result.stderr.contains("workflow run execution currently supports non-mutating commands only"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
