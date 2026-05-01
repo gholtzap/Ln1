@@ -247,6 +247,8 @@ private final class WorkflowOutputCapture: @unchecked Sendable {
 }
 
 struct WorkflowRunPlan: Encodable {
+    let transcriptID: String
+    let transcriptPath: String
     let generatedAt: String
     let platform: String
     let operation: String
@@ -262,6 +264,14 @@ struct WorkflowRunPlan: Encodable {
     let execution: WorkflowExecutionResult?
     let preflight: WorkflowPreflight
     let message: String
+}
+
+struct WorkflowLogEntries: Encodable {
+    let path: String
+    let operation: String?
+    let limit: Int
+    let count: Int
+    let entries: [JSONValue]
 }
 
 struct DesktopWindowRecord: Codable {
@@ -1266,6 +1276,8 @@ final class ZeroThreeCLI {
             try workflowNext()
         case "run":
             try workflowRun()
+        case "log":
+            try workflowLog()
         default:
             throw CommandError(description: "unknown workflow mode '\(mode)'")
         }
@@ -1340,9 +1352,13 @@ final class ZeroThreeCLI {
             execution = nil
         }
         let executed = execution != nil
+        let transcriptURL = try workflowLogURL()
+        let generatedAt = ISO8601DateFormatter().string(from: Date())
 
-        try writeJSON(WorkflowRunPlan(
-            generatedAt: ISO8601DateFormatter().string(from: Date()),
+        let plan = WorkflowRunPlan(
+            transcriptID: UUID().uuidString,
+            transcriptPath: transcriptURL.path,
+            generatedAt: generatedAt,
             platform: "macOS",
             operation: preflight.operation,
             mode: dryRun ? "dry-run" : "execute",
@@ -1357,6 +1373,27 @@ final class ZeroThreeCLI {
             execution: execution,
             preflight: preflight,
             message: workflowRunMessage(command: command, dryRun: dryRun, executed: executed)
+        )
+        try appendWorkflowTranscript(plan, to: transcriptURL)
+        try writeJSON(plan)
+    }
+
+    private func workflowLog() throws {
+        try requirePolicyAllowed(action: "workflow.logRead")
+        let workflowURL = try workflowLogURL()
+        let limit = max(0, option("--limit").flatMap(Int.init) ?? 20)
+        let operation = option("--operation")
+        let entries = try readWorkflowTranscriptEntries(
+            from: workflowURL,
+            limit: limit,
+            operation: operation
+        )
+        try writeJSON(WorkflowLogEntries(
+            path: workflowURL.path,
+            operation: operation,
+            limit: limit,
+            count: entries.count,
+            entries: entries
         ))
     }
 
@@ -5353,6 +5390,59 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func appendWorkflowTranscript(_ plan: WorkflowRunPlan, to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let lineEncoder = JSONEncoder()
+        lineEncoder.outputFormatting = [.sortedKeys]
+        let data = try lineEncoder.encode(plan)
+        guard var line = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "failed to encode workflow transcript")
+        }
+        line.append("\n")
+
+        if FileManager.default.fileExists(atPath: url.path) {
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(line.utf8))
+        } else {
+            try line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    private func readWorkflowTranscriptEntries(
+        from url: URL,
+        limit: Int,
+        operation: String?
+    ) throws -> [JSONValue] {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return []
+        }
+
+        let data = try Data(contentsOf: url)
+        guard let contents = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "workflow transcript log is not valid UTF-8")
+        }
+
+        let entries = try contents
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .compactMap { line -> [String: Any]? in
+                let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
+                guard let dictionary = object as? [String: Any] else {
+                    throw CommandError(description: "workflow transcript line was not a JSON object")
+                }
+                if let operation, dictionary["operation"] as? String != operation {
+                    return nil
+                }
+                return dictionary
+            }
+            .map { try JSONValue(any: $0) }
+
+        return Array(entries.suffix(limit))
+    }
+
     private func readTaskMemoryEvents(from url: URL) throws -> [TaskMemoryEvent] {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return []
@@ -5458,6 +5548,21 @@ final class ZeroThreeCLI {
         return applicationSupport.appendingPathComponent("03/task-memory.jsonl")
     }
 
+    private func workflowLogURL() throws -> URL {
+        if let path = option("--workflow-log") {
+            return URL(fileURLWithPath: expandedPath(path))
+        }
+
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw CommandError(description: "could not resolve Application Support directory")
+        }
+
+        return applicationSupport.appendingPathComponent("03/workflow-runs.jsonl")
+    }
+
     private func expandedPath(_ path: String) -> String {
         guard path == "~" || path.hasPrefix("~/") else {
             return path
@@ -5531,10 +5636,21 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func workflowActionRisk(for action: String) -> String {
+        switch action {
+        case "workflow.logRead":
+            return "medium"
+        default:
+            return "unknown"
+        }
+    }
+
     private func requirePolicyAllowed(action: String) throws {
         let risk: String
         if action.hasPrefix("task.") {
             risk = taskMemoryActionRisk(for: action)
+        } else if action.hasPrefix("workflow.") {
+            risk = workflowActionRisk(for: action)
         } else {
             risk = "unknown"
         }
@@ -5575,7 +5691,8 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
-            PolicyActionRecord(name: "task.memoryShow", domain: "task", risk: "medium", mutates: false)
+            PolicyActionRecord(name: "task.memoryShow", domain: "task", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "workflow.logRead", domain: "workflow", risk: "medium", mutates: false)
         ]
     }
 
@@ -5707,6 +5824,8 @@ final class ZeroThreeCLI {
           "workflowRun": {
             "command": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false",
             "result": {
+              "transcriptID": "UUID",
+              "transcriptPath": "~/Library/Application Support/03/workflow-runs.jsonl",
               "operation": "read-browser",
               "mode": "execute",
               "dryRun": false,
@@ -5741,6 +5860,23 @@ final class ZeroThreeCLI {
                 }
               },
               "message": "Workflow executed a non-mutating command and captured its output."
+            }
+          },
+          "workflowLog": {
+            "command": "03 workflow log --allow-risk medium --limit 20",
+            "result": {
+              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "operation": null,
+              "limit": 20,
+              "count": 1,
+              "entries": [
+                {
+                  "transcriptID": "UUID",
+                  "operation": "read-browser",
+                  "executed": true,
+                  "blockers": []
+                }
+              ]
             }
           },
           "workflowWaitFile": {
@@ -6331,6 +6467,7 @@ final class ZeroThreeCLI {
           03 workflow next --operation inspect-active-app|control-active-app|read-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 workflow run --operation inspect-active-app|read-browser|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow run --operation inspect-active-app|control-active-app|read-browser|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]

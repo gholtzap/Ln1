@@ -72,6 +72,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["task.memoryShow"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryShow"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryShow"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["workflow.logRead"]?["domain"] as? String, "workflow")
+        XCTAssertEqual(actionByName["workflow.logRead"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["workflow.logRead"]?["mutates"] as? Bool, false)
     }
 
     func testDesktopWindowsReturnsStructuredVisibleWindowInventory() throws {
@@ -479,6 +482,75 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(execution["timedOut"] as? Bool, true)
         XCTAssertNotEqual(execution["exitCode"] as? Int, 0)
         XCTAssertNil(execution["outputJSON"])
+    }
+
+    func testWorkflowRunWritesTranscriptAndWorkflowLogReadsIt() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-log-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Workflow Log Page",
+            "url": "https://example.com/workflow-log"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let run = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "read-browser",
+            "--endpoint", directory.path,
+            "--dry-run", "false",
+            "--workflow-log", workflowLog.path,
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(run.status, 0, run.stderr)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+        let runObject = try decodeJSONObject(run.stdout)
+        let transcriptID = try XCTUnwrap(runObject["transcriptID"] as? String)
+        XCTAssertEqual(runObject["transcriptPath"] as? String, workflowLog.path)
+
+        let denied = try runZeroThree([
+            "workflow",
+            "log",
+            "--workflow-log", workflowLog.path
+        ])
+
+        XCTAssertNotEqual(denied.status, 0)
+        XCTAssertTrue(denied.stderr.contains("policy denied"))
+
+        let log = try runZeroThree([
+            "workflow",
+            "log",
+            "--workflow-log", workflowLog.path,
+            "--operation", "read-browser",
+            "--limit", "5",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(log.status, 0, log.stderr)
+        let logObject = try decodeJSONObject(log.stdout)
+        let entries = try XCTUnwrap(logObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let execution = try XCTUnwrap(entry["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+
+        XCTAssertEqual(logObject["path"] as? String, workflowLog.path)
+        XCTAssertEqual(logObject["operation"] as? String, "read-browser")
+        XCTAssertEqual(logObject["count"] as? Int, 1)
+        XCTAssertEqual(entry["transcriptID"] as? String, transcriptID)
+        XCTAssertEqual(entry["operation"] as? String, "read-browser")
+        XCTAssertEqual(entry["executed"] as? Bool, true)
+        XCTAssertEqual(outputJSON["count"] as? Int, 1)
     }
 
     func testWorkflowRunRejectsMutatingExecutionMode() throws {

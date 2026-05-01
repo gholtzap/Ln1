@@ -91,6 +91,14 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline.
 
+Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
+
+```sh
+.build/debug/03 workflow log --allow-risk medium --limit 20
+```
+
+`workflow log` can filter by `--operation`. It requires `--allow-risk medium` because transcript entries may include captured command output.
+
 ## Inspect Running Apps
 
 ```sh

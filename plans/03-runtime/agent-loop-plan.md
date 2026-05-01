@@ -29,6 +29,7 @@ The system should support task execution as a sequence of observations and actio
 - Non-mutating workflow execution: `03 workflow run --operation read-browser --dry-run false` executes safe read-only workflow commands and captures JSON output while continuing to reject mutating workflow execution.
 - Bounded workflow execution: `03 workflow run ... --run-timeout-ms N --max-output-bytes N` prevents read-only child commands from hanging the control loop or returning unbounded output.
 - File wait workflow: `03 workflow run --operation wait-file ...` adds a safe wait primitive for file appearance/disappearance with an outer workflow deadline.
+- Workflow transcript: `03 workflow run ...` appends a JSONL record, and `03 workflow log --allow-risk medium` reads recent runs for resume/debug context.
 
 ## Relationship To The Product
 
