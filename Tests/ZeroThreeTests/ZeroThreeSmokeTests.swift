@@ -551,6 +551,31 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(entry["operation"] as? String, "read-browser")
         XCTAssertEqual(entry["executed"] as? Bool, true)
         XCTAssertEqual(outputJSON["count"] as? Int, 1)
+
+        let resume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "read-browser",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let resumeObject = try decodeJSONObject(resume.stdout)
+        let latest = try XCTUnwrap(resumeObject["latest"] as? [String: Any])
+
+        XCTAssertEqual(resumeObject["path"] as? String, workflowLog.path)
+        XCTAssertEqual(resumeObject["operation"] as? String, "read-browser")
+        XCTAssertEqual(resumeObject["status"] as? String, "completed")
+        XCTAssertEqual(resumeObject["transcriptID"] as? String, transcriptID)
+        XCTAssertEqual(resumeObject["latestOperation"] as? String, "read-browser")
+        XCTAssertEqual(resumeObject["nextArguments"] as? [String], [
+            "03", "workflow", "log",
+            "--workflow-log", workflowLog.path,
+            "--allow-risk", "medium",
+            "--limit", "5"
+        ])
+        XCTAssertEqual(latest["transcriptID"] as? String, transcriptID)
     }
 
     func testWorkflowRunRejectsMutatingExecutionMode() throws {

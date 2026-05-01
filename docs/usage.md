@@ -99,6 +99,14 @@ Each workflow run appends a JSONL transcript record containing the preflight, co
 
 `workflow log` can filter by `--operation`. It requires `--allow-risk medium` because transcript entries may include captured command output.
 
+To resume after an interruption, ask for a recommendation from the latest transcript entry:
+
+```sh
+.build/debug/03 workflow resume --allow-risk medium
+```
+
+`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array.
+
 ## Inspect Running Apps
 
 ```sh

@@ -274,6 +274,19 @@ struct WorkflowLogEntries: Encodable {
     let entries: [JSONValue]
 }
 
+struct WorkflowResumePlan: Encodable {
+    let path: String
+    let operation: String?
+    let status: String
+    let transcriptID: String?
+    let latestOperation: String?
+    let blockers: [String]
+    let nextCommand: String?
+    let nextArguments: [String]?
+    let latest: JSONValue?
+    let message: String
+}
+
 struct DesktopWindowRecord: Codable {
     let id: String
     let stableIdentity: StableIdentity
@@ -1278,6 +1291,8 @@ final class ZeroThreeCLI {
             try workflowRun()
         case "log":
             try workflowLog()
+        case "resume":
+            try workflowResume()
         default:
             throw CommandError(description: "unknown workflow mode '\(mode)'")
         }
@@ -1395,6 +1410,23 @@ final class ZeroThreeCLI {
             count: entries.count,
             entries: entries
         ))
+    }
+
+    private func workflowResume() throws {
+        try requirePolicyAllowed(action: "workflow.logRead")
+        let workflowURL = try workflowLogURL()
+        let operation = option("--operation")
+        let latest = try readWorkflowTranscriptDictionaries(
+            from: workflowURL,
+            limit: 1,
+            operation: operation
+        ).last
+        let plan = try workflowResumePlan(
+            latest: latest,
+            workflowURL: workflowURL,
+            operation: operation
+        )
+        try writeJSON(plan)
     }
 
     private func workflowPreflightForOperation() throws -> WorkflowPreflight {
@@ -1706,6 +1738,101 @@ final class ZeroThreeCLI {
 
     private func workflowRemediationCommand(for prerequisites: [DoctorCheck]) -> String? {
         prerequisites.first { $0.required && $0.status != "pass" }?.remediation
+    }
+
+    private func workflowResumePlan(
+        latest: [String: Any]?,
+        workflowURL: URL,
+        operation: String?
+    ) throws -> WorkflowResumePlan {
+        guard let latest else {
+            let nextArguments = ["03", "observe", "--app-limit", "20", "--window-limit", "20"]
+            return WorkflowResumePlan(
+                path: workflowURL.path,
+                operation: operation,
+                status: "empty",
+                transcriptID: nil,
+                latestOperation: nil,
+                blockers: [],
+                nextCommand: workflowDisplayCommand(nextArguments),
+                nextArguments: nextArguments,
+                latest: nil,
+                message: "No workflow transcript entries matched; start with a fresh observation."
+            )
+        }
+
+        let transcriptID = latest["transcriptID"] as? String
+        let latestOperation = latest["operation"] as? String
+        let blockers = latest["blockers"] as? [String] ?? []
+        let preflight = latest["preflight"] as? [String: Any]
+        let command = latest["command"] as? [String: Any]
+        let execution = latest["execution"] as? [String: Any]
+        let executed = latest["executed"] as? Bool ?? false
+        let wouldExecute = latest["wouldExecute"] as? Bool ?? false
+        let timedOut = execution?["timedOut"] as? Bool ?? false
+        let exitCode = execution?["exitCode"] as? Int
+
+        let status: String
+        let nextCommand: String?
+        let nextArguments: [String]?
+        let message: String
+
+        if !blockers.isEmpty {
+            status = "blocked"
+            nextCommand = preflight?["nextCommand"] as? String
+            nextArguments = preflight?["nextArguments"] as? [String]
+            message = "Latest workflow is blocked; resolve prerequisites before rerunning."
+        } else if timedOut {
+            status = "timed_out"
+            nextArguments = workflowDryRunArguments(for: latestOperation)
+            nextCommand = nextArguments.map(workflowDisplayCommand)
+            message = "Latest workflow timed out; inspect the dry-run plan or rerun with a larger --run-timeout-ms."
+        } else if executed, exitCode == 0 {
+            status = "completed"
+            nextArguments = [
+                "03", "workflow", "log",
+                "--workflow-log", workflowURL.path,
+                "--allow-risk", "medium",
+                "--limit", "5"
+            ]
+            nextCommand = workflowDisplayCommand(nextArguments!)
+            message = "Latest workflow completed; inspect recent transcript context before choosing the next operation."
+        } else if executed {
+            status = "failed"
+            nextArguments = workflowDryRunArguments(for: latestOperation)
+            nextCommand = nextArguments.map(workflowDisplayCommand)
+            message = "Latest workflow executed but returned a nonzero exit code; inspect the dry-run plan before retrying."
+        } else if wouldExecute {
+            status = "ready"
+            nextCommand = command?["display"] as? String
+            nextArguments = command?["argv"] as? [String]
+            message = "Latest workflow was ready but not executed; review or execute the suggested command."
+        } else {
+            status = "not_ready"
+            nextCommand = preflight?["nextCommand"] as? String
+            nextArguments = preflight?["nextArguments"] as? [String]
+            message = "Latest workflow was not ready; inspect blockers and preflight output."
+        }
+
+        return WorkflowResumePlan(
+            path: workflowURL.path,
+            operation: operation,
+            status: status,
+            transcriptID: transcriptID,
+            latestOperation: latestOperation,
+            blockers: blockers,
+            nextCommand: nextCommand,
+            nextArguments: nextArguments,
+            latest: try JSONValue(any: latest),
+            message: message
+        )
+    }
+
+    private func workflowDryRunArguments(for operation: String?) -> [String]? {
+        guard let operation else {
+            return nil
+        }
+        return ["03", "workflow", "run", "--operation", operation, "--dry-run", "true"]
     }
 
     private func workflowExecute(
@@ -5417,6 +5544,18 @@ final class ZeroThreeCLI {
         limit: Int,
         operation: String?
     ) throws -> [JSONValue] {
+        try readWorkflowTranscriptDictionaries(
+            from: url,
+            limit: limit,
+            operation: operation
+        ).map { try JSONValue(any: $0) }
+    }
+
+    private func readWorkflowTranscriptDictionaries(
+        from url: URL,
+        limit: Int,
+        operation: String?
+    ) throws -> [[String: Any]] {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return []
         }
@@ -5438,7 +5577,6 @@ final class ZeroThreeCLI {
                 }
                 return dictionary
             }
-            .map { try JSONValue(any: $0) }
 
         return Array(entries.suffix(limit))
     }
@@ -5877,6 +6015,20 @@ final class ZeroThreeCLI {
                   "blockers": []
                 }
               ]
+            }
+          },
+          "workflowResume": {
+            "command": "03 workflow resume --allow-risk medium",
+            "result": {
+              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "operation": null,
+              "status": "completed|blocked|timed_out|failed|ready|empty",
+              "transcriptID": "UUID",
+              "latestOperation": "read-browser",
+              "blockers": [],
+              "nextCommand": "03 workflow log --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl' --allow-risk medium --limit 5",
+              "nextArguments": ["03", "workflow", "log", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl", "--allow-risk", "medium", "--limit", "5"],
+              "message": "Latest workflow completed; inspect recent transcript context before choosing the next operation."
             }
           },
           "workflowWaitFile": {
@@ -6468,6 +6620,7 @@ final class ZeroThreeCLI {
           03 workflow run --operation inspect-active-app|read-browser|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow run --operation inspect-active-app|control-active-app|read-browser|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
+          03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
