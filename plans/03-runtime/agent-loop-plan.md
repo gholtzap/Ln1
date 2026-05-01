@@ -27,6 +27,8 @@ The system should support task execution as a sequence of observations and actio
 - Structured next command: `03 workflow next --operation ...` embeds preflight and returns an executable `argv` array for the next safe command so an automation loop does not need to parse shell text.
 - Dry-run workflow runner: `03 workflow run --operation ... --dry-run true` reports whether the next workflow step would execute and includes the exact command plus preflight evidence without performing the action.
 - Non-mutating workflow execution: `03 workflow run --operation read-browser --dry-run false` executes safe read-only workflow commands and captures JSON output while continuing to reject mutating workflow execution.
+- Bounded workflow execution: `03 workflow run ... --run-timeout-ms N --max-output-bytes N` prevents read-only child commands from hanging the control loop or returning unbounded output.
+- File wait workflow: `03 workflow run --operation wait-file ...` adds a safe wait primitive for file appearance/disappearance with an outer workflow deadline.
 
 ## Relationship To The Product
 

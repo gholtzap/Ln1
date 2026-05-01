@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, and `move-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -62,6 +62,7 @@ Examples:
 .build/debug/03 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
 .build/debug/03 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
+.build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
 
 When an automation loop needs an executable plan, use `workflow next` with the same operation and options:
@@ -83,10 +84,12 @@ For a bounded run decision that still does not execute or mutate anything, use d
 Execution mode is limited to non-mutating workflows:
 
 ```sh
-.build/debug/03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false
+.build/debug/03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false --run-timeout-ms 10000 --max-output-bytes 1048576
 ```
 
-For non-mutating workflows, `workflow run --dry-run false` executes the next command and captures its exit code, stdout, stderr, and parsed JSON output. Mutating workflow execution is refused; use dry-run output to inspect the proposed command first.
+For non-mutating workflows, `workflow run --dry-run false` executes the next command and captures its exit code, stdout, stderr, byte counts, truncation flags, timeout status, and parsed JSON output when stdout is complete JSON. Mutating workflow execution is refused; use dry-run output to inspect the proposed command first.
+
+`wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline.
 
 ## Inspect Running Apps
 

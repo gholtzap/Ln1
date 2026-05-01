@@ -183,9 +183,67 @@ enum JSONValue: Encodable {
 struct WorkflowExecutionResult: Encodable {
     let argv: [String]
     let exitCode: Int32
+    let timeoutMilliseconds: Int
+    let timedOut: Bool
+    let maxOutputBytes: Int
     let stdout: String
+    let stdoutBytes: Int
+    let stdoutTruncated: Bool
     let stderr: String
+    let stderrBytes: Int
+    let stderrTruncated: Bool
     let outputJSON: JSONValue?
+}
+
+private struct WorkflowOutputSnapshot {
+    let data: Data
+    let totalBytes: Int
+    let truncated: Bool
+}
+
+private final class WorkflowOutputCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private let maxOutputBytes: Int
+    private var data = Data()
+    private var totalBytes = 0
+    private var truncated = false
+
+    init(maxOutputBytes: Int) {
+        self.maxOutputBytes = maxOutputBytes
+    }
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else {
+            return
+        }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        totalBytes += chunk.count
+        let remainingBytes = maxOutputBytes - data.count
+        if remainingBytes <= 0 {
+            truncated = true
+            return
+        }
+        if chunk.count <= remainingBytes {
+            data.append(chunk)
+        } else {
+            data.append(chunk.prefix(remainingBytes))
+            truncated = true
+        }
+    }
+
+    func snapshot() -> WorkflowOutputSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return WorkflowOutputSnapshot(
+            data: data,
+            totalBytes: totalBytes,
+            truncated: truncated
+        )
+    }
 }
 
 struct WorkflowRunPlan: Encodable {
@@ -1251,6 +1309,8 @@ final class ZeroThreeCLI {
 
     private func workflowRun() throws {
         let dryRun = option("--dry-run").map(parseBool) ?? true
+        let timeoutMilliseconds = max(100, option("--run-timeout-ms").flatMap(Int.init) ?? 10_000)
+        let maxOutputBytes = max(0, option("--max-output-bytes").flatMap(Int.init) ?? 1_048_576)
         let preflight = try workflowPreflightForOperation()
         let command: WorkflowCommand?
         if preflight.canProceed, let argv = preflight.nextArguments {
@@ -1271,7 +1331,11 @@ final class ZeroThreeCLI {
 
         let execution: WorkflowExecutionResult?
         if !dryRun, let command {
-            execution = try workflowExecute(command)
+            execution = try workflowExecute(
+                command,
+                timeoutMilliseconds: timeoutMilliseconds,
+                maxOutputBytes: maxOutputBytes
+            )
         } else {
             execution = nil
         }
@@ -1307,8 +1371,10 @@ final class ZeroThreeCLI {
             return workflowPreflightReadBrowser()
         case "move-file":
             return try workflowPreflightMoveFile()
+        case "wait-file":
+            return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, or move-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, move-file, or wait-file.")
         }
     }
 
@@ -1528,6 +1594,47 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func workflowPreflightWaitFile() -> WorkflowPreflight {
+        var prerequisites: [DoctorCheck] = []
+        let path = option("--path")
+        if path == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.path",
+                status: "fail",
+                required: true,
+                message: "No path was provided for wait-file.",
+                remediation: "Pass `--path PATH`."
+            ))
+        }
+
+        let expectedExists = option("--exists").map(parseBool) ?? true
+        let waitTimeoutMilliseconds = max(100, option("--wait-timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(50, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let path {
+            nextArguments = [
+                "03", "files", "wait",
+                "--path", path,
+                "--exists", String(expectedExists),
+                "--timeout-ms", String(waitTimeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-file",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
     private func workflowPreflightResult(
         operation: String,
         risk: String,
@@ -1564,7 +1671,11 @@ final class ZeroThreeCLI {
         prerequisites.first { $0.required && $0.status != "pass" }?.remediation
     }
 
-    private func workflowExecute(_ command: WorkflowCommand) throws -> WorkflowExecutionResult {
+    private func workflowExecute(
+        _ command: WorkflowCommand,
+        timeoutMilliseconds: Int,
+        maxOutputBytes: Int
+    ) throws -> WorkflowExecutionResult {
         var childArguments = command.argv
         guard !childArguments.isEmpty else {
             throw CommandError(description: "workflow command argv was empty")
@@ -1581,18 +1692,61 @@ final class ZeroThreeCLI {
         process.standardOutput = stdout
         process.standardError = stderr
 
-        try process.run()
-        process.waitUntilExit()
+        let stdoutCapture = WorkflowOutputCapture(maxOutputBytes: maxOutputBytes)
+        let stderrCapture = WorkflowOutputCapture(maxOutputBytes: maxOutputBytes)
 
-        let stdoutText = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderrText = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let jsonOutput = try workflowJSONOutput(from: stdoutText)
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            stdoutCapture.append(chunk)
+        }
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            stderrCapture.append(chunk)
+        }
+
+        let termination = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            termination.signal()
+        }
+
+        try process.run()
+        let timedOut = termination.wait(timeout: .now() + .milliseconds(timeoutMilliseconds)) == .timedOut
+        if timedOut {
+            process.terminate()
+            if termination.wait(timeout: .now() + .milliseconds(1_000)) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+        }
+
+        stdout.fileHandleForReading.readabilityHandler = nil
+        stderr.fileHandleForReading.readabilityHandler = nil
+        let remainingStdout = stdout.fileHandleForReading.readDataToEndOfFile()
+        let remainingStderr = stderr.fileHandleForReading.readDataToEndOfFile()
+        stdoutCapture.append(remainingStdout)
+        stderrCapture.append(remainingStderr)
+        let stdoutSnapshot = stdoutCapture.snapshot()
+        let stderrSnapshot = stderrCapture.snapshot()
+        let stdoutText = String(data: stdoutSnapshot.data, encoding: .utf8) ?? ""
+        let stderrText = String(data: stderrSnapshot.data, encoding: .utf8) ?? ""
+        let capturedStdoutBytes = stdoutSnapshot.totalBytes
+        let capturedStderrBytes = stderrSnapshot.totalBytes
+        let capturedStdoutTruncated = stdoutSnapshot.truncated
+        let capturedStderrTruncated = stderrSnapshot.truncated
+        let jsonOutput = capturedStdoutTruncated ? nil : try workflowJSONOutput(from: stdoutText)
 
         return WorkflowExecutionResult(
             argv: command.argv,
             exitCode: process.terminationStatus,
+            timeoutMilliseconds: timeoutMilliseconds,
+            timedOut: timedOut,
+            maxOutputBytes: maxOutputBytes,
             stdout: stdoutText,
+            stdoutBytes: capturedStdoutBytes,
+            stdoutTruncated: capturedStdoutTruncated,
             stderr: stderrText,
+            stderrBytes: capturedStderrBytes,
+            stderrTruncated: capturedStderrTruncated,
             outputJSON: jsonOutput
         )
     }
@@ -5572,14 +5726,38 @@ final class ZeroThreeCLI {
               "execution": {
                 "argv": ["03", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
                 "exitCode": 0,
+                "timeoutMilliseconds": 10000,
+                "timedOut": false,
+                "maxOutputBytes": 1048576,
                 "stdout": "{...}",
+                "stdoutBytes": 128,
+                "stdoutTruncated": false,
                 "stderr": "",
+                "stderrBytes": 0,
+                "stderrTruncated": false,
                 "outputJSON": {
                   "count": 1,
                   "tabs": []
                 }
               },
               "message": "Workflow executed a non-mutating command and captured its output."
+            }
+          },
+          "workflowWaitFile": {
+            "command": "03 workflow run --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000 --dry-run false --run-timeout-ms 1000",
+            "result": {
+              "operation": "wait-file",
+              "risk": "low",
+              "mutates": false,
+              "command": {
+                "argv": ["03", "files", "wait", "--path", "~/Downloads/report.pdf", "--exists", "true", "--timeout-ms", "5000", "--interval-ms", "100"]
+              },
+              "execution": {
+                "timedOut": true,
+                "timeoutMilliseconds": 1000,
+                "stdoutTruncated": false,
+                "stderrTruncated": false
+              }
             }
           },
           "observe": {
@@ -6149,10 +6327,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
-          03 workflow run --operation inspect-active-app|read-browser --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|move-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
+          03 workflow run --operation inspect-active-app|read-browser|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--run-timeout-ms N] [--max-output-bytes N]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]

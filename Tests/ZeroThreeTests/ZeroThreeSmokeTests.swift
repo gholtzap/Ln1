@@ -371,7 +371,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "run",
             "--operation", "read-browser",
             "--endpoint", directory.path,
-            "--dry-run", "false"
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
         ])
 
         XCTAssertEqual(result.status, 0, result.stderr)
@@ -391,11 +393,92 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["mutates"] as? Bool, false)
         XCTAssertEqual(command["mutates"] as? Bool, false)
         XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(execution["timeoutMilliseconds"] as? Int, 5000)
+        XCTAssertEqual(execution["timedOut"] as? Bool, false)
+        XCTAssertEqual(execution["maxOutputBytes"] as? Int, 50000)
+        XCTAssertEqual(execution["stdoutTruncated"] as? Bool, false)
+        XCTAssertEqual(execution["stderrTruncated"] as? Bool, false)
+        XCTAssertGreaterThan(execution["stdoutBytes"] as? Int ?? 0, 0)
+        XCTAssertEqual(execution["stderrBytes"] as? Int, 0)
         XCTAssertEqual(outputJSON["count"] as? Int, 1)
         XCTAssertEqual(firstTab["id"] as? String, "page-1")
         XCTAssertEqual(firstTab["title"] as? String, "Workflow Page")
         XCTAssertTrue((execution["stdout"] as? String)?.contains("\"tabs\"") == true)
         XCTAssertEqual(execution["stderr"] as? String, "")
+    }
+
+    func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-run-cap-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        let targets = (0..<25).map { index in
+            """
+              {
+                "id": "page-\(index)",
+                "type": "page",
+                "title": "Workflow Page \(index) \(String(repeating: "x", count: 80))",
+                "url": "https://example.com/workflow/\(index)"
+              }
+            """
+        }.joined(separator: ",\n")
+        try "[\n\(targets)\n]".write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "read-browser",
+            "--endpoint", directory.path,
+            "--dry-run", "false",
+            "--max-output-bytes", "200"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(execution["maxOutputBytes"] as? Int, 200)
+        XCTAssertEqual(execution["stdoutTruncated"] as? Bool, true)
+        XCTAssertGreaterThan(execution["stdoutBytes"] as? Int ?? 0, 200)
+        XCTAssertEqual((execution["stdout"] as? String)?.utf8.count, 200)
+        XCTAssertNil(execution["outputJSON"])
+    }
+
+    func testWorkflowRunTimesOutLongNonMutatingWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-run-timeout-\(UUID().uuidString)")
+        let missingPath = directory.appendingPathComponent("missing.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "wait-file",
+            "--path", missingPath.path,
+            "--exists", "true",
+            "--wait-timeout-ms", "5000",
+            "--interval-ms", "100",
+            "--dry-run", "false",
+            "--run-timeout-ms", "250",
+            "--max-output-bytes", "5000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-file")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(execution["timeoutMilliseconds"] as? Int, 250)
+        XCTAssertEqual(execution["timedOut"] as? Bool, true)
+        XCTAssertNotEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertNil(execution["outputJSON"])
     }
 
     func testWorkflowRunRejectsMutatingExecutionMode() throws {
