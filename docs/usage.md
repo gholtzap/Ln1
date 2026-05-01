@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -68,6 +68,7 @@ Examples:
 .build/debug/03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
+.build/debug/03 workflow preflight --operation wait-browser-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least
 .build/debug/03 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
 .build/debug/03 workflow preflight --operation wait-browser-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact
 .build/debug/03 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
@@ -107,6 +108,8 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 `wait-browser-selector` is a non-mutating workflow operation for bounded browser UI readiness checks. It polls the tab's DevTools runtime until `--selector` is attached, visible, hidden, or detached with `--state attached|visible|hidden|detached`, then returns selector metadata for the next action.
 
+`wait-browser-count` is a non-mutating workflow operation for bounded collection readiness checks. It polls the tab's DevTools runtime until the number of matching elements satisfies `--count N` with `--count-match exact|at-least|at-most`.
+
 `wait-browser-text` is a non-mutating workflow operation for bounded page text readiness checks. It polls visible page text until `--text` matches with `--match contains|exact`, returning only text lengths and SHA-256 digests rather than page text contents.
 
 `wait-browser-value` is a non-mutating workflow operation for bounded form value readiness checks. It polls one input, textarea, or select until `--text` matches the field value with `--match exact|contains`, returning only value lengths and SHA-256 digests rather than field contents.
@@ -120,6 +123,8 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
 After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
+
+After a successful `wait-browser-count` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched collection state.
 
 After a successful `wait-browser-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched page state.
 
@@ -542,6 +547,14 @@ Wait for one selector to become ready, hidden, or detached without mutating the 
 
 `browser.waitSelector` is a low-risk read action. It polls `document.querySelector` through the tab's DevTools runtime until the selector is attached, visible, hidden, or detached, returning tag, disabled, href, text-length, and current URL metadata when an element is present.
 
+Wait for a selector count without reading element contents:
+
+```sh
+.build/debug/03 browser wait-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least --timeout-ms 5000
+```
+
+`browser.waitCount` is a low-risk read action. It polls `document.querySelectorAll` through the tab's DevTools runtime until the count matches with `--count-match exact|at-least|at-most`, returning only count, selector, URL, and match status.
+
 Wait for visible page text without returning page contents:
 
 ```sh
@@ -582,7 +595,7 @@ Wait for one checkbox or radio input to reach a checked state without mutating t
 
 `browser.waitChecked` is a low-risk read action. It polls a checkbox or radio input through the tab's DevTools runtime until its checked state matches, returning input metadata, current URL, and match status.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, and bounded checked-state readiness checks.
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded selector count checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, and bounded checked-state readiness checks.
 
 ## Product Direction
 

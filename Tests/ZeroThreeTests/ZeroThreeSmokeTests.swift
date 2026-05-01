@@ -75,6 +75,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitSelector"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitSelector"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitSelector"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitCount"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitCount"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitCount"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.waitText"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitText"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitText"]?["mutates"] as? Bool, false)
@@ -561,6 +564,37 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", ".loading-overlay",
             "--state", "hidden",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitCount = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-count",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", ".result-row",
+            "--count", "3",
+            "--count-match", "at-least",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitCount.status, 0, waitCount.stderr)
+        let waitCountObject = try decodeJSONObject(waitCount.stdout)
+        let waitCountBlockers = try XCTUnwrap(waitCountObject["blockers"] as? [String])
+        XCTAssertEqual(waitCountObject["operation"] as? String, "wait-browser-count")
+        XCTAssertEqual(waitCountObject["risk"] as? String, "low")
+        XCTAssertEqual(waitCountObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitCountBlockers.isEmpty)
+        XCTAssertEqual(waitCountObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-count",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", ".result-row",
+            "--count", "3",
+            "--count-match", "at-least",
             "--timeout-ms", "500",
             "--interval-ms", "50"
         ])
@@ -1572,6 +1606,71 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsDOMInspectionAfterBrowserCountWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-count-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-count-transcript",
+            "operation": "wait-browser-count",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "03", "browser", "wait-count",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--selector", ".result-row",
+                    "--count", "3"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": ".result-row",
+                    "verification": [
+                        "ok": true,
+                        "code": "count_matched",
+                        "selector": ".result-row",
+                        "expectedCount": 3,
+                        "currentCount": 5,
+                        "countMatch": "at-least",
+                        "currentURL": "https://example.com/results"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-browser-count",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-count")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "03", "workflow", "run",
+            "--operation", "read-browser",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
+    }
+
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserValueWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-workflow-value-wait-resume-\(UUID().uuidString)")
@@ -2097,6 +2196,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitSelector"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitCount"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -3488,6 +3592,85 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(detachedVerification["code"] as? String, "selector_detached")
         XCTAssertEqual(detachedVerification["state"] as? String, "detached")
         XCTAssertEqual(detachedVerification["matched"] as? Bool, true)
+    }
+
+    func testBrowserWaitCountReturnsSelectorCountVerification() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-count-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let countPayload: [String: Any] = [
+            "ok": true,
+            "code": "count_matched",
+            "message": "browser selector count matched expected at-least value",
+            "selector": ".result-row",
+            "expectedCount": 3,
+            "currentCount": 5,
+            "currentURL": "https://example.com/results",
+            "countMatch": "at-least",
+            "matched": true
+        ]
+        let countData = try JSONSerialization.data(withJSONObject: countPayload, options: [.sortedKeys])
+        let countJSONString = String(decoding: countData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": countJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Results Page",
+            "url": "https://example.com/results",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-count",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", ".result-row",
+            "--count", "3",
+            "--count-match", "at-least",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["selector"] as? String, ".result-row")
+        XCTAssertEqual(object["expectedCount"] as? Int, 3)
+        XCTAssertEqual(object["countMatch"] as? String, "at-least")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(object["html"])
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "count_matched")
+        XCTAssertEqual(verification["selector"] as? String, ".result-row")
+        XCTAssertEqual(verification["expectedCount"] as? Int, 3)
+        XCTAssertEqual(verification["currentCount"] as? Int, 5)
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/results")
+        XCTAssertEqual(verification["countMatch"] as? String, "at-least")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
     }
 
     func testBrowserWaitTextReturnsVerificationWithoutTextContents() throws {
