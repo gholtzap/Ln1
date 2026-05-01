@@ -2059,12 +2059,14 @@ final class Ln1CLI {
             return workflowPreflightWaitBrowserAttribute()
         case "wait-clipboard":
             return workflowPreflightWaitClipboard()
+        case "duplicate-file":
+            return try workflowPreflightDuplicateFile()
         case "move-file":
             return try workflowPreflightMoveFile()
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, duplicate-file, move-file, or wait-file.")
         }
     }
 
@@ -3699,7 +3701,36 @@ final class Ln1CLI {
         )
     }
 
+    private func workflowPreflightDuplicateFile() throws -> WorkflowPreflight {
+        try workflowPreflightCopyLikeFile(
+            workflowOperation: "duplicate-file",
+            fileOperation: "duplicate",
+            fileCommand: "duplicate",
+            missingSourceMessage: "No source path was provided for duplicate-file.",
+            missingDestinationMessage: "No destination path was provided for duplicate-file.",
+            blockedRemediation: "Resolve filesystem preflight check %@ before duplicating."
+        )
+    }
+
     private func workflowPreflightMoveFile() throws -> WorkflowPreflight {
+        try workflowPreflightCopyLikeFile(
+            workflowOperation: "move-file",
+            fileOperation: "move",
+            fileCommand: "move",
+            missingSourceMessage: "No source path was provided for move-file.",
+            missingDestinationMessage: "No destination path was provided for move-file.",
+            blockedRemediation: "Resolve filesystem preflight check %@ before moving."
+        )
+    }
+
+    private func workflowPreflightCopyLikeFile(
+        workflowOperation: String,
+        fileOperation: String,
+        fileCommand: String,
+        missingSourceMessage: String,
+        missingDestinationMessage: String,
+        blockedRemediation: String
+    ) throws -> WorkflowPreflight {
         var prerequisites = [doctorAuditLogCheck()]
         let sourcePath = option("--path")
         let destinationPath = option("--to")
@@ -3708,7 +3739,7 @@ final class Ln1CLI {
                 name: "workflow.sourcePath",
                 status: "fail",
                 required: true,
-                message: "No source path was provided for move-file.",
+                message: missingSourceMessage,
                 remediation: "Pass `--path SOURCE`."
             ))
         }
@@ -3717,20 +3748,20 @@ final class Ln1CLI {
                 name: "workflow.destinationPath",
                 status: "fail",
                 required: true,
-                message: "No destination path was provided for move-file.",
+                message: missingDestinationMessage,
                 remediation: "Pass `--to DESTINATION`."
             ))
         }
 
         if sourcePath != nil, destinationPath != nil {
-            let preflight = try fileOperationPreflight(operation: "move")
+            let preflight = try fileOperationPreflight(operation: fileOperation)
             prerequisites.append(contentsOf: preflight.checks.map { check in
                 DoctorCheck(
                     name: "filesystem.\(check.name)",
                     status: check.ok ? "pass" : "fail",
                     required: true,
                     message: check.message,
-                    remediation: check.ok ? nil : "Resolve filesystem preflight check \(check.name) before moving."
+                    remediation: check.ok ? nil : String(format: blockedRemediation, check.name)
                 )
             })
         }
@@ -3740,7 +3771,7 @@ final class Ln1CLI {
         let nextArguments: [String]?
         if blockers.isEmpty, let sourcePath, let destinationPath {
             var arguments = [
-                "Ln1", "files", "move",
+                "Ln1", "files", fileCommand,
                 "--path", sourcePath,
                 "--to", destinationPath,
                 "--allow-risk", "medium"
@@ -3754,7 +3785,7 @@ final class Ln1CLI {
         } else if sourcePath != nil, destinationPath != nil {
             let arguments = [
                 "Ln1", "files", "plan",
-                "--operation", "move",
+                "--operation", fileOperation,
                 "--path", sourcePath!,
                 "--to", destinationPath!,
                 "--allow-risk", "medium"
@@ -3767,7 +3798,7 @@ final class Ln1CLI {
         }
 
         return workflowPreflightResult(
-            operation: "move-file",
+            operation: workflowOperation,
             risk: "medium",
             mutates: true,
             prerequisites: prerequisites,
@@ -4218,10 +4249,18 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
-        if latestOperation == "move-file" {
-            return workflowMoveFileRecommendation(
+        if latestOperation == "duplicate-file" {
+            return workflowDestinationFileRecommendation(
                 outputJSON: outputJSON,
-                execution: execution
+                execution: execution,
+                successMessage: "Latest file duplicate completed and verified; inspect destination metadata before further file operations."
+            )
+        }
+        if latestOperation == "move-file" {
+            return workflowDestinationFileRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                successMessage: "Latest file move completed and verified; inspect destination metadata before further file operations."
             )
         }
         if latestOperation == "wait-file" {
@@ -4269,9 +4308,10 @@ final class Ln1CLI {
         )
     }
 
-    private func workflowMoveFileRecommendation(
+    private func workflowDestinationFileRecommendation(
         outputJSON: [String: Any],
-        execution: [String: Any]
+        execution: [String: Any],
+        successMessage: String
     ) -> (arguments: [String], message: String)? {
         guard outputJSON["ok"] as? Bool == true else {
             return nil
@@ -4291,7 +4331,7 @@ final class Ln1CLI {
                 "Ln1", "files", "stat",
                 "--path", destinationPath
             ],
-            message: "Latest file move completed and verified; inspect destination metadata before further file operations."
+            message: successMessage
         )
     }
 
@@ -13153,16 +13193,16 @@ final class Ln1CLI {
             }
           },
           "workflowNext": {
-            "command": "Ln1 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium",
+            "command": "Ln1 workflow next --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium",
             "result": {
-              "operation": "move-file",
+              "operation": "duplicate-file",
               "ready": true,
               "risk": "medium",
               "mutates": true,
               "blockers": [],
               "command": {
-                "display": "Ln1 files move --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --reason 'Describe intent'",
-                "argv": ["Ln1", "files", "move", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/b.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
+                "display": "Ln1 files duplicate --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium --reason 'Describe intent'",
+                "argv": ["Ln1", "files", "duplicate", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/a-copy.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
                 "risk": "medium",
                 "mutates": true,
                 "requiresReason": true
@@ -14402,11 +14442,11 @@ final class Ln1CLI {
           Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           Ln1 policy
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|duplicate-file|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|duplicate-file|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--size-bytes N] [--digest SHA256] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|duplicate-file|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|duplicate-file|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]

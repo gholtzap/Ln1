@@ -1039,6 +1039,49 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutExecutingDuplicate() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next duplicate \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source file.txt")
+        let destination = directory.appendingPathComponent("copy file.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "duplicate-file",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "duplicate-file")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "duplicate",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1697,6 +1740,68 @@ final class Ln1SmokeTests: XCTestCase {
             "--path", destinationURL.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("move completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsDestinationStatAfterDuplicateFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-duplicate-file-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let sourceURL = directory.appendingPathComponent("draft.txt")
+        let destinationURL = directory.appendingPathComponent("draft-copy.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "duplicate-file-transcript",
+            "operation": "duplicate-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "duplicate",
+                    "--path", sourceURL.path,
+                    "--to", destinationURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "Keep original before editing"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "filesystem.duplicate",
+                    "destination": [
+                        "path": destinationURL.path,
+                        "kind": "regularFile",
+                        "sizeBytes": 42
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "metadata_matched",
+                        "message": "destination exists and size matches source"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "duplicate-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "duplicate-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", destinationURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("duplicate completed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
@@ -2735,6 +2840,61 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertTrue((object["message"] as? String)?.contains("mutating command") == true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesMutatingDuplicateWithExplicitApprovalAndReason() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow run execute duplicate \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source file.txt")
+        let destination = directory.appendingPathComponent("copy file.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "duplicate-file",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false",
+            "--execute-mutating", "true",
+            "--reason", "Verify approved workflow duplication"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "duplicate-file")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "duplicate",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Verify approved workflow duplication"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["action"] as? String, "filesystem.duplicate")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertTrue((object["message"] as? String)?.contains("mutating command") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
