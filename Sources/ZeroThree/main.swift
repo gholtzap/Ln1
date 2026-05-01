@@ -1691,7 +1691,7 @@ final class ZeroThreeCLI {
         let timeoutMilliseconds = max(100, option("--run-timeout-ms").flatMap(Int.init) ?? 10_000)
         let maxOutputBytes = max(0, option("--max-output-bytes").flatMap(Int.init) ?? 1_048_576)
         let preflight = try workflowPreflightForOperation()
-        let command: WorkflowCommand?
+        var command: WorkflowCommand?
         if preflight.canProceed, let argv = preflight.nextArguments {
             command = WorkflowCommand(
                 display: workflowDisplayCommand(argv),
@@ -1705,7 +1705,20 @@ final class ZeroThreeCLI {
         }
 
         if !dryRun, command?.mutates == true {
-            throw CommandError(description: "workflow run execution currently supports non-mutating commands only. Use `--dry-run true` to inspect mutating workflows.")
+            guard option("--execute-mutating").map(parseBool) == true else {
+                throw CommandError(description: "workflow run mutating execution requires --execute-mutating true. Use `--dry-run true` to inspect the command first.")
+            }
+            let reason = try workflowExecutionReason()
+            if let currentCommand = command {
+                let argv = try workflowArguments(currentCommand.argv, replacingReasonWith: reason)
+                command = WorkflowCommand(
+                    display: workflowDisplayCommand(argv),
+                    argv: argv,
+                    risk: currentCommand.risk,
+                    mutates: currentCommand.mutates,
+                    requiresReason: currentCommand.requiresReason
+                )
+            }
         }
 
         let execution: WorkflowExecutionResult?
@@ -2177,6 +2190,9 @@ final class ZeroThreeCLI {
             if let match {
                 arguments += ["--match", match]
             }
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
             arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
             nextArguments = arguments
         } else if blockers.isEmpty, let id, let selector {
@@ -2207,6 +2223,9 @@ final class ZeroThreeCLI {
                 if let interval = option("--interval-ms") {
                     arguments += ["--interval-ms", interval]
                 }
+            }
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
             }
             arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
             nextArguments = arguments
@@ -3098,13 +3117,16 @@ final class ZeroThreeCLI {
         let nextCommand: String?
         let nextArguments: [String]?
         if blockers.isEmpty, let sourcePath, let destinationPath {
-            let arguments = [
+            var arguments = [
                 "03", "files", "move",
                 "--path", sourcePath,
                 "--to", destinationPath,
-                "--allow-risk", "medium",
-                "--reason", "Describe intent"
+                "--allow-risk", "medium"
             ]
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            arguments += ["--reason", "Describe intent"]
             nextArguments = arguments
             nextCommand = workflowDisplayCommand(arguments)
         } else if sourcePath != nil, destinationPath != nil {
@@ -4017,6 +4039,28 @@ final class ZeroThreeCLI {
         return ["03", "workflow", "run", "--operation", operation, "--dry-run", "true"]
     }
 
+    private func workflowExecutionReason() throws -> String {
+        guard let reason = option("--reason")?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !reason.isEmpty,
+              reason != "Describe intent" else {
+            throw CommandError(description: "workflow run mutating execution requires a non-placeholder --reason.")
+        }
+        return reason
+    }
+
+    private func workflowArguments(_ arguments: [String], replacingReasonWith reason: String) throws -> [String] {
+        guard let reasonIndex = arguments.firstIndex(of: "--reason") else {
+            return arguments + ["--reason", reason]
+        }
+        let valueIndex = arguments.index(after: reasonIndex)
+        guard arguments.indices.contains(valueIndex) else {
+            throw CommandError(description: "workflow command argv includes --reason without a value")
+        }
+        var updatedArguments = arguments
+        updatedArguments[valueIndex] = reason
+        return updatedArguments
+    }
+
     private func workflowExecute(
         _ command: WorkflowCommand,
         timeoutMilliseconds: Int,
@@ -4134,7 +4178,9 @@ final class ZeroThreeCLI {
             return "Dry run only. This non-mutating workflow is ready to execute with `--dry-run false`."
         }
         if executed {
-            return "Workflow executed a non-mutating command and captured its output."
+            return command.mutates
+                ? "Workflow executed a mutating command after explicit approval and captured its output."
+                : "Workflow executed a non-mutating command and captured its output."
         }
         return "Workflow did not execute."
     }
@@ -11682,6 +11728,7 @@ final class ZeroThreeCLI {
           03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--title TITLE] [--checked true|false] [--enabled true|false] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
@@ -11774,6 +11821,7 @@ final class ZeroThreeCLI {
           - `browser wait-checked` waits for one checkbox or radio checked state without mutating the page.
           - `browser wait-enabled` waits for one element enabled or disabled state without mutating the page.
           - Workflow fill-browser, select-browser, check-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
+          - Workflow mutating execution requires --execute-mutating true and a non-placeholder --reason before running the underlying audited command.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
           - Workflow wait-browser-selector waits for dynamic page UI readiness or disappearance before the next browser action.
           - Workflow wait-browser-count waits for dynamic collection sizes before inspecting or acting.

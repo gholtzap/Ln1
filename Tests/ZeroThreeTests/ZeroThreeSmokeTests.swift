@@ -288,6 +288,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
             "--reason", "Describe intent"
         ])
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "filesystem.sourceExists" && $0["status"] as? String == "pass" })
@@ -338,6 +339,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
             "--text", "search text",
+            "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -366,6 +368,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "select[name=\"country\"]",
             "--value", "ca",
+            "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -394,6 +397,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
             "--checked", "true",
+            "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -420,6 +424,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
+            "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -450,6 +455,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--match", "prefix",
             "--timeout-ms", "750",
             "--interval-ms", "50",
+            "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -480,6 +486,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--url", "https://example.com/next",
             "--expect-url", "https://example.com/next",
             "--match", "exact",
+            "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -811,6 +818,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
             "--reason", "Describe intent"
         ])
         XCTAssertTrue((command["display"] as? String)?.contains("'") == true)
@@ -860,6 +868,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
             "--reason", "Describe intent"
         ])
         XCTAssertEqual(command["requiresReason"] as? Bool, true)
@@ -2016,7 +2025,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("enabled actionable element") == true)
     }
 
-    func testWorkflowRunRejectsMutatingExecutionMode() throws {
+    func testWorkflowRunRequiresExplicitApprovalForMutatingExecutionMode() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03 workflow run reject \(UUID().uuidString)")
         let source = directory.appendingPathComponent("source file.txt")
@@ -2038,9 +2047,64 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ])
 
         XCTAssertNotEqual(result.status, 0)
-        XCTAssertTrue(result.stderr.contains("workflow run execution currently supports non-mutating commands only"))
+        XCTAssertTrue(result.stderr.contains("workflow run mutating execution requires --execute-mutating true"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testWorkflowRunExecutesMutatingMoveWithExplicitApprovalAndReason() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03 workflow run execute move \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source file.txt")
+        let destination = directory.appendingPathComponent("destination file.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "move-file",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false",
+            "--execute-mutating", "true",
+            "--reason", "Verify approved workflow mutation"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "move-file")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "03", "files", "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Verify approved workflow mutation"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["action"] as? String, "filesystem.move")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertTrue((object["message"] as? String)?.contains("mutating command") == true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
