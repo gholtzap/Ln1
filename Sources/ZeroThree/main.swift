@@ -60,6 +60,7 @@ struct AppSummary: Codable {
 
 struct DesktopWindowRecord: Codable {
     let id: String
+    let stableIdentity: StableIdentity
     let windowNumber: UInt32
     let ownerName: String?
     let ownerBundleIdentifier: String?
@@ -72,6 +73,15 @@ struct DesktopWindowRecord: Codable {
     let alpha: Double?
     let memoryUsageBytes: Int?
     let sharingState: Int?
+}
+
+struct StableIdentity: Codable {
+    let id: String
+    let kind: String
+    let confidence: String
+    let label: String
+    let components: [String: String]
+    let reasons: [String]
 }
 
 struct DesktopWindowsState: Codable {
@@ -4435,6 +4445,18 @@ final class ZeroThreeCLI {
               "windows": [
                 {
                   "id": "window:456",
+                  "stableIdentity": {
+                    "id": "desktopWindow:stable-semantic-digest",
+                    "kind": "desktopWindow",
+                    "confidence": "high",
+                    "label": "Documents window in Finder",
+                    "components": {
+                      "owner": "com.apple.finder",
+                      "title": "documents",
+                      "layer": "0"
+                    },
+                    "reasons": ["owner bundle identifier or name", "window title"]
+                  },
                   "windowNumber": 456,
                   "ownerName": "Finder",
                   "ownerBundleIdentifier": "com.apple.finder",
@@ -5376,16 +5398,30 @@ final class ZeroThreeCLI {
                 return nil
             }
 
+            let ownerName = window[kCGWindowOwnerName as String] as? String
+            let ownerBundleIdentifier = bundleIdentifierByPID[ownerPID]
+            let title = window[kCGWindowName as String] as? String
+            let bounds = rectValue(window[kCGWindowBounds as String])
+
             return DesktopWindowRecord(
                 id: "window:\(windowNumber)",
+                stableIdentity: desktopWindowStableIdentity(
+                    windowNumber: windowNumber,
+                    ownerName: ownerName,
+                    ownerBundleIdentifier: ownerBundleIdentifier,
+                    ownerPID: ownerPID,
+                    title: title,
+                    layer: layer,
+                    bounds: bounds
+                ),
                 windowNumber: windowNumber,
-                ownerName: window[kCGWindowOwnerName as String] as? String,
-                ownerBundleIdentifier: bundleIdentifierByPID[ownerPID],
+                ownerName: ownerName,
+                ownerBundleIdentifier: ownerBundleIdentifier,
                 ownerPID: ownerPID,
                 active: ownerPID == activePID,
-                title: window[kCGWindowName as String] as? String,
+                title: title,
                 layer: layer,
-                bounds: rectValue(window[kCGWindowBounds as String]),
+                bounds: bounds,
                 onscreen: boolValue(window[kCGWindowIsOnscreen as String]),
                 alpha: doubleValue(window[kCGWindowAlpha as String]),
                 memoryUsageBytes: intValue(window[kCGWindowMemoryUsage as String]),
@@ -5484,6 +5520,106 @@ final class ZeroThreeCLI {
             width: Double(cgRect.width),
             height: Double(cgRect.height)
         )
+    }
+
+    private func desktopWindowStableIdentity(
+        windowNumber: UInt32,
+        ownerName: String?,
+        ownerBundleIdentifier: String?,
+        ownerPID: Int32,
+        title: String?,
+        layer: Int,
+        bounds: Rect?
+    ) -> StableIdentity {
+        let normalizedOwnerName = normalizedIdentityText(ownerName)
+        let normalizedTitle = normalizedIdentityText(title)
+        let owner = ownerBundleIdentifier.flatMap(normalizedIdentityText)
+            ?? normalizedOwnerName
+            ?? "pid:\(ownerPID)"
+        let readableOwner = cleanIdentityText(ownerName)
+            ?? ownerBundleIdentifier
+            ?? "PID \(ownerPID)"
+
+        var components = [
+            "owner": owner,
+            "layer": String(layer)
+        ]
+        var reasons = owner.hasPrefix("pid:")
+            ? ["owner process identifier fallback"]
+            : ["owner bundle identifier or name"]
+        var fingerprintParts = [
+            "desktopWindow",
+            "owner:\(owner)",
+            "layer:\(layer)"
+        ]
+
+        if let normalizedTitle {
+            components["title"] = normalizedTitle
+            reasons.append("window title")
+            fingerprintParts.append("title:\(normalizedTitle)")
+        } else if let bounds {
+            let coarseBounds = coarseBoundsIdentityComponent(bounds)
+            components["coarseBounds"] = coarseBounds
+            reasons.append("coarse window bounds fallback")
+            fingerprintParts.append("bounds:\(coarseBounds)")
+        } else {
+            components["windowNumberFallback"] = String(windowNumber)
+            reasons.append("volatile window number fallback")
+            fingerprintParts.append("windowNumber:\(windowNumber)")
+        }
+
+        let confidence: String
+        if ownerBundleIdentifier != nil, normalizedTitle != nil {
+            confidence = "high"
+        } else if normalizedOwnerName != nil, normalizedTitle != nil {
+            confidence = "medium"
+        } else if ownerBundleIdentifier != nil, bounds != nil {
+            confidence = "medium"
+        } else {
+            confidence = "low"
+        }
+
+        let label: String
+        if let title = cleanIdentityText(title) {
+            label = "\(title) window in \(readableOwner)"
+        } else if let bounds {
+            label = "\(readableOwner) window near \(Int(bounds.x)),\(Int(bounds.y))"
+        } else {
+            label = "\(readableOwner) window \(windowNumber)"
+        }
+
+        let digest = String(sha256Digest(fingerprintParts.joined(separator: "|")).prefix(24))
+        return StableIdentity(
+            id: "desktopWindow:\(digest)",
+            kind: "desktopWindow",
+            confidence: confidence,
+            label: label,
+            components: components,
+            reasons: reasons
+        )
+    }
+
+    private func normalizedIdentityText(_ text: String?) -> String? {
+        guard let cleaned = cleanIdentityText(text) else {
+            return nil
+        }
+        return cleaned.lowercased()
+    }
+
+    private func cleanIdentityText(_ text: String?) -> String? {
+        guard let text else {
+            return nil
+        }
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private func coarseBoundsIdentityComponent(_ bounds: Rect) -> String {
+        let width = Int((bounds.width / 50.0).rounded() * 50.0)
+        let height = Int((bounds.height / 50.0).rounded() * 50.0)
+        let x = Int((bounds.x / 100.0).rounded() * 100.0)
+        let y = Int((bounds.y / 100.0).rounded() * 100.0)
+        return "x\(x)-y\(y)-w\(width)-h\(height)"
     }
 
     private func runningApps(includeBackground: Bool) -> [NSRunningApplication] {

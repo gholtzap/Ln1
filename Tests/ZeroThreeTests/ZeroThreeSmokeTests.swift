@@ -96,6 +96,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         if let first = windows.first {
             XCTAssertNotNil(first["id"] as? String)
+            let stableIdentity = try XCTUnwrap(first["stableIdentity"] as? [String: Any])
+            XCTAssertNotNil(stableIdentity["id"] as? String)
+            XCTAssertEqual(stableIdentity["kind"] as? String, "desktopWindow")
+            XCTAssertNotNil(stableIdentity["confidence"] as? String)
+            XCTAssertNotNil(stableIdentity["label"] as? String)
+            XCTAssertNotNil(stableIdentity["components"] as? [String: String])
+            XCTAssertNotNil(stableIdentity["reasons"] as? [String])
             XCTAssertNotNil(first["windowNumber"] as? Int)
             XCTAssertNotNil(first["ownerPID"] as? Int)
             XCTAssertNotNil(first["active"] as? Bool)

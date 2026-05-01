@@ -46,6 +46,8 @@ If you are running from a non-interactive shell and want every process macOS exp
 
 The output is structured JSON from macOS window metadata: availability, window ID, owner app name and PID, bundle identifier when available, active-owner flag, title when macOS exposes it, layer, bounds, onscreen state, alpha, memory usage, and sharing state. This is a low-risk desktop inspection action that does not require screenshots or Accessibility access. If the current process cannot read WindowServer metadata, the command still returns a structured unavailable result instead of falling back to screenshots.
 
+Each window includes both a transient WindowServer `id` and a semantic `stableIdentity`. The stable identity is a digest built from durable-ish fields such as owner bundle identifier, title, layer, and coarse bounds when the title is unavailable. It also reports a confidence level, user-readable label, identity components, and reasons so callers can avoid acting when a repeated observation only matches a low-confidence window reference.
+
 By default `desktop windows` reports visible non-desktop, normal-layer windows. Include desktop elements or menu/overlay layers when they are relevant:
 
 ```sh
