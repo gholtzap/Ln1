@@ -759,6 +759,51 @@ struct BrowserFocusWaitResult: Codable {
     let message: String
 }
 
+struct BrowserAttributeWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let attribute: String
+    let expectedValueLength: Int
+    let expectedValueDigest: String
+    let currentValueLength: Int?
+    let currentValueDigest: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserAttributeWaitPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let attribute: String
+    let currentValue: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserAttributeWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let attribute: String
+    let expectedValueLength: Int
+    let expectedValueDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserAttributeWaitVerification
+    let message: String
+}
+
 struct BrowserDOMElement: Codable {
     let id: String
     let parentID: String?
@@ -1959,6 +2004,8 @@ final class ZeroThreeCLI {
             return workflowPreflightWaitBrowserEnabled()
         case "wait-browser-focus":
             return workflowPreflightWaitBrowserFocus()
+        case "wait-browser-attribute":
+            return workflowPreflightWaitBrowserAttribute()
         case "wait-clipboard":
             return workflowPreflightWaitClipboard()
         case "move-file":
@@ -1966,7 +2013,7 @@ final class ZeroThreeCLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-clipboard, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, move-file, or wait-file.")
         }
     }
 
@@ -3352,6 +3399,142 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func workflowPreflightWaitBrowserAttribute() -> WorkflowPreflight {
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let endpoint = try? browserEndpoint()
+        let browserCheck = doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        let requiredBrowserCheck = DoctorCheck(
+            name: browserCheck.name,
+            status: browserCheck.status == "pass" ? "pass" : "fail",
+            required: true,
+            message: browserCheck.message,
+            remediation: browserCheck.status == "pass" ? nil : browserCheck.remediation
+        )
+        var prerequisites = [requiredBrowserCheck]
+        let id = option("--id")
+        let selector = option("--selector")
+        let attribute = option("--attribute")
+        let text = option("--text")
+        let match = option("--match")
+        if id == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserTabID",
+                status: "fail",
+                required: true,
+                message: "No browser tab ID was provided for wait-browser-attribute.",
+                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+            ))
+        }
+        if let selector {
+            do {
+                _ = try validatedBrowserSelector(selector)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserSelector",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-empty CSS selector with `--selector CSS_SELECTOR`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserSelector",
+                status: "fail",
+                required: true,
+                message: "No CSS selector was provided for wait-browser-attribute.",
+                remediation: "Pass `--selector CSS_SELECTOR` for the target element."
+            ))
+        }
+        if let attribute {
+            do {
+                _ = try validatedBrowserAttributeName(attribute)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserAttribute",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a safe attribute name such as `aria-expanded`, `data-state`, `href`, or `class`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserAttribute",
+                status: "fail",
+                required: true,
+                message: "No attribute name was provided for wait-browser-attribute.",
+                remediation: "Pass `--attribute NAME` for the target element attribute."
+            ))
+        }
+        if let text {
+            do {
+                _ = try validatedBrowserExpectedText(text)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserText",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass non-empty expected attribute text with `--text TEXT`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserText",
+                status: "fail",
+                required: true,
+                message: "No expected attribute text was provided for wait-browser-attribute.",
+                remediation: "Pass `--text TEXT` for the expected attribute value."
+            ))
+        }
+        if let match {
+            do {
+                _ = try browserTextMatchMode(match)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserAttributeMatch",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--match exact` or `--match contains`."
+                ))
+            }
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let id, let selector, let attribute, let text {
+            var arguments = ["03", "browser", "wait-attribute"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += [
+                "--id", id,
+                "--selector", selector,
+                "--attribute", attribute,
+                "--text", text,
+                "--match", match ?? "exact",
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-browser-attribute",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
     private func workflowPreflightMoveFile() throws -> WorkflowPreflight {
         var prerequisites = [doctorAuditLogCheck()]
         let sourcePath = option("--path")
@@ -3777,6 +3960,14 @@ final class ZeroThreeCLI {
         }
         if latestOperation == "wait-browser-focus" {
             return workflowBrowserFocusWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                workflowURL: workflowURL
+            )
+        }
+        if latestOperation == "wait-browser-attribute" {
+            return workflowBrowserAttributeWaitRecommendation(
                 outputJSON: outputJSON,
                 execution: execution,
                 endpoint: endpoint,
@@ -4224,6 +4415,34 @@ final class ZeroThreeCLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser focus wait completed; dry-run DOM inspection for the focused element state."
+        )
+    }
+
+    private func workflowBrowserAttributeWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let verification = outputJSON["verification"] as? [String: Any],
+              verification["ok"] as? Bool == true else {
+            return nil
+        }
+        guard let tabID = outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "03", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser attribute wait completed; dry-run DOM inspection for the matched element state."
         )
     }
 
@@ -5218,6 +5437,12 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
             try writeJSON(browserWaitFocus(id: id, selector: selector))
+        case "wait-attribute":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let attribute = try requiredOption("--attribute")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitAttribute(id: id, selector: selector, attribute: attribute, expectedValue: text))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -6721,6 +6946,11 @@ final class ZeroThreeCLI {
                 BrowserAction(
                     name: "browser.waitFocus",
                     risk: browserActionRisk(for: "browser.waitFocus"),
+                    mutates: false
+                ),
+                BrowserAction(
+                    name: "browser.waitAttribute",
+                    risk: browserActionRisk(for: "browser.waitAttribute"),
                     mutates: false
                 )
             ]
@@ -8341,6 +8571,44 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func browserWaitAttribute(id: String, selector: String, attribute: String, expectedValue: String) throws -> BrowserAttributeWaitResult {
+        let endpoint = try browserEndpoint()
+        let normalizedSelector = try validatedBrowserSelector(selector)
+        let normalizedAttribute = try validatedBrowserAttributeName(attribute)
+        let normalizedExpectedValue = try validatedBrowserExpectedText(expectedValue)
+        let match = try browserTextMatchMode(option("--match") ?? "exact")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = try waitForBrowserAttribute(
+            tabID: id,
+            selector: normalizedSelector,
+            attribute: normalizedAttribute,
+            expectedValue: normalizedExpectedValue,
+            match: match,
+            endpoint: endpoint,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+        let message = verification.ok
+            ? "Browser tab \(id) reached the expected attribute state."
+            : "Timed out waiting for browser tab \(id) to reach the expected attribute state."
+        return BrowserAttributeWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            tabID: id,
+            selector: normalizedSelector,
+            attribute: normalizedAttribute,
+            expectedValueLength: normalizedExpectedValue.count,
+            expectedValueDigest: sha256Digest(normalizedExpectedValue),
+            match: match,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: message
+        )
+    }
+
     private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
         let expression = """
         (() => {
@@ -9640,6 +9908,101 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func inspectBrowserAttribute(
+        selector: String,
+        attribute: String,
+        expectedValue: String,
+        match: String,
+        currentURL: String?,
+        at webSocketURL: URL
+    ) throws -> BrowserAttributeWaitVerification {
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const attribute = \(try javascriptStringLiteral(attribute));
+          const expectedValue = \(try javascriptStringLiteral(expectedValue));
+          const match = \(try javascriptStringLiteral(match));
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            attribute,
+            currentValue: extra.currentValue ?? null,
+            currentURL: location.href || null,
+            tagName: extra.tagName || null,
+            match,
+            matched: extra.matched || false
+          });
+
+          let element = null;
+          try {
+            element = document.querySelector(selector);
+          } catch {
+            return result(false, "selector_invalid", "The CSS selector is invalid.");
+          }
+
+          if (!element) {
+            return result(false, "element_missing", `No element matches selector '${selector}'.`);
+          }
+
+          const currentValue = element.hasAttribute(attribute) ? String(element.getAttribute(attribute) || "") : null;
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const matched = currentValue !== null && (
+            match === "exact" ? currentValue === expectedValue : currentValue.includes(expectedValue)
+          );
+          return result(
+            matched,
+            matched ? "attribute_matched" : currentValue === null ? "attribute_missing" : "attribute_mismatch",
+            matched
+              ? `browser attribute matched expected ${match} value`
+              : currentValue === null
+                ? "browser attribute is missing"
+                : `browser attribute did not match expected ${match} value`,
+            { tagName, currentValue, matched }
+          );
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return an attribute wait result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools attribute wait result was not valid UTF-8")
+        }
+        do {
+            let payload = try JSONDecoder().decode(BrowserAttributeWaitPayload.self, from: data)
+            return BrowserAttributeWaitVerification(
+                ok: payload.ok,
+                code: payload.code,
+                message: payload.message,
+                selector: payload.selector,
+                attribute: payload.attribute,
+                expectedValueLength: expectedValue.count,
+                expectedValueDigest: sha256Digest(expectedValue),
+                currentValueLength: payload.currentValue?.count,
+                currentValueDigest: payload.currentValue.map(sha256Digest),
+                currentURL: payload.currentURL ?? currentURL,
+                tagName: payload.tagName,
+                match: payload.match,
+                matched: payload.matched
+            )
+        } catch {
+            throw CommandError(description: "Chrome DevTools attribute wait result was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
     private func inspectBrowserReadyState(
         expectedState: String,
         currentURL: String?,
@@ -10267,6 +10630,86 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func waitForBrowserAttribute(
+        tabID: String,
+        selector: String,
+        attribute: String,
+        expectedValue: String,
+        match: String,
+        endpoint: URL,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> BrowserAttributeWaitVerification {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var lastVerification: BrowserAttributeWaitVerification?
+
+        repeat {
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == tabID }) else {
+                lastVerification = BrowserAttributeWaitVerification(
+                    ok: false,
+                    code: "tab_missing",
+                    message: "No browser page tab found with id \(tabID).",
+                    selector: selector,
+                    attribute: attribute,
+                    expectedValueLength: expectedValue.count,
+                    expectedValueDigest: sha256Digest(expectedValue),
+                    currentValueLength: nil,
+                    currentValueDigest: nil,
+                    currentURL: nil,
+                    tagName: nil,
+                    match: match,
+                    matched: false
+                )
+                if Date() >= deadline {
+                    break
+                }
+                Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+                continue
+            }
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                throw CommandError(description: "browser tab \(tabID) does not expose a valid webSocketDebuggerURL")
+            }
+
+            let verification = try inspectBrowserAttribute(
+                selector: selector,
+                attribute: attribute,
+                expectedValue: expectedValue,
+                match: match,
+                currentURL: tab.url,
+                at: webSocketURL
+            )
+            lastVerification = verification
+            if verification.ok || verification.code == "selector_invalid" {
+                return verification
+            }
+
+            if Date() >= deadline {
+                break
+            }
+            Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+        } while true
+
+        return BrowserAttributeWaitVerification(
+            ok: false,
+            code: lastVerification?.code ?? "attribute_mismatch",
+            message: "browser attribute did not match expected \(match) value before timeout",
+            selector: selector,
+            attribute: attribute,
+            expectedValueLength: expectedValue.count,
+            expectedValueDigest: sha256Digest(expectedValue),
+            currentValueLength: lastVerification?.currentValueLength,
+            currentValueDigest: lastVerification?.currentValueDigest,
+            currentURL: lastVerification?.currentURL,
+            tagName: lastVerification?.tagName,
+            match: match,
+            matched: false
+        )
+    }
+
     private func waitForBrowserValue(
         tabID: String,
         selector: String,
@@ -10692,6 +11135,17 @@ final class ZeroThreeCLI {
             throw CommandError(description: "browser expected text must not be empty")
         }
         return rawText
+    }
+
+    private func validatedBrowserAttributeName(_ rawName: String) throws -> String {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !name.isEmpty else {
+            throw CommandError(description: "browser attribute name must not be empty")
+        }
+        guard name.range(of: #"^[a-z_:][a-z0-9_:.:-]*$"#, options: .regularExpression) != nil else {
+            throw CommandError(description: "browser attribute name '\(rawName)' is not supported")
+        }
+        return name
     }
 
     private func validatedBrowserExpectedTitle(_ rawTitle: String) throws -> String {
@@ -11709,7 +12163,7 @@ final class ZeroThreeCLI {
 
     private func browserActionRisk(for action: String) -> String {
         switch action {
-        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus":
+        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
         case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
@@ -11804,6 +12258,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.waitChecked", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitEnabled", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitFocus", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "browser.waitAttribute", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -12404,7 +12859,8 @@ final class ZeroThreeCLI {
                     { "name": "browser.waitTitle", "risk": "low", "mutates": false },
                     { "name": "browser.waitChecked", "risk": "low", "mutates": false },
                     { "name": "browser.waitEnabled", "risk": "low", "mutates": false },
-                    { "name": "browser.waitFocus", "risk": "low", "mutates": false }
+                    { "name": "browser.waitFocus", "risk": "low", "mutates": false },
+                    { "name": "browser.waitAttribute", "risk": "low", "mutates": false }
                   ]
                 }
               ]
@@ -13126,11 +13582,11 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -13181,6 +13637,7 @@ final class ZeroThreeCLI {
           03 browser wait-checked --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
           03 browser wait-enabled --id TARGET_ID --selector CSS_SELECTOR [--enabled true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
           03 browser wait-focus --id TARGET_ID --selector CSS_SELECTOR [--focused true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
+          03 browser wait-attribute --id TARGET_ID --selector CSS_SELECTOR --attribute NAME --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
           03 schema
 
         Notes:
@@ -13229,6 +13686,7 @@ final class ZeroThreeCLI {
           - `browser wait-checked` waits for one checkbox or radio checked state without mutating the page.
           - `browser wait-enabled` waits for one element enabled or disabled state without mutating the page.
           - `browser wait-focus` waits for one element focused or unfocused state without mutating the page.
+          - `browser wait-attribute` waits for one element attribute to match without returning attribute contents.
           - Workflow fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow mutating execution requires --execute-mutating true and a non-placeholder --reason before running the underlying audited command.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
@@ -13241,6 +13699,7 @@ final class ZeroThreeCLI {
           - Workflow wait-browser-checked waits for checkbox or radio state before inspecting or acting.
           - Workflow wait-browser-enabled waits for an element to become enabled or disabled before inspecting or acting.
           - Workflow wait-browser-focus waits for focus state before inspecting or acting.
+          - Workflow wait-browser-attribute waits for DOM attribute state before inspecting or acting.
         """)
     }
 

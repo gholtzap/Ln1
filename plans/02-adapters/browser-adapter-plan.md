@@ -43,6 +43,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - DevTools checked-state waiting: `03 browser wait-checked` waits for checkbox or radio state to match using read-only DevTools runtime evaluation.
 - DevTools enabled-state waiting: `03 browser wait-enabled` waits for one selector to become enabled or disabled using read-only DevTools runtime evaluation.
 - DevTools focus-state waiting: `03 browser wait-focus` waits for one selector to become focused or unfocused using read-only DevTools runtime evaluation.
+- DevTools attribute waiting: `03 browser wait-attribute` waits for one selector's attribute to match exact or contains criteria using read-only DevTools runtime evaluation without returning the attribute contents.
 
 ## Relationship To The Product
 

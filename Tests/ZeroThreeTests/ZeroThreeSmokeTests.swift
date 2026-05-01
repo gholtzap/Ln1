@@ -108,6 +108,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitFocus"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitFocus"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitFocus"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitAttribute"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitAttribute"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitAttribute"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -879,6 +882,39 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
             "--focused", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitAttribute = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-attribute",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[aria-expanded]",
+            "--attribute", "aria-expanded",
+            "--text", "true",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitAttribute.status, 0, waitAttribute.stderr)
+        let waitAttributeObject = try decodeJSONObject(waitAttribute.stdout)
+        let waitAttributeBlockers = try XCTUnwrap(waitAttributeObject["blockers"] as? [String])
+        XCTAssertEqual(waitAttributeObject["operation"] as? String, "wait-browser-attribute")
+        XCTAssertEqual(waitAttributeObject["risk"] as? String, "low")
+        XCTAssertEqual(waitAttributeObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitAttributeBlockers.isEmpty)
+        XCTAssertEqual(waitAttributeObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-attribute",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "button[aria-expanded]",
+            "--attribute", "aria-expanded",
+            "--text", "true",
+            "--match", "exact",
             "--timeout-ms", "500",
             "--interval-ms", "50"
         ])
@@ -2173,6 +2209,72 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsDOMInspectionAfterBrowserAttributeWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-attribute-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-attribute-transcript",
+            "operation": "wait-browser-attribute",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "03", "browser", "wait-attribute",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--selector", "button[aria-expanded]",
+                    "--attribute", "aria-expanded",
+                    "--text", "true"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": "button[aria-expanded]",
+                    "attribute": "aria-expanded",
+                    "verification": [
+                        "ok": true,
+                        "code": "attribute_matched",
+                        "selector": "button[aria-expanded]",
+                        "attribute": "aria-expanded",
+                        "currentValueLength": 4,
+                        "currentURL": "https://example.com/menu"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-browser-attribute",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-attribute")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "03", "workflow", "run",
+            "--operation", "read-browser",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
+    }
+
     func testWorkflowResumeSuggestsBrowserActionAfterBrowserEnabledWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-workflow-enabled-wait-resume-\(UUID().uuidString)")
@@ -2622,6 +2724,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitFocus"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitAttribute"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -4856,6 +4963,93 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["inputType"] as? String, "search")
         XCTAssertEqual(verification["activeTagName"] as? String, "input")
         XCTAssertEqual(verification["activeInputType"] as? String, "search")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+    }
+
+    func testBrowserWaitAttributeReturnsVerificationWithoutAttributeContents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-attribute-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let attributePayload: [String: Any] = [
+            "ok": true,
+            "code": "attribute_matched",
+            "message": "browser attribute matched expected exact value",
+            "selector": "button[aria-expanded]",
+            "attribute": "aria-expanded",
+            "currentValue": "true",
+            "currentURL": "https://example.com/menu",
+            "tagName": "button",
+            "match": "exact",
+            "matched": true
+        ]
+        let attributeData = try JSONSerialization.data(withJSONObject: attributePayload, options: [.sortedKeys])
+        let attributeJSONString = String(decoding: attributeData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": attributeJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Menu",
+            "url": "https://example.com/menu",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-attribute",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[aria-expanded]",
+            "--attribute", "ARIA-EXPANDED",
+            "--text", "true",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["selector"] as? String, "button[aria-expanded]")
+        XCTAssertEqual(object["attribute"] as? String, "aria-expanded")
+        XCTAssertEqual(object["expectedValueLength"] as? Int, 4)
+        XCTAssertNotNil(object["expectedValueDigest"])
+        XCTAssertEqual(object["match"] as? String, "exact")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(object["value"])
+        XCTAssertNil(object["html"])
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "attribute_matched")
+        XCTAssertEqual(verification["selector"] as? String, "button[aria-expanded]")
+        XCTAssertEqual(verification["attribute"] as? String, "aria-expanded")
+        XCTAssertEqual(verification["currentValueLength"] as? Int, 4)
+        XCTAssertNotNil(verification["currentValueDigest"])
+        XCTAssertNil(verification["currentValue"])
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/menu")
+        XCTAssertEqual(verification["tagName"] as? String, "button")
+        XCTAssertEqual(verification["match"] as? String, "exact")
         XCTAssertEqual(verification["matched"] as? Bool, true)
     }
 

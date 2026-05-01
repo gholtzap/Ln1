@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-clipboard`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -78,6 +78,7 @@ Examples:
 .build/debug/03 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
 .build/debug/03 workflow preflight --operation wait-browser-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true
 .build/debug/03 workflow preflight --operation wait-browser-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true
+.build/debug/03 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
 .build/debug/03 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
@@ -139,6 +140,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 
 `wait-browser-focus` is a non-mutating workflow operation for bounded keyboard focus checks. It polls the tab's DevTools runtime until `--selector` matches the expected `--focused true|false` state.
 
+`wait-browser-attribute` is a non-mutating workflow operation for bounded DOM attribute checks. It polls one selector until `--attribute NAME` matches `--text TEXT` with `--match exact|contains`, returning only attribute value lengths and SHA-256 digests rather than the attribute value itself.
+
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
 After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
@@ -158,6 +161,8 @@ After a successful `wait-browser-checked` transcript, `workflow resume` suggests
 After a successful `wait-browser-enabled` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the now-enabled selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
 
 After a successful `wait-browser-focus` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the focused element state.
+
+After a successful `wait-browser-attribute` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched element state.
 
 Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
 
