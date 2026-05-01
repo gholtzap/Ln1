@@ -456,6 +456,27 @@ struct ClipboardWriteResult: Codable {
     let message: String
 }
 
+struct ClipboardWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let changedFrom: Int?
+    let expectedHasString: Bool?
+    let expectedStringDigest: String?
+    let current: ClipboardAuditSummary
+    let matched: Bool
+}
+
+struct ClipboardWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let pasteboard: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: ClipboardWaitVerification
+    let message: String
+}
+
 struct BrowserAction: Codable {
     let name: String
     let risk: String
@@ -1831,12 +1852,14 @@ final class ZeroThreeCLI {
             return workflowPreflightWaitBrowserChecked()
         case "wait-browser-enabled":
             return workflowPreflightWaitBrowserEnabled()
+        case "wait-clipboard":
+            return workflowPreflightWaitClipboard()
         case "move-file":
             return try workflowPreflightMoveFile()
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-clipboard, move-file, or wait-file.")
         }
     }
 
@@ -3196,6 +3219,91 @@ final class ZeroThreeCLI {
         )
     }
 
+    private func workflowPreflightWaitClipboard() -> WorkflowPreflight {
+        var prerequisites: [DoctorCheck] = []
+        let changedFrom = option("--changed-from")
+        let hasString = option("--has-string")
+        let stringDigest = option("--string-digest")
+
+        if changedFrom == nil && hasString == nil && stringDigest == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.clipboardExpectation",
+                status: "fail",
+                required: true,
+                message: "No clipboard wait expectation was provided.",
+                remediation: "Pass `--changed-from N`, `--has-string true|false`, or `--string-digest SHA256`."
+            ))
+        }
+        if let changedFrom, Int(changedFrom) == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.clipboardChangeCount",
+                status: "fail",
+                required: true,
+                message: "Clipboard changed-from value must be an integer.",
+                remediation: "Pass the previous clipboard change count with `--changed-from N`."
+            ))
+        }
+        if let hasString {
+            do {
+                _ = try booleanOption(hasString, optionName: "--has-string")
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.clipboardHasString",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--has-string true` or `--has-string false`."
+                ))
+            }
+        }
+        if let stringDigest, !isSHA256HexDigest(stringDigest) {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.clipboardDigest",
+                status: "fail",
+                required: true,
+                message: "Clipboard string digest must be a 64-character SHA-256 hex digest.",
+                remediation: "Pass a digest from `03 clipboard state` with `--string-digest HEX`."
+            ))
+        }
+
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty {
+            var arguments = ["03", "clipboard", "wait"]
+            if let pasteboard = option("--pasteboard") {
+                arguments += ["--pasteboard", pasteboard]
+            }
+            if let changedFrom {
+                arguments += ["--changed-from", changedFrom]
+            }
+            if let hasString {
+                arguments += ["--has-string", hasString]
+            }
+            if let stringDigest {
+                arguments += ["--string-digest", stringDigest.lowercased()]
+            }
+            arguments += [
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-clipboard",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
     private func workflowPreflightResult(
         operation: String,
         risk: String,
@@ -4244,6 +4352,13 @@ final class ZeroThreeCLI {
                 reason: "Inspect clipboard metadata without reading clipboard text."
             ),
             ObservationAction(
+                name: "clipboard.wait",
+                command: "03 clipboard wait --has-string true --timeout-ms 5000",
+                risk: clipboardActionRisk(for: "clipboard.wait"),
+                mutates: false,
+                reason: "Wait for copied text metadata without reading clipboard text."
+            ),
+            ObservationAction(
                 name: "audit.review",
                 command: "03 audit --limit 20",
                 risk: "low",
@@ -4711,6 +4826,8 @@ final class ZeroThreeCLI {
         switch mode {
         case "state":
             try writeJSON(clipboardState(for: pasteboard))
+        case "wait":
+            try writeJSON(clipboardWait(for: pasteboard))
         case "read-text":
             let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 4_096)
             try writeJSON(clipboardText(for: pasteboard, maxCharacters: maxCharacters))
@@ -9859,9 +9976,53 @@ final class ZeroThreeCLI {
             stringDigest: string.map(sha256Digest),
             actions: [
                 ClipboardAction(name: "clipboard.state", risk: "low", mutates: false),
+                ClipboardAction(name: "clipboard.wait", risk: "low", mutates: false),
                 ClipboardAction(name: "clipboard.readText", risk: "medium", mutates: false),
                 ClipboardAction(name: "clipboard.writeText", risk: "medium", mutates: true)
             ]
+        )
+    }
+
+    private func clipboardWait(for pasteboard: NSPasteboard) throws -> ClipboardWaitResult {
+        let changedFrom = try option("--changed-from").map { rawValue in
+            guard let value = Int(rawValue) else {
+                throw CommandError(description: "clipboard changed-from value must be an integer")
+            }
+            return value
+        }
+        let expectedHasString = try option("--has-string").map {
+            try booleanOption($0, optionName: "--has-string")
+        }
+        let rawExpectedStringDigest = option("--string-digest")
+        if let rawExpectedStringDigest, !isSHA256HexDigest(rawExpectedStringDigest) {
+            throw CommandError(description: "clipboard string digest must be a 64-character SHA-256 hex digest")
+        }
+        let expectedStringDigest = rawExpectedStringDigest?.lowercased()
+        guard changedFrom != nil || expectedHasString != nil || expectedStringDigest != nil else {
+            throw CommandError(description: "clipboard wait requires --changed-from, --has-string, or --string-digest")
+        }
+
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = waitForClipboard(
+            pasteboard: pasteboard,
+            changedFrom: changedFrom,
+            expectedHasString: expectedHasString,
+            expectedStringDigest: expectedStringDigest,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+
+        return ClipboardWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            pasteboard: pasteboard.name.rawValue,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: verification.ok
+                ? "Clipboard reached the expected metadata state."
+                : "Timed out waiting for clipboard metadata state."
         )
     }
 
@@ -10070,6 +10231,83 @@ final class ZeroThreeCLI {
 
     private func clipboardTypes(for pasteboard: NSPasteboard) -> [String] {
         (pasteboard.types ?? []).map(\.rawValue).sorted()
+    }
+
+    private func waitForClipboard(
+        pasteboard: NSPasteboard,
+        changedFrom: Int?,
+        expectedHasString: Bool?,
+        expectedStringDigest: String?,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) -> ClipboardWaitVerification {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var current = clipboardAuditSummary(for: pasteboard, string: pasteboard.string(forType: .string))
+
+        while !clipboardSummary(
+            current,
+            matchesChangedFrom: changedFrom,
+            expectedHasString: expectedHasString,
+            expectedStringDigest: expectedStringDigest
+        ), Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            current = clipboardAuditSummary(for: pasteboard, string: pasteboard.string(forType: .string))
+        }
+
+        let matched = clipboardSummary(
+            current,
+            matchesChangedFrom: changedFrom,
+            expectedHasString: expectedHasString,
+            expectedStringDigest: expectedStringDigest
+        )
+        return ClipboardWaitVerification(
+            ok: matched,
+            code: matched ? "clipboard_matched" : "clipboard_timeout",
+            message: matched
+                ? "clipboard metadata matched expected state"
+                : "clipboard metadata did not match expected state before timeout",
+            changedFrom: changedFrom,
+            expectedHasString: expectedHasString,
+            expectedStringDigest: expectedStringDigest,
+            current: current,
+            matched: matched
+        )
+    }
+
+    private func clipboardSummary(
+        _ summary: ClipboardAuditSummary,
+        matchesChangedFrom changedFrom: Int?,
+        expectedHasString: Bool?,
+        expectedStringDigest: String?
+    ) -> Bool {
+        if let changedFrom, summary.changeCount == changedFrom {
+            return false
+        }
+        if let expectedHasString, summary.hasString != expectedHasString {
+            return false
+        }
+        if let expectedStringDigest, summary.stringDigest != expectedStringDigest {
+            return false
+        }
+        return true
+    }
+
+    private func isSHA256HexDigest(_ value: String) -> Bool {
+        value.range(of: #"^[0-9a-fA-F]{64}$"#, options: .regularExpression) != nil
+    }
+
+    private func booleanOption(_ rawValue: String, optionName: String) throws -> Bool {
+        switch rawValue.lowercased() {
+        case "1", "true", "yes", "y":
+            return true
+        case "0", "false", "no", "n":
+            return false
+        default:
+            throw CommandError(description: "\(optionName) must be true or false")
+        }
     }
 
     private func sha256Digest(_ string: String) -> String {
@@ -10410,7 +10648,7 @@ final class ZeroThreeCLI {
 
     private func clipboardActionRisk(for action: String) -> String {
         switch action {
-        case "clipboard.state":
+        case "clipboard.state", "clipboard.wait":
             return "low"
         case "clipboard.readText", "clipboard.writeText":
             return "medium"
@@ -10492,6 +10730,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.rollbackMove", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "clipboard.state", domain: "clipboard", risk: "low", mutates: false),
+            PolicyActionRecord(name: "clipboard.wait", domain: "clipboard", risk: "low", mutates: false),
             PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false),
             PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
@@ -11010,9 +11249,34 @@ final class ZeroThreeCLI {
               "stringDigest": "hex encoded SHA-256 digest",
               "actions": [
                 { "name": "clipboard.state", "risk": "low", "mutates": false },
+                { "name": "clipboard.wait", "risk": "low", "mutates": false },
                 { "name": "clipboard.readText", "risk": "medium", "mutates": false },
                 { "name": "clipboard.writeText", "risk": "medium", "mutates": true }
               ]
+            }
+          },
+          "clipboardWait": {
+            "command": "03 clipboard wait --changed-from 12 --has-string true --timeout-ms 5000",
+            "result": {
+              "pasteboard": "Apple CFPasteboard general",
+              "timeoutMilliseconds": 5000,
+              "intervalMilliseconds": 100,
+              "verification": {
+                "ok": true,
+                "code": "clipboard_matched",
+                "message": "clipboard metadata matched expected state",
+                "changedFrom": 12,
+                "expectedHasString": true,
+                "current": {
+                  "pasteboard": "Apple CFPasteboard general",
+                  "changeCount": 13,
+                  "types": ["public.utf8-plain-text"],
+                  "hasString": true,
+                  "stringLength": 42,
+                  "stringDigest": "hex encoded SHA-256 digest"
+                },
+                "matched": true
+              }
             }
           },
           "clipboardText": {
@@ -11725,11 +11989,11 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--title TITLE] [--checked true|false] [--enabled true|false] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--title TITLE] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -11756,6 +12020,7 @@ final class ZeroThreeCLI {
           03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 files rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
           03 clipboard state [--pasteboard NAME]
+          03 clipboard wait [--changed-from N] [--has-string true|false] [--string-digest HEX] [--timeout-ms N] [--interval-ms N] [--pasteboard NAME]
           03 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           03 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           03 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
@@ -11800,6 +12065,7 @@ final class ZeroThreeCLI {
           - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.
           - `files rollback` restores a successful audited file move after validating current filesystem metadata.
           - `clipboard state` reports pasteboard metadata and text digest without returning clipboard text.
+          - `clipboard wait` waits for pasteboard metadata changes without returning clipboard text.
           - `clipboard read-text` returns bounded text only after medium-risk policy approval and audits metadata without storing text.
           - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text.
           - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.

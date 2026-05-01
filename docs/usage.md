@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-clipboard`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -75,6 +75,7 @@ Examples:
 .build/debug/03 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
 .build/debug/03 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
 .build/debug/03 workflow preflight --operation wait-browser-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true
+.build/debug/03 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
@@ -112,6 +113,8 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct.
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline.
+
+`wait-clipboard` is a non-mutating workflow operation for bounded clipboard metadata waiting. It can wait for the pasteboard change count to differ from `--changed-from N`, for plain-text availability with `--has-string true|false`, or for a specific text digest with `--string-digest HEX`, without returning clipboard text.
 
 `wait-browser-url` is a non-mutating workflow operation for bounded browser navigation verification after clicks, submissions, or external navigation. It polls structured tab metadata until the URL matches `--expect-url` with `--match exact|prefix|contains`, then returns typed verification evidence.
 
@@ -450,6 +453,14 @@ Inspect clipboard metadata without returning copied text:
 ```
 
 `clipboard.state` is a low-risk read action. It returns the pasteboard name, change count, available pasteboard types, whether plain text is available, the text length, and a SHA-256 digest of the text. It intentionally does not return clipboard contents.
+
+Wait for clipboard metadata without returning copied text:
+
+```sh
+.build/debug/03 clipboard wait --changed-from 42 --has-string true --timeout-ms 5000
+```
+
+`clipboard.wait` is a low-risk read action. It polls pasteboard metadata until the change count differs from `--changed-from`, the plain-text availability matches `--has-string`, and/or the text digest matches `--string-digest`; it returns only metadata, lengths, and digests.
 
 Read bounded plain text from the clipboard only after explicitly allowing medium-risk clipboard access:
 

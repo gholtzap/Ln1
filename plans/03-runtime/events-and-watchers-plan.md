@@ -24,6 +24,7 @@ The system should observe relevant changes from apps, the desktop, the filesyste
 
 - Bounded filesystem wait: `03 files wait` polls a path for expected existence or disappearance with a timeout and returns structured evidence for verification loops.
 - Bounded filesystem watch: `03 files watch` polls bounded file metadata under a file or directory and returns normalized created, deleted, or modified events with previous/current records.
+- Bounded clipboard wait: `03 clipboard wait` polls pasteboard metadata for change count, text availability, or text digest changes without exposing clipboard text.
 
 ## Relationship To The Product
 

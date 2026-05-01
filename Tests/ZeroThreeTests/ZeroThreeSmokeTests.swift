@@ -36,6 +36,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["clipboard.state"]?["domain"] as? String, "clipboard")
         XCTAssertEqual(actionByName["clipboard.state"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["clipboard.state"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["clipboard.wait"]?["domain"] as? String, "clipboard")
+        XCTAssertEqual(actionByName["clipboard.wait"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["clipboard.wait"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["clipboard.readText"]?["domain"] as? String, "clipboard")
         XCTAssertEqual(actionByName["clipboard.readText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["clipboard.readText"]?["mutates"] as? Bool, false)
@@ -183,6 +186,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.wait" })
     }
 
     func testDoctorReturnsReadinessChecksWithRemediation() throws {
@@ -935,6 +939,56 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(firstTab["title"] as? String, "Workflow Page")
         XCTAssertTrue((execution["stdout"] as? String)?.contains("\"tabs\"") == true)
         XCTAssertEqual(execution["stderr"] as? String, "")
+    }
+
+    func testWorkflowRunExecutesNonMutatingClipboardWaitAndCapturesJSON() throws {
+        let pasteboardName = "03-workflow-clipboard-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        pasteboard.clearContents()
+        pasteboard.setString("workflow old", forType: .string)
+        let changedFrom = pasteboard.changeCount
+        pasteboard.clearContents()
+        pasteboard.setString("workflow new", forType: .string)
+
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "wait-clipboard",
+            "--pasteboard", pasteboardName,
+            "--changed-from", String(changedFrom),
+            "--has-string", "true",
+            "--timeout-ms", "0",
+            "--interval-ms", "50",
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-clipboard")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "03", "clipboard", "wait",
+            "--pasteboard", pasteboardName,
+            "--changed-from", String(changedFrom),
+            "--has-string", "true",
+            "--timeout-ms", "0",
+            "--interval-ms", "50"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["pasteboard"] as? String, pasteboardName)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["changedFrom"] as? Int, changedFrom)
+        XCTAssertNil(outputJSON["text"])
     }
 
     func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
@@ -5349,8 +5403,69 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["stringDigest"] as? String, "65b2b576750477c2424fc19794e6c3c5ac6821e29e8464294aed6aa8485304c2")
         XCTAssertNil(object["text"])
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.state" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.wait" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.readText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.writeText" })
+    }
+
+    func testClipboardWaitReturnsMetadataWithoutTextContents() throws {
+        let pasteboardName = "03-test-wait-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        pasteboard.clearContents()
+        pasteboard.setString("old clipboard", forType: .string)
+
+        let before = try runZeroThree([
+            "clipboard",
+            "state",
+            "--pasteboard", pasteboardName
+        ])
+        XCTAssertEqual(before.status, 0, before.stderr)
+        let beforeObject = try decodeJSONObject(before.stdout)
+        let beforeChangeCount = try XCTUnwrap(beforeObject["changeCount"] as? Int)
+
+        let write = try runZeroThree([
+            "clipboard",
+            "write-text",
+            "--pasteboard", pasteboardName,
+            "--text", "new clipboard",
+            "--allow-risk", "medium",
+            "--reason", "prepare clipboard wait test"
+        ])
+        XCTAssertEqual(write.status, 0, write.stderr)
+        let writeObject = try decodeJSONObject(write.stdout)
+        let writtenDigest = try XCTUnwrap(writeObject["writtenDigest"] as? String)
+
+        let wait = try runZeroThree([
+            "clipboard",
+            "wait",
+            "--pasteboard", pasteboardName,
+            "--changed-from", String(beforeChangeCount),
+            "--has-string", "true",
+            "--string-digest", writtenDigest.uppercased(),
+            "--timeout-ms", "0",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(wait.status, 0, wait.stderr)
+        let object = try decodeJSONObject(wait.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+        let current = try XCTUnwrap(verification["current"] as? [String: Any])
+
+        XCTAssertEqual(object["pasteboard"] as? String, pasteboardName)
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "clipboard_matched")
+        XCTAssertEqual(verification["changedFrom"] as? Int, beforeChangeCount)
+        XCTAssertEqual(verification["expectedHasString"] as? Bool, true)
+        XCTAssertEqual(verification["expectedStringDigest"] as? String, writtenDigest)
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertEqual(current["hasString"] as? Bool, true)
+        XCTAssertEqual(current["stringLength"] as? Int, 13)
+        XCTAssertEqual(current["stringDigest"] as? String, writtenDigest)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(verification["text"])
+        XCTAssertNil(current["text"])
     }
 
     func testClipboardReadTextRequiresMediumRiskAndAuditsRead() throws {
