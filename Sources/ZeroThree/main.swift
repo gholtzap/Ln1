@@ -132,6 +132,23 @@ struct WorkflowNextPlan: Codable {
     let message: String
 }
 
+struct WorkflowRunPlan: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let mode: String
+    let dryRun: Bool
+    let ready: Bool
+    let wouldExecute: Bool
+    let executed: Bool
+    let risk: String
+    let mutates: Bool
+    let blockers: [String]
+    let command: WorkflowCommand?
+    let preflight: WorkflowPreflight
+    let message: String
+}
+
 struct DesktopWindowRecord: Codable {
     let id: String
     let stableIdentity: StableIdentity
@@ -1132,6 +1149,8 @@ final class ZeroThreeCLI {
             try workflowPreflight()
         case "next":
             try workflowNext()
+        case "run":
+            try workflowRun()
         default:
             throw CommandError(description: "unknown workflow mode '\(mode)'")
         }
@@ -1170,6 +1189,44 @@ final class ZeroThreeCLI {
             message: command == nil
                 ? "Workflow is blocked; run the remediation command from preflight before executing."
                 : "Workflow is ready; execute the argv array directly or review the display command."
+        ))
+    }
+
+    private func workflowRun() throws {
+        let dryRun = option("--dry-run").map(parseBool) ?? true
+        guard dryRun else {
+            throw CommandError(description: "workflow run currently supports dry-run only. Pass `--dry-run true` to inspect the run decision without executing.")
+        }
+
+        let preflight = try workflowPreflightForOperation()
+        let command: WorkflowCommand?
+        if preflight.canProceed, let argv = preflight.nextArguments {
+            command = WorkflowCommand(
+                display: workflowDisplayCommand(argv),
+                argv: argv,
+                risk: preflight.risk,
+                mutates: preflight.mutates,
+                requiresReason: preflight.mutates
+            )
+        } else {
+            command = nil
+        }
+
+        try writeJSON(WorkflowRunPlan(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: preflight.operation,
+            mode: "dry-run",
+            dryRun: true,
+            ready: command != nil,
+            wouldExecute: command != nil,
+            executed: false,
+            risk: preflight.risk,
+            mutates: preflight.mutates,
+            blockers: preflight.blockers,
+            command: command,
+            preflight: preflight,
+            message: workflowRunMessage(command: command)
         ))
     }
 
@@ -1439,6 +1496,16 @@ final class ZeroThreeCLI {
 
     private func workflowRemediationCommand(for prerequisites: [DoctorCheck]) -> String? {
         prerequisites.first { $0.required && $0.status != "pass" }?.remediation
+    }
+
+    private func workflowRunMessage(command: WorkflowCommand?) -> String {
+        guard let command else {
+            return "Workflow run is blocked; resolve required prerequisites before execution."
+        }
+        if command.mutates {
+            return "Dry run only. This workflow is ready but mutating; review the argv array and provide an explicit reason before executing it outside dry-run mode."
+        }
+        return "Dry run only. This non-mutating workflow is ready to execute when execution mode is added."
     }
 
     private func workflowDisplayCommand(_ arguments: [String]) -> String {
@@ -5352,6 +5419,28 @@ final class ZeroThreeCLI {
               }
             }
           },
+          "workflowRun": {
+            "command": "03 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run true",
+            "result": {
+              "operation": "move-file",
+              "mode": "dry-run",
+              "dryRun": true,
+              "ready": true,
+              "wouldExecute": true,
+              "executed": false,
+              "risk": "medium",
+              "mutates": true,
+              "blockers": [],
+              "command": {
+                "display": "03 files move --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --reason 'Describe intent'",
+                "argv": ["03", "files", "move", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/b.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
+                "risk": "medium",
+                "mutates": true,
+                "requiresReason": true
+              },
+              "message": "Dry run only. This workflow is ready but mutating; review the argv array and provide an explicit reason before executing it outside dry-run mode."
+            }
+          },
           "observe": {
             "command": "03 observe --app-limit 20 --window-limit 20",
             "result": {
@@ -5921,6 +6010,7 @@ final class ZeroThreeCLI {
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 workflow next --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|move-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]

@@ -25,6 +25,7 @@ The system should support task execution as a sequence of observations and actio
 - Initial observation checkpoint: `03 observe` gives the assistant a structured starting snapshot with blockers and suggested next typed actions before choosing an observe-plan-act path.
 - Workflow preflight: `03 workflow preflight --operation ...` maps intended tasks to risk, mutation status, prerequisites, blockers, and the safest next command before execution.
 - Structured next command: `03 workflow next --operation ...` embeds preflight and returns an executable `argv` array for the next safe command so an automation loop does not need to parse shell text.
+- Dry-run workflow runner: `03 workflow run --operation ... --dry-run true` reports whether the next workflow step would execute and includes the exact command plus preflight evidence without performing the action.
 
 ## Relationship To The Product
 

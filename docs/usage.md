@@ -72,6 +72,14 @@ When an automation loop needs an executable plan, use `workflow next` with the s
 
 `workflow next` embeds the full preflight result and, when unblocked, returns a structured command with both a display string and an `argv` array. Prefer the `argv` array when launching a follow-up command so paths, selectors, and reason text do not need shell parsing.
 
+For a bounded run decision that still does not execute or mutate anything, use dry-run mode:
+
+```sh
+.build/debug/03 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run true
+```
+
+`workflow run --dry-run true` returns whether the workflow is ready, whether it would execute, the command that would be used, and the embedded preflight evidence. This mode is intentionally non-executing.
+
 ## Inspect Running Apps
 
 ```sh

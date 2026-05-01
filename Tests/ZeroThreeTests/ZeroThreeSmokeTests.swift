@@ -300,6 +300,69 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03 workflow run \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source file.txt")
+        let destination = directory.appendingPathComponent("destination file.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "move-file",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--dry-run", "true"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "move-file")
+        XCTAssertEqual(object["mode"] as? String, "dry-run")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["wouldExecute"] as? Bool, true)
+        XCTAssertEqual(object["executed"] as? Bool, false)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "03", "files", "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+        XCTAssertTrue((object["message"] as? String)?.contains("Dry run only") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testWorkflowRunRejectsExecutionModeUntilImplemented() throws {
+        let result = try runZeroThree([
+            "workflow",
+            "run",
+            "--operation", "move-file",
+            "--path", "/tmp/source.txt",
+            "--to", "/tmp/destination.txt",
+            "--allow-risk", "medium",
+            "--dry-run", "false"
+        ])
+
+        XCTAssertNotEqual(result.status, 0)
+        XCTAssertTrue(result.stderr.contains("workflow run currently supports dry-run only"))
+    }
+
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
         let result = try runZeroThree(["schema"])
 
