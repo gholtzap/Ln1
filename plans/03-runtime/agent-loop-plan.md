@@ -32,6 +32,7 @@ The system should support task execution as a sequence of observations and actio
 - Workflow transcript: `03 workflow run ...` appends a JSONL record, and `03 workflow log --allow-risk medium` reads recent runs for resume/debug context.
 - Workflow resume: `03 workflow resume --allow-risk medium` summarizes the latest transcript status and returns a conservative next command, including browser tab-list-to-DOM-inspection and DOM-selector-to-browser-action follow-ups.
 - Browser action preflight: `03 workflow preflight --operation fill-browser|click-browser|navigate-browser ...` validates DevTools, audit-log readiness, tab IDs, selectors, text, URLs, and match modes before returning typed browser action argv arrays.
+- Verified click preflight: `03 workflow preflight --operation click-browser --expect-url ...` carries post-click URL expectations into the typed browser click command.
 - Browser URL wait workflow: `03 workflow run --operation wait-browser-url ... --dry-run false` waits for a tab URL to match expected exact, prefix, or contains criteria and returns typed verification evidence.
 - Browser URL wait resume: after a successful `wait-browser-url` transcript, `03 workflow resume --operation wait-browser-url` suggests a dry-run DOM inspection for the arrived tab.
 

@@ -27,6 +27,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - DevTools DOM snapshot: `03 browser dom` reads bounded structured page state through a tab's Chrome DevTools WebSocket after medium-risk policy approval, returning DOM elements, actionable CSS selectors, inferred roles, safe attributes, links, and form metadata while auditing only element count plus digest.
 - DevTools form filling: `03 browser fill` writes one field by CSS selector through a tab's Chrome DevTools WebSocket after medium-risk policy approval, dispatches input/change events, verifies the resulting value length, and audits only selector plus text length/digest.
 - DevTools element clicking: `03 browser click` clicks one DOM element by CSS selector through a tab's Chrome DevTools WebSocket after medium-risk policy approval, rejecting missing or disabled elements and auditing only selector plus target metadata.
+- Verified DevTools clicking: `03 browser click --expect-url ...` waits for an expected post-click tab URL and returns structured URL verification evidence with the click result.
 - DevTools navigation: `03 browser navigate` sends a typed tab navigation through Chrome DevTools after medium-risk policy approval, verifies the resulting tab URL from structured DevTools target metadata, and records requested/current URLs plus verification in the audit log.
 - DevTools URL waiting: `03 browser wait-url` waits for a tab URL to match expected exact, prefix, or contains criteria using structured DevTools tab metadata.
 

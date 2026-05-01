@@ -338,6 +338,36 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
+        let clickWithExpectedURL = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "click-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--expect-url", "https://example.com/results",
+            "--match", "prefix",
+            "--timeout-ms", "750",
+            "--interval-ms", "50",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(clickWithExpectedURL.status, 0, clickWithExpectedURL.stderr)
+        let clickWithExpectedURLObject = try decodeJSONObject(clickWithExpectedURL.stdout)
+        XCTAssertEqual(clickWithExpectedURLObject["operation"] as? String, "click-browser")
+        XCTAssertEqual(clickWithExpectedURLObject["nextArguments"] as? [String], [
+            "03", "browser", "click",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--expect-url", "https://example.com/results",
+            "--match", "prefix",
+            "--timeout-ms", "750",
+            "--interval-ms", "50",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
         let navigate = try runZeroThree([
             "workflow",
             "preflight",
@@ -1771,6 +1801,101 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "element_clicked")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "clicked")
+    }
+
+    func testBrowserClickCanVerifyExpectedURLAfterClick() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-click-url-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let clickPayload: [String: Any] = [
+            "ok": true,
+            "code": "clicked",
+            "message": "The matched element received a click.",
+            "selector": "a.next",
+            "tagName": "a",
+            "disabled": false,
+            "href": "https://example.com/done",
+            "matched": true
+        ]
+        let clickData = try JSONSerialization.data(withJSONObject: clickPayload, options: [.sortedKeys])
+        let clickJSONString = String(decoding: clickData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": clickJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Done Page",
+            "url": "https://example.com/done",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "click",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "a.next",
+            "--expect-url", "https://example.com/done",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "follow link"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+        let urlVerification = try XCTUnwrap(object["urlVerification"] as? [String: Any])
+
+        XCTAssertEqual(object["expectedURL"] as? String, "https://example.com/done")
+        XCTAssertEqual(object["match"] as? String, "exact")
+        XCTAssertEqual(object["targetHref"] as? String, "https://example.com/done")
+        XCTAssertEqual(verification["code"] as? String, "element_clicked")
+        XCTAssertEqual(urlVerification["ok"] as? Bool, true)
+        XCTAssertEqual(urlVerification["code"] as? String, "url_matched")
+        XCTAssertEqual(urlVerification["currentURL"] as? String, "https://example.com/done")
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.click",
+            "--code", "clicked",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+
+        XCTAssertEqual(browserTab["navigationURL"] as? String, "https://example.com/done")
+        XCTAssertEqual(browserTab["currentURL"] as? String, "https://example.com/done")
+        XCTAssertEqual(browserTab["urlMatched"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "url_matched")
     }
 
     func testBrowserNavigateRequiresPolicyVerifiesURLAndAudits() throws {

@@ -629,6 +629,9 @@ struct BrowserClickResult: Codable {
     let targetTagName: String?
     let targetDisabled: Bool?
     let targetHref: String?
+    let expectedURL: String?
+    let match: String?
+    let urlVerification: BrowserNavigationVerification?
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -1740,6 +1743,34 @@ final class ZeroThreeCLI {
                     ))
                 }
             }
+        } else if kind == "click" {
+            normalizedURL = nil
+            if let expectedURL {
+                do {
+                    _ = try validatedBrowserExpectedURL(expectedURL)
+                } catch {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserExpectedURL",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Pass a non-empty URL or text fragment with `--expect-url VALUE`."
+                    ))
+                }
+            }
+            if let match {
+                do {
+                    _ = try browserURLMatchMode(match)
+                } catch {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserURLMatch",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Use `--match exact`, `--match prefix`, or `--match contains`."
+                    ))
+                }
+            }
         } else {
             normalizedURL = nil
         }
@@ -1769,6 +1800,15 @@ final class ZeroThreeCLI {
             arguments += ["--id", id, "--selector", selector]
             if kind == "fill", let text {
                 arguments += ["--text", text]
+            }
+            if kind == "click", let expectedURL {
+                arguments += ["--expect-url", expectedURL, "--match", match ?? "exact"]
+                if let timeout = option("--timeout-ms") {
+                    arguments += ["--timeout-ms", timeout]
+                }
+                if let interval = option("--interval-ms") {
+                    arguments += ["--interval-ms", interval]
+                }
             }
             arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
             nextArguments = arguments
@@ -4858,6 +4898,11 @@ final class ZeroThreeCLI {
         let auditID = UUID().uuidString
         let auditURL = try auditLogURL()
         let endpoint = try browserEndpoint()
+        let expectedURL = option("--expect-url")
+        let match = try browserURLMatchMode(option("--match") ?? "exact")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        var urlVerification: BrowserNavigationVerification?
         var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
             id: id,
             type: "unknown",
@@ -4867,6 +4912,9 @@ final class ZeroThreeCLI {
             textDigest: nil,
             domNodeCount: nil,
             domDigest: nil,
+            navigationURL: expectedURL,
+            currentURL: nil,
+            urlMatched: nil,
             clickSelector: selector
         )
         var auditWritten = false
@@ -4896,6 +4944,7 @@ final class ZeroThreeCLI {
                 try writeAudit(ok: false, code: "policy_denied", message: message)
                 throw CommandError(description: message)
             }
+            let normalizedExpectedURL = try expectedURL.map(validatedBrowserExpectedURL)
 
             let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
             guard let tab = tabs.first(where: { $0.id == id }) else {
@@ -4913,6 +4962,9 @@ final class ZeroThreeCLI {
                 textDigest: nil,
                 domNodeCount: nil,
                 domDigest: nil,
+                navigationURL: normalizedExpectedURL,
+                currentURL: tab.url,
+                urlMatched: nil,
                 clickSelector: selector
             )
 
@@ -4933,6 +4985,9 @@ final class ZeroThreeCLI {
                 textDigest: nil,
                 domNodeCount: nil,
                 domDigest: nil,
+                navigationURL: normalizedExpectedURL,
+                currentURL: tab.url,
+                urlMatched: nil,
                 clickSelector: selector,
                 clickTagName: payload.tagName
             )
@@ -4949,8 +5004,50 @@ final class ZeroThreeCLI {
                 throw CommandError(description: payload.message)
             }
 
-            let message = "Clicked browser element matching selector '\(selector)' in tab \(id)."
-            try writeAudit(ok: true, code: "clicked", message: message, verification: verification)
+            if let normalizedExpectedURL {
+                urlVerification = try waitForBrowserURL(
+                    tabID: id,
+                    requestedURL: normalizedExpectedURL,
+                    expectedURL: normalizedExpectedURL,
+                    match: match,
+                    endpoint: endpoint,
+                    timeoutMilliseconds: timeoutMilliseconds,
+                    intervalMilliseconds: intervalMilliseconds
+                )
+                tabSummary = BrowserAuditSummary(
+                    id: tab.id,
+                    type: tab.type,
+                    title: tab.title,
+                    url: tab.url,
+                    textLength: nil,
+                    textDigest: nil,
+                    domNodeCount: nil,
+                    domDigest: nil,
+                    navigationURL: normalizedExpectedURL,
+                    currentURL: urlVerification?.currentURL,
+                    urlMatched: urlVerification?.matched,
+                    clickSelector: selector,
+                    clickTagName: payload.tagName
+                )
+                guard urlVerification?.ok == true else {
+                    let message = urlVerification?.message ?? "browser click URL verification failed"
+                    let auditVerification = FileOperationVerification(
+                        ok: false,
+                        code: urlVerification?.code ?? "url_verification_failed",
+                        message: message
+                    )
+                    try writeAudit(ok: false, code: auditVerification.code, message: message, verification: auditVerification)
+                    throw CommandError(description: message)
+                }
+            }
+
+            let message = normalizedExpectedURL == nil
+                ? "Clicked browser element matching selector '\(selector)' in tab \(id)."
+                : "Clicked browser element matching selector '\(selector)' in tab \(id) and verified the resulting URL."
+            let auditVerification = urlVerification.map {
+                FileOperationVerification(ok: $0.ok, code: $0.code, message: $0.message)
+            } ?? verification
+            try writeAudit(ok: true, code: "clicked", message: message, verification: auditVerification)
 
             return BrowserClickResult(
                 generatedAt: ISO8601DateFormatter().string(from: Date()),
@@ -4964,6 +5061,9 @@ final class ZeroThreeCLI {
                 targetTagName: payload.tagName,
                 targetDisabled: payload.disabled,
                 targetHref: payload.href,
+                expectedURL: normalizedExpectedURL,
+                match: normalizedExpectedURL == nil ? nil : match,
+                urlVerification: urlVerification,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -7260,7 +7360,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserClick": {
-            "command": "03 browser click --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --allow-risk medium",
+            "command": "03 browser click --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --expect-url https://example.com/next --match exact --allow-risk medium",
             "result": {
               "action": "browser.clickElement",
               "risk": "medium",
@@ -7273,6 +7373,15 @@ final class ZeroThreeCLI {
               "targetTagName": "button",
               "targetDisabled": false,
               "targetHref": null,
+              "expectedURL": "https://example.com/next",
+              "match": "exact",
+              "urlVerification": {
+                "ok": true,
+                "code": "url_matched",
+                "message": "browser tab URL matched expected exact value",
+                "currentURL": "https://example.com/next",
+                "matched": true
+              },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -7538,7 +7647,7 @@ final class ZeroThreeCLI {
           03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
           03 schema
@@ -7572,7 +7681,7 @@ final class ZeroThreeCLI {
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
-          - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
+          - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
           - Workflow fill-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.

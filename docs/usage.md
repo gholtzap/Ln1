@@ -465,10 +465,10 @@ Fill one browser form field through the tab's DevTools WebSocket:
 Click one browser element through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser click --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --allow-risk medium --reason "Submit search"
+.build/debug/03 browser click --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --expect-url https://example.com/results --match prefix --allow-risk medium --reason "Submit search"
 ```
 
-`browser.clickElement` is a medium-risk mutating action because it changes page state and may trigger navigation, form submission, or web-app side effects. The command targets one CSS selector, refuses missing or disabled elements, scrolls the element into view, dispatches a DOM click, and records selector/target metadata plus verification in the audit log.
+`browser.clickElement` is a medium-risk mutating action because it changes page state and may trigger navigation, form submission, or web-app side effects. The command targets one CSS selector, refuses missing or disabled elements, scrolls the element into view, dispatches a DOM click, and records selector/target metadata plus verification in the audit log. When `--expect-url` is supplied, the command also waits for the tab URL to match `--match exact|prefix|contains` and returns URL verification evidence.
 
 Navigate one browser tab through DevTools and verify the resulting URL from structured tab metadata:
 
