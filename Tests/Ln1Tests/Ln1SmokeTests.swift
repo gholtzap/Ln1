@@ -355,6 +355,39 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightChecksumFileValidatesBoundedRegularFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-checksum-preflight-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "checksum-file",
+            "--path", file.path,
+            "--algorithm", "SHA256",
+            "--max-file-bytes", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "checksum-file")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "checksum",
+            "--path", file.path,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "10"
+        ])
+    }
+
     func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-browser-action-\(UUID().uuidString)")
@@ -1215,6 +1248,41 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(preflight["canProceed"] as? Bool, true)
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutChecksummingFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next checksum \(UUID().uuidString)")
+        let file = directory.appendingPathComponent("source file.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "checksum".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "checksum-file",
+            "--path", file.path,
+            "--max-file-bytes", "20"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "checksum-file")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "checksum",
+            "--path", file.path,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "20"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, false)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1423,6 +1491,49 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["eventCount"] as? Int, 1)
         XCTAssertEqual(event["type"] as? String, "created")
         XCTAssertTrue((event["path"] as? String)?.hasSuffix("/created.txt") == true)
+    }
+
+    func testWorkflowRunExecutesNonMutatingFileChecksumAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-checksum-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "checksum-file",
+            "--path", file.path,
+            "--max-file-bytes", "10",
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let fileObject = try XCTUnwrap(outputJSON["file"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "checksum-file")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "checksum",
+            "--path", file.path,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "10"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(fileObject["path"] as? String, file.path)
+        XCTAssertEqual(outputJSON["digest"] as? String, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        XCTAssertNil(outputJSON["contents"])
     }
 
     func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
@@ -2174,6 +2285,69 @@ final class Ln1SmokeTests: XCTestCase {
             "--path", createdURL.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("file watch observed") == true)
+    }
+
+    func testWorkflowResumeSuggestsDigestWaitAfterChecksumFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-checksum-file-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let digest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        let transcript: [String: Any] = [
+            "transcriptID": "checksum-file-transcript",
+            "operation": "checksum-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "checksum",
+                    "--path", fileURL.path,
+                    "--algorithm", "sha256",
+                    "--max-file-bytes", "10"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "file": [
+                        "path": fileURL.path,
+                        "kind": "regularFile"
+                    ],
+                    "algorithm": "sha256",
+                    "digest": digest,
+                    "maxFileBytes": 10
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "checksum-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "checksum-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "wait-file",
+            "--path", fileURL.path,
+            "--exists", "true",
+            "--digest", digest,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "10",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file checksum completed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
