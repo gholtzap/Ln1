@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `duplicate-file`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `create-directory`, `duplicate-file`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -81,6 +81,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-browser-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true
 .build/debug/Ln1 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
 .build/debug/Ln1 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
+.build/debug/Ln1 workflow preflight --operation create-directory --path ~/Desktop/Archive --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --size-bytes 1048576 --digest SHA256_HEX --wait-timeout-ms 5000
@@ -89,7 +90,7 @@ Examples:
 When an automation loop needs an executable plan, use `workflow next` with the same operation and options:
 
 ```sh
-.build/debug/Ln1 workflow next --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium
+.build/debug/Ln1 workflow next --operation create-directory --path ~/Desktop/Archive --allow-risk medium
 ```
 
 `workflow next` embeds the full preflight result and, when unblocked, returns a structured command with both a display string and an `argv` array. Prefer the `argv` array when launching a follow-up command so paths, selectors, and reason text do not need shell parsing.
@@ -97,7 +98,7 @@ When an automation loop needs an executable plan, use `workflow next` with the s
 For a bounded run decision that still does not execute or mutate anything, use dry-run mode:
 
 ```sh
-.build/debug/Ln1 workflow run --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium --dry-run true
+.build/debug/Ln1 workflow run --operation create-directory --path ~/Desktop/Archive --allow-risk medium --dry-run true
 ```
 
 `workflow run --dry-run true` returns whether the workflow is ready, whether it would execute, the command that would be used, and the embedded preflight evidence. This mode is intentionally non-executing. Browser fill/click/navigation workflows are mutating, so dry-run is the safe way to validate tab IDs, selectors, URLs, policy, and audit-log readiness before running the returned browser command directly.
@@ -113,10 +114,10 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 Mutating workflow execution is opt-in and still goes through the underlying typed command policy and audit log:
 
 ```sh
-.build/debug/Ln1 workflow run --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium --dry-run false --execute-mutating true --reason "Keep original before editing"
+.build/debug/Ln1 workflow run --operation create-directory --path ~/Desktop/Archive --allow-risk medium --dry-run false --execute-mutating true --reason "Prepare archive folder"
 ```
 
-Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. After a successful verified `duplicate-file` or `move-file` workflow, `workflow resume` suggests a destination `files stat` check so the next step is grounded in current metadata.
+Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. After a successful verified `create-directory`, `duplicate-file`, or `move-file` workflow, `workflow resume` suggests a destination `files stat` check so the next step is grounded in current metadata.
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline. Pass `--size-bytes N` and/or `--digest SHA256` when the file must exist with specific metadata before the workflow should continue.
 

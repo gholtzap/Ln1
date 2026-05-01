@@ -1082,6 +1082,44 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutCreatingDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next create directory \(UUID().uuidString)")
+        let destination = directory.appendingPathComponent("archive")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "create-directory",
+            "--path", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "create-directory")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "mkdir",
+            "--path", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1802,6 +1840,65 @@ final class Ln1SmokeTests: XCTestCase {
             "--path", destinationURL.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("duplicate completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsDirectoryStatAfterCreateDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-create-directory-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let createdURL = directory.appendingPathComponent("archive")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "create-directory-transcript",
+            "operation": "create-directory",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "mkdir",
+                    "--path", createdURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "Prepare archive folder"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "filesystem.createDirectory",
+                    "directory": [
+                        "path": createdURL.path,
+                        "kind": "directory"
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "directory_exists",
+                        "message": "directory exists at requested path"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "create-directory",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "create-directory")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", createdURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("directory creation completed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
@@ -2896,6 +2993,59 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("mutating command") == true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesMutatingCreateDirectoryWithExplicitApprovalAndReason() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow run execute create directory \(UUID().uuidString)")
+        let created = directory.appendingPathComponent("archive")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "create-directory",
+            "--path", created.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false",
+            "--execute-mutating", "true",
+            "--reason", "Verify approved workflow directory creation"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "create-directory")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "mkdir",
+            "--path", created.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Verify approved workflow directory creation"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["action"] as? String, "filesystem.createDirectory")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertTrue((object["message"] as? String)?.contains("mutating command") == true)
+
+        var isDirectory = ObjCBool(false)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: created.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
         XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
