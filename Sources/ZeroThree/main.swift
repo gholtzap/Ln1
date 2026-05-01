@@ -59,6 +59,28 @@ struct AppSummary: Codable {
     let active: Bool
 }
 
+struct ObservationAction: Codable {
+    let name: String
+    let command: String
+    let risk: String
+    let mutates: Bool
+    let reason: String
+}
+
+struct ObservationSnapshot: Codable {
+    let generatedAt: String
+    let platform: String
+    let accessibility: TrustRecord
+    let activeApp: AppSummary?
+    let appLimit: Int
+    let appCount: Int
+    let appsTruncated: Bool
+    let apps: [AppSummary]
+    let desktop: DesktopWindowsState
+    let blockers: [String]
+    let suggestedActions: [ObservationAction]
+}
+
 struct DesktopWindowRecord: Codable {
     let id: String
     let stableIdentity: StableIdentity
@@ -759,6 +781,8 @@ final class ZeroThreeCLI {
             try trust()
         case "policy":
             try policy()
+        case "observe":
+            try observe()
         case "apps":
             try apps()
         case "desktop":
@@ -809,19 +833,7 @@ final class ZeroThreeCLI {
         ))
     }
 
-    private func policy() throws {
-        try writeJSON(PolicySnapshot(
-            generatedAt: ISO8601DateFormatter().string(from: Date()),
-            platform: "macOS",
-            defaultAllowedRisk: "low",
-            riskLevels: ["low", "medium", "high", "unknown"],
-            actions: knownPolicyActions()
-        ))
-    }
-
-    private func apps() throws {
-        let includeAll = flag("--all")
-        let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    private func appSummaries(includeAll: Bool, activePid: pid_t?) -> [AppSummary] {
         var records = NSWorkspace.shared.runningApplications
             .filter { !$0.isTerminated && (includeAll || $0.activationPolicy == .regular) }
             .map {
@@ -838,7 +850,142 @@ final class ZeroThreeCLI {
             records = windowOwnerSummaries(activePid: activePid)
         }
 
-        try writeJSON(records)
+        return records
+    }
+
+    private func policy() throws {
+        try writeJSON(PolicySnapshot(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            defaultAllowedRisk: "low",
+            riskLevels: ["low", "medium", "high", "unknown"],
+            actions: knownPolicyActions()
+        ))
+    }
+
+    private func observe() throws {
+        let appLimit = max(0, option("--app-limit").flatMap(Int.init) ?? 20)
+        let windowLimit = max(0, option("--window-limit").flatMap(Int.init) ?? 20)
+        let includeAllApps = flag("--all")
+        let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let allApps = appSummaries(includeAll: includeAllApps, activePid: activePid)
+        let limitedApps = Array(allApps.prefix(appLimit))
+        let trusted = AXIsProcessTrusted()
+        let accessibility = TrustRecord(
+            trusted: trusted,
+            message: trusted
+                ? "Accessibility access is enabled."
+                : "Grant Accessibility access to the terminal app running 03 before using state or perform."
+        )
+        let desktop = try desktopWindows(limitOverride: windowLimit)
+        let blockers = observationBlockers(accessibility: accessibility, desktop: desktop)
+
+        try writeJSON(ObservationSnapshot(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            accessibility: accessibility,
+            activeApp: allApps.first(where: \.active),
+            appLimit: appLimit,
+            appCount: limitedApps.count,
+            appsTruncated: allApps.count > limitedApps.count,
+            apps: limitedApps,
+            desktop: desktop,
+            blockers: blockers,
+            suggestedActions: observationSuggestedActions(
+                accessibilityTrusted: trusted,
+                activePid: activePid,
+                windowLimit: windowLimit
+            )
+        ))
+    }
+
+    private func observationBlockers(
+        accessibility: TrustRecord,
+        desktop: DesktopWindowsState
+    ) -> [String] {
+        var blockers: [String] = []
+        if !accessibility.trusted {
+            blockers.append("accessibility_not_trusted")
+        }
+        if !desktop.available {
+            blockers.append("desktop_window_metadata_unavailable")
+        }
+        if desktop.windows.isEmpty {
+            blockers.append("no_visible_windows_reported")
+        }
+        return blockers
+    }
+
+    private func observationSuggestedActions(
+        accessibilityTrusted: Bool,
+        activePid: pid_t?,
+        windowLimit: Int
+    ) -> [ObservationAction] {
+        var actions = [
+            ObservationAction(
+                name: "desktop.listWindows",
+                command: "03 desktop windows --limit \(windowLimit)",
+                risk: desktopActionRisk(for: "desktop.listWindows"),
+                mutates: false,
+                reason: "Refresh visible window metadata and stable desktop identities."
+            ),
+            ObservationAction(
+                name: "apps.list",
+                command: "03 apps",
+                risk: "low",
+                mutates: false,
+                reason: "List running GUI apps and identify the active process."
+            ),
+            ObservationAction(
+                name: "clipboard.state",
+                command: "03 clipboard state",
+                risk: clipboardActionRisk(for: "clipboard.state"),
+                mutates: false,
+                reason: "Inspect clipboard metadata without reading clipboard text."
+            ),
+            ObservationAction(
+                name: "audit.review",
+                command: "03 audit --limit 20",
+                risk: "low",
+                mutates: false,
+                reason: "Review recent audited actions and verification outcomes."
+            )
+        ]
+
+        if accessibilityTrusted {
+            let pidArgument = activePid.map { " --pid \($0)" } ?? ""
+            actions.append(ObservationAction(
+                name: "accessibility.inspectState",
+                command: "03 state\(pidArgument) --depth 3 --max-children 80",
+                risk: "low",
+                mutates: false,
+                reason: "Inspect the active app's UI tree with stable element identities."
+            ))
+        } else {
+            actions.append(ObservationAction(
+                name: "accessibility.requestTrust",
+                command: "03 trust",
+                risk: "low",
+                mutates: false,
+                reason: "Enable Accessibility inspection before using state or perform."
+            ))
+        }
+
+        actions.append(ObservationAction(
+            name: "browser.listTabs",
+            command: "03 browser tabs --endpoint http://127.0.0.1:9222",
+            risk: browserActionRisk(for: "browser.listTabs"),
+            mutates: false,
+            reason: "Inspect browser tabs if a Chromium DevTools endpoint is running."
+        ))
+
+        return actions
+    }
+
+    private func apps() throws {
+        let includeAll = flag("--all")
+        let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        try writeJSON(appSummaries(includeAll: includeAll, activePid: activePid))
     }
 
     private func state() throws {
@@ -4554,6 +4701,35 @@ final class ZeroThreeCLI {
               { "name": "filesystem.move", "domain": "filesystem", "risk": "medium", "mutates": true }
             ]
           },
+          "observe": {
+            "command": "03 observe --app-limit 20 --window-limit 20",
+            "result": {
+              "accessibility": {
+                "trusted": true,
+                "message": "Accessibility access is enabled."
+              },
+              "activeApp": { "name": "Terminal", "bundleIdentifier": "com.apple.Terminal", "pid": 123, "active": true },
+              "appCount": 3,
+              "appsTruncated": false,
+              "desktop": {
+                "available": true,
+                "count": 2,
+                "windows": [
+                  { "id": "window:456", "stableIdentity": { "id": "desktopWindow:stable-semantic-digest" } }
+                ]
+              },
+              "blockers": [],
+              "suggestedActions": [
+                {
+                  "name": "accessibility.inspectState",
+                  "command": "03 state --pid 123 --depth 3 --max-children 80",
+                  "risk": "low",
+                  "mutates": false,
+                  "reason": "Inspect the active app's UI tree with stable element identities."
+                }
+              ]
+            }
+          },
           "state": {
             "generatedAt": "ISO-8601 timestamp",
             "platform": "macOS",
@@ -5090,6 +5266,7 @@ final class ZeroThreeCLI {
         Usage:
           03 trust [--prompt true|false]
           03 policy
+          03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
@@ -5567,10 +5744,10 @@ final class ZeroThreeCLI {
         return actions
     }
 
-    private func desktopWindows() throws -> DesktopWindowsState {
+    private func desktopWindows(limitOverride: Int? = nil) throws -> DesktopWindowsState {
         let includeDesktop = flag("--include-desktop")
         let includeAllLayers = flag("--all-layers")
-        let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
+        let limit = limitOverride ?? max(0, option("--limit").flatMap(Int.init) ?? 200)
         let activePID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let bundleIdentifierByPID = Dictionary(
             uniqueKeysWithValues: NSWorkspace.shared.runningApplications.compactMap { app in

@@ -23,6 +23,7 @@ The system should describe the current desktop in terms of visible apps, windows
 ## Implemented Increments
 
 - Visible desktop window inventory: `03 desktop windows` lists visible macOS windows as structured owner, title, layer, bounds, and active-owner metadata without requiring screenshots or Accessibility access.
+- First-step observation snapshot: `03 observe` combines Accessibility trust status, active app metadata, bounded running-app inventory, visible desktop windows, blockers, and suggested safe next actions into one structured read-only snapshot.
 
 ## Relationship To The Product
 

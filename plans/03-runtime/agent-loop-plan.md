@@ -20,6 +20,10 @@ The system should support task execution as a sequence of observations and actio
 - The assistant can pause for approval when risk or ambiguity is high.
 - The assistant can stop cleanly and explain its current state.
 
+## Implemented Increments
+
+- Initial observation checkpoint: `03 observe` gives the assistant a structured starting snapshot with blockers and suggested next typed actions before choosing an observe-plan-act path.
+
 ## Relationship To The Product
 
 The agent loop turns adapters and actions into useful work. Without it, 03 is a toolbox; with it, 03 becomes an operating layer.

@@ -26,6 +26,14 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 
 The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection and filesystem watch actions are listed as low-risk, non-mutating reads.
 
+## Observe The Current Computer State
+
+```sh
+.build/debug/03 observe --app-limit 20 --window-limit 20
+```
+
+`observe` is the safest first command before acting. It returns Accessibility trust status, the active app, a bounded running-app list, visible desktop windows with stable identities, current blockers, and suggested next typed commands. It does not require Accessibility permission; when Accessibility is not trusted, the snapshot reports that blocker and suggests `03 trust` instead of trying to inspect or control app UI.
+
 ## Inspect Running Apps
 
 ```sh

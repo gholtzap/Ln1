@@ -116,6 +116,36 @@ final class ZeroThreeSmokeTests: XCTestCase {
         }
     }
 
+    func testObserveReturnsStructuredFirstStepSnapshot() throws {
+        let result = try runZeroThree([
+            "observe",
+            "--app-limit", "5",
+            "--window-limit", "3"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let accessibility = try XCTUnwrap(object["accessibility"] as? [String: Any])
+        let apps = try XCTUnwrap(object["apps"] as? [[String: Any]])
+        let desktop = try XCTUnwrap(object["desktop"] as? [String: Any])
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+        let suggestedActions = try XCTUnwrap(object["suggestedActions"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["appLimit"] as? Int, 5)
+        XCTAssertLessThanOrEqual(apps.count, 5)
+        XCTAssertEqual(object["appCount"] as? Int, apps.count)
+        XCTAssertNotNil(object["appsTruncated"] as? Bool)
+        XCTAssertNotNil(accessibility["trusted"] as? Bool)
+        XCTAssertNotNil(accessibility["message"] as? String)
+        XCTAssertEqual(desktop["limit"] as? Int, 3)
+        XCTAssertNotNil(desktop["available"] as? Bool)
+        XCTAssertNotNil(blockers)
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
+    }
+
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
         let result = try runZeroThree(["schema"])
 
