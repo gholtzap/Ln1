@@ -66,6 +66,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.setChecked"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.setChecked"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.setChecked"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.focusElement"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.focusElement"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.focusElement"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["browser.clickElement"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.clickElement"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.clickElement"]?["mutates"] as? Bool, true)
@@ -401,6 +404,33 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
             "--checked", "true",
+            "--audit-log", auditLog.path,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
+        let focus = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "focus-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(focus.status, 0, focus.stderr)
+        let focusObject = try decodeJSONObject(focus.stdout)
+        let focusBlockers = try XCTUnwrap(focusObject["blockers"] as? [String])
+        XCTAssertEqual(focusObject["operation"] as? String, "focus-browser")
+        XCTAssertEqual(focusObject["risk"] as? String, "medium")
+        XCTAssertEqual(focusObject["mutates"] as? Bool, true)
+        XCTAssertTrue(focusBlockers.isEmpty)
+        XCTAssertEqual(focusObject["nextArguments"] as? [String], [
+            "03", "browser", "focus",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
             "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
@@ -2396,6 +2426,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.focusElement"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.clickElement"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -3225,6 +3260,145 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "checked_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "checked")
+    }
+
+    func testBrowserFocusRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-focus-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let focusPayload: [String: Any] = [
+            "ok": true,
+            "code": "focused",
+            "message": "The matched element received focus.",
+            "selector": "input[name='q']",
+            "tagName": "input",
+            "inputType": "search",
+            "disabled": false,
+            "readOnly": false,
+            "matched": true
+        ]
+        let focusData = try JSONSerialization.data(withJSONObject: focusPayload, options: [.sortedKeys])
+        let focusJSONString = String(decoding: focusData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": focusJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Focus Page",
+            "url": "https://example.com/focus",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "focus",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='q']",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "focus",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='q']",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "prepare keyboard input"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.focusElement")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["selector"] as? String, "input[name='q']")
+        XCTAssertEqual(object["targetTagName"] as? String, "input")
+        XCTAssertEqual(object["targetInputType"] as? String, "search")
+        XCTAssertEqual(object["targetDisabled"] as? Bool, false)
+        XCTAssertEqual(object["targetReadOnly"] as? Bool, false)
+        XCTAssertEqual(object["activeElementMatched"] as? Bool, true)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "element_focused")
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.focus",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.focusElement")
+        XCTAssertEqual(deniedBrowserTab["focusSelector"] as? String, "input[name='q']")
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.focus",
+            "--code", "focused",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.focus")
+        XCTAssertEqual(entry["action"] as? String, "browser.focusElement")
+        XCTAssertEqual(entry["reason"] as? String, "prepare keyboard input")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Focus Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/focus")
+        XCTAssertEqual(browserTab["focusSelector"] as? String, "input[name='q']")
+        XCTAssertEqual(browserTab["focusTagName"] as? String, "input")
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "element_focused")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "focused")
     }
 
     func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
