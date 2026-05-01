@@ -1637,6 +1637,124 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-file-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("report.pdf")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-file-transcript",
+            "operation": "wait-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "wait",
+                    "--path", fileURL.path,
+                    "--exists", "true"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "path": fileURL.path,
+                    "expectedExists": true,
+                    "matched": true,
+                    "file": [
+                        "path": fileURL.path,
+                        "kind": "file",
+                        "sizeBytes": 1024
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", fileURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file wait") == true)
+    }
+
+    func testWorkflowResumeSuggestsClipboardReadAfterClipboardWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-clipboard-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-clipboard-transcript",
+            "operation": "wait-clipboard",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "clipboard", "wait",
+                    "--changed-from", "12",
+                    "--has-string", "true",
+                    "--pasteboard", "Ln1-test-pasteboard"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "pasteboard": "Ln1-test-pasteboard",
+                    "verification": [
+                        "ok": true,
+                        "code": "clipboard_matched",
+                        "matched": true,
+                        "current": [
+                            "pasteboard": "Ln1-test-pasteboard",
+                            "changeCount": 13,
+                            "hasString": true,
+                            "stringLength": 42,
+                            "stringDigest": String(repeating: "a", count: 64)
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-clipboard",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-clipboard")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "clipboard", "read-text",
+            "--allow-risk", "medium",
+            "--max-characters", "4096",
+            "--reason", "Describe intent",
+            "--pasteboard", "Ln1-test-pasteboard"
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("plain text metadata") == true)
+    }
+
     func testWorkflowResumeSuggestsBrowserActionsAfterSelectorWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-selector-wait-resume-\(UUID().uuidString)")

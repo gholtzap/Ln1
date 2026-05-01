@@ -393,7 +393,7 @@ Wait for a path to appear or disappear with bounded polling:
 .build/debug/Ln1 files wait --path ~/Downloads/report.part --exists false --timeout-ms 30000
 ```
 
-`files wait` returns structured evidence about whether the expected existence state and optional size/digest metadata matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`; when `--digest` is provided, it also returns the current SHA-256 digest and whether it matched without exposing file contents. This is useful for downloads, generated files, and verification loops without relying on Finder state.
+`files wait` returns structured evidence about whether the expected existence state and optional size/digest metadata matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`; when `--digest` is provided, it also returns the current SHA-256 digest and whether it matched without exposing file contents. This is useful for downloads, generated files, and verification loops without relying on Finder state. After a successful `wait-file` workflow, `workflow resume` suggests a structured metadata or directory-list command for the matched path instead of requiring log interpretation.
 
 Watch a file or directory for metadata changes:
 
@@ -478,7 +478,7 @@ Wait for clipboard metadata without returning copied text:
 .build/debug/Ln1 clipboard wait --changed-from 42 --has-string true --timeout-ms 5000
 ```
 
-`clipboard.wait` is a low-risk read action. It polls pasteboard metadata until the change count differs from `--changed-from`, the plain-text availability matches `--has-string`, and/or the text digest matches `--string-digest`; it returns only metadata, lengths, and digests.
+`clipboard.wait` is a low-risk read action. It polls pasteboard metadata until the change count differs from `--changed-from`, the plain-text availability matches `--has-string`, and/or the text digest matches `--string-digest`; it returns only metadata, lengths, and digests. After a successful `wait-clipboard` workflow, `workflow resume` suggests either bounded `clipboard read-text` when plain text is available or another metadata-only state check when it is not.
 
 Read bounded plain text from the clipboard only after explicitly allowing medium-risk clipboard access:
 

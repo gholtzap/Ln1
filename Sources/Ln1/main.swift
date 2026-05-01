@@ -4218,6 +4218,18 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "wait-file" {
+            return workflowFileWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution
+            )
+        }
+        if latestOperation == "wait-clipboard" {
+            return workflowClipboardWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution
+            )
+        }
 
         guard latestOperation == "read-browser" else {
             return nil
@@ -4248,6 +4260,98 @@ final class Ln1CLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
+        )
+    }
+
+    private func workflowFileWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any]
+    ) -> (arguments: [String], message: String)? {
+        guard outputJSON["matched"] as? Bool == true else {
+            return nil
+        }
+        guard let path = outputJSON["path"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--path") else {
+            return nil
+        }
+
+        let expectedExists = outputJSON["expectedExists"] as? Bool
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--exists").map(parseBool)
+            ?? true
+
+        if !expectedExists {
+            let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+            return (
+                arguments: [
+                    "Ln1", "files", "list",
+                    "--path", parent,
+                    "--depth", "1",
+                    "--limit", "50"
+                ],
+                message: "Latest file wait confirmed the path is absent; list the parent directory to choose the next file operation."
+            )
+        }
+
+        let file = outputJSON["file"] as? [String: Any]
+        if file?["kind"] as? String == "directory" {
+            return (
+                arguments: [
+                    "Ln1", "files", "list",
+                    "--path", path,
+                    "--depth", "1",
+                    "--limit", "50"
+                ],
+                message: "Latest file wait found the expected directory; list immediate children before acting."
+            )
+        }
+
+        return (
+            arguments: [
+                "Ln1", "files", "stat",
+                "--path", path
+            ],
+            message: "Latest file wait found the expected path and metadata; inspect current file metadata before acting."
+        )
+    }
+
+    private func workflowClipboardWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any]
+    ) -> (arguments: [String], message: String)? {
+        guard let verification = outputJSON["verification"] as? [String: Any],
+              verification["ok"] as? Bool == true,
+              verification["matched"] as? Bool == true else {
+            return nil
+        }
+
+        let pasteboard = workflowArgumentValue(in: execution["argv"] as? [String], for: "--pasteboard")
+        let current = verification["current"] as? [String: Any]
+        let hasString = current?["hasString"] as? Bool
+        var arguments: [String]
+
+        if hasString == true {
+            arguments = [
+                "Ln1", "clipboard", "read-text",
+                "--allow-risk", "medium",
+                "--max-characters", "4096",
+                "--reason", "Describe intent"
+            ]
+            if let pasteboard {
+                arguments.append(contentsOf: ["--pasteboard", pasteboard])
+            }
+            return (
+                arguments: arguments,
+                message: "Latest clipboard wait found plain text metadata; read bounded text only after confirming intent."
+            )
+        }
+
+        arguments = ["Ln1", "clipboard", "state"]
+        if let pasteboard {
+            arguments.append(contentsOf: ["--pasteboard", pasteboard])
+        }
+        return (
+            arguments: arguments,
+            message: "Latest clipboard wait completed without plain text; inspect clipboard metadata before choosing the next operation."
         )
     }
 
