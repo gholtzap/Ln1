@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-ready`, `wait-browser-title`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -71,6 +71,7 @@ Examples:
 .build/debug/03 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
 .build/debug/03 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
 .build/debug/03 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
+.build/debug/03 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
@@ -111,6 +112,8 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 `wait-browser-title` is a non-mutating workflow operation for bounded browser title checks. It polls structured tab metadata until `--title` matches with `--match contains|exact` without reading page contents.
 
+`wait-browser-checked` is a non-mutating workflow operation for bounded checkbox and radio checks. It polls the tab's DevTools runtime until `--selector` is a checkbox or radio input with the expected `--checked true|false` state.
+
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
 After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
@@ -120,6 +123,8 @@ After a successful `wait-browser-text` transcript, `workflow resume` suggests a 
 After a successful `wait-browser-ready` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the loaded page state.
 
 After a successful `wait-browser-title` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched page state.
+
+After a successful `wait-browser-checked` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched form state.
 
 Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
 
@@ -556,7 +561,15 @@ Wait for one tab title to match without mutating the page or reading page conten
 
 `browser.waitTitle` is a low-risk read action. It polls structured DevTools tab metadata until the title matches, returning title, URL, and match status.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded document readiness checks, and bounded title readiness checks.
+Wait for one checkbox or radio input to reach a checked state without mutating the page:
+
+```sh
+.build/debug/03 browser wait-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true --timeout-ms 5000
+```
+
+`browser.waitChecked` is a low-risk read action. It polls a checkbox or radio input through the tab's DevTools runtime until its checked state matches, returning input metadata, current URL, and match status.
+
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded document readiness checks, bounded title readiness checks, and bounded checked-state readiness checks.
 
 ## Product Direction
 
