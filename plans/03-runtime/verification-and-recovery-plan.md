@@ -29,6 +29,7 @@ The system should define expected outcomes for actions, observe whether those ou
 - Filesystem move rollback verification: `03 files rollback --audit-id` validates audit metadata before restoring a moved file and verifies that the original path exists while the moved destination is gone afterward.
 - Browser form fill verification: `03 browser fill` verifies that the targeted form field contains text with the requested length after dispatching input/change events.
 - Browser navigation verification: `03 browser navigate` verifies that the tab reaches the expected URL after a DevTools navigation, with exact, prefix, or contains matching for redirect-aware workflows.
+- Accessibility target identity verification: `03 perform --expect-identity --min-identity-confidence` verifies the resolved element's current stable identity before invoking an Accessibility action, preventing stale path IDs from acting on a different control.
 
 ## Relationship To The Product
 

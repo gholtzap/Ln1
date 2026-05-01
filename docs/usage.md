@@ -108,7 +108,15 @@ To target a specific app:
 .build/debug/03 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open the details panel"
 ```
 
-Every `perform` attempt appends a structured JSONL audit record before returning success or failure. The action result includes the audit record ID and log path.
+To guard against a stale element path, pass the `stableIdentity.id` from a recent `state` observation and a minimum identity confidence:
+
+```sh
+.build/debug/03 perform --pid 123 --element w0.3.1 --expect-identity accessibilityElement:abc123 --min-identity-confidence medium --action AXPress --reason "Open the details panel"
+```
+
+When identity constraints are present, `perform` recomputes the target element identity after resolving the path and before invoking the Accessibility action. It refuses to act if the identity digest does not match or if the current confidence is below `low`, `medium`, or `high` as requested.
+
+Every `perform` attempt appends a structured JSONL audit record before returning success or failure. The action result includes the audit record ID and log path, plus the target stable identity and identity verification result when available.
 
 By default the audit log is stored at:
 
@@ -122,7 +130,7 @@ Use `--audit-log` to send records to another file during tests or isolated runs:
 .build/debug/03 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open details" --audit-log /tmp/03-audit.jsonl
 ```
 
-The audit entry records typed intent and outcome: timestamp, risk level, target app, element ID, available element actions, requested action, optional reason, and result. It intentionally stores only a small element summary and does not store element values.
+The audit entry records typed intent and outcome: timestamp, risk level, target app, element ID, stable identity, available element actions, requested action, optional reason, optional identity verification, and result. It intentionally stores only a small element summary and does not store element values.
 
 ## Review The Audit Log
 

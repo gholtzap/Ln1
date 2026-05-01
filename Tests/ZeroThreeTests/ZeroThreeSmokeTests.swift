@@ -138,6 +138,26 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue(reasons.contains("title"))
     }
 
+    func testSchemaDocumentsIdentityGuardedPerformResults() throws {
+        let result = try runZeroThree(["schema"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let perform = try XCTUnwrap(object["perform"] as? [String: Any])
+        let resultObject = try XCTUnwrap(perform["result"] as? [String: Any])
+        let stableIdentity = try XCTUnwrap(resultObject["stableIdentity"] as? [String: Any])
+        let identityVerification = try XCTUnwrap(resultObject["identityVerification"] as? [String: Any])
+
+        XCTAssertTrue((perform["command"] as? String)?.contains("--expect-identity") == true)
+        XCTAssertTrue((perform["command"] as? String)?.contains("--min-identity-confidence medium") == true)
+        XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
+        XCTAssertEqual(identityVerification["ok"] as? Bool, true)
+        XCTAssertEqual(identityVerification["code"] as? String, "identity_verified")
+        XCTAssertEqual(identityVerification["expectedID"] as? String, identityVerification["actualID"] as? String)
+        XCTAssertEqual(identityVerification["minimumConfidence"] as? String, "medium")
+        XCTAssertEqual(identityVerification["actualConfidence"] as? String, "high")
+    }
+
     func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {
         let memoryLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-task-memory-\(UUID().uuidString).jsonl")

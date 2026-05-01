@@ -24,6 +24,7 @@ The system should identify objects using a combination of semantic labels, roles
 
 - Desktop window semantic identity: `03 desktop windows` includes a `stableIdentity` for each visible window with a semantic digest, confidence, user-readable label, components, and reasons alongside the transient WindowServer ID.
 - Accessibility element semantic identity: `03 state` and `03 state --all` include a `stableIdentity` for each UI node with owner, role, label, actions, coarse frame, confidence, and reasons while preserving the existing path IDs used by `03 perform`.
+- Identity-guarded actions: `03 perform --expect-identity --min-identity-confidence` recomputes the target element identity before acting and refuses stale or low-confidence element references.
 
 ## Relationship To The Product
 

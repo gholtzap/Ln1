@@ -123,13 +123,16 @@ struct ActionResult: Codable {
     let ok: Bool
     let pid: Int32
     let element: String
+    let stableIdentity: StableIdentity?
     let action: String
+    let identityVerification: IdentityVerification?
     let message: String
     let auditID: String
     let auditLogPath: String
 }
 
 struct AuditElementSummary: Codable {
+    let stableIdentity: StableIdentity?
     let role: String?
     let subrole: String?
     let title: String?
@@ -142,6 +145,18 @@ struct AuditOutcome: Codable {
     let ok: Bool
     let code: String
     let message: String
+}
+
+struct IdentityVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let expectedID: String?
+    let actualID: String
+    let minimumConfidence: String?
+    let actualConfidence: String
+    let identityMatched: Bool?
+    let confidenceAccepted: Bool?
 }
 
 struct AuditPolicyDecision: Codable {
@@ -434,6 +449,7 @@ struct ActionAuditRecord: Codable {
     var fileSource: FileAuditTarget? = nil
     var fileDestination: FileAuditTarget? = nil
     var verification: FileOperationVerification? = nil
+    var identityVerification: IdentityVerification? = nil
     var clipboard: ClipboardAuditSummary? = nil
     var clipboardBefore: ClipboardAuditSummary? = nil
     var clipboardAfter: ClipboardAuditSummary? = nil
@@ -875,6 +891,7 @@ final class ZeroThreeCLI {
         var elementID: String?
         var action: String?
         var policy: AuditPolicyDecision?
+        var identityVerification: IdentityVerification?
         var auditWritten = false
 
         do {
@@ -908,9 +925,36 @@ final class ZeroThreeCLI {
                 pid: app.processIdentifier
             )
             let element = try resolveElement(id: elementID!, in: app.processIdentifier)
-            elementSummary = auditSummary(element)
+            let normalizedElementID = try normalizedElementID(elementID!)
+            elementSummary = auditSummary(
+                element,
+                pathID: normalizedElementID,
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier
+            )
 
-            let available = actionNames(element)
+            identityVerification = try verifyElementIdentity(elementSummary?.stableIdentity)
+            guard identityVerification?.ok != false else {
+                let message = identityVerification?.message ?? "element identity verification failed"
+                try appendAuditRecord(ActionAuditRecord(
+                    id: auditID,
+                    timestamp: ISO8601DateFormatter().string(from: Date()),
+                    command: "perform",
+                    risk: riskLevel(for: action!),
+                    reason: option("--reason"),
+                    app: appRecord,
+                    elementID: elementID,
+                    element: elementSummary,
+                    action: action,
+                    policy: policy,
+                    identityVerification: identityVerification,
+                    outcome: AuditOutcome(ok: false, code: identityVerification?.code ?? "identity_rejected", message: message)
+                ), to: auditURL)
+                auditWritten = true
+                throw CommandError(description: message)
+            }
+
+            let available = elementSummary?.actions ?? actionNames(element)
             guard available.contains(action!) else {
                 let message = "element \(elementID!) does not expose action \(action!). Available: \(available.joined(separator: ", "))"
                 try appendAuditRecord(ActionAuditRecord(
@@ -924,6 +968,7 @@ final class ZeroThreeCLI {
                     element: elementSummary,
                     action: action,
                     policy: policy,
+                    identityVerification: identityVerification,
                     outcome: AuditOutcome(ok: false, code: "action_unavailable", message: message)
                 ), to: auditURL)
                 auditWritten = true
@@ -944,6 +989,7 @@ final class ZeroThreeCLI {
                     element: elementSummary,
                     action: action,
                     policy: policy,
+                    identityVerification: identityVerification,
                     outcome: AuditOutcome(ok: false, code: "action_failed", message: message)
                 ), to: auditURL)
                 auditWritten = true
@@ -962,6 +1008,7 @@ final class ZeroThreeCLI {
                 element: elementSummary,
                 action: action,
                 policy: policy,
+                identityVerification: identityVerification,
                 outcome: AuditOutcome(ok: true, code: "performed", message: message)
             ), to: auditURL)
             auditWritten = true
@@ -970,7 +1017,9 @@ final class ZeroThreeCLI {
                 ok: true,
                 pid: app.processIdentifier,
                 element: elementID!,
+                stableIdentity: elementSummary?.stableIdentity,
                 action: action!,
+                identityVerification: identityVerification,
                 message: message,
                 auditID: auditID,
                 auditLogPath: auditURL.path
@@ -988,6 +1037,7 @@ final class ZeroThreeCLI {
                     element: elementSummary,
                     action: action ?? option("--action") ?? kAXPressAction as String,
                     policy: policy,
+                    identityVerification: identityVerification,
                     outcome: AuditOutcome(ok: false, code: "rejected", message: error.description)
                 ), to: auditURL)
             }
@@ -1261,14 +1311,111 @@ final class ZeroThreeCLI {
         }
     }
 
-    private func auditSummary(_ element: AXUIElement) -> AuditElementSummary {
-        AuditElementSummary(
-            role: stringAttribute(element, kAXRoleAttribute),
-            subrole: stringAttribute(element, kAXSubroleAttribute),
-            title: stringAttribute(element, kAXTitleAttribute),
-            help: stringAttribute(element, kAXHelpAttribute),
+    private func auditSummary(
+        _ element: AXUIElement,
+        pathID: String,
+        ownerName: String?,
+        ownerBundleIdentifier: String?
+    ) -> AuditElementSummary {
+        let role = stringAttribute(element, kAXRoleAttribute)
+        let subrole = stringAttribute(element, kAXSubroleAttribute)
+        let title = stringAttribute(element, kAXTitleAttribute)
+        let help = stringAttribute(element, kAXHelpAttribute)
+        let elementFrame = frame(element)
+        let actions = actionNames(element)
+
+        return AuditElementSummary(
+            stableIdentity: accessibilityElementStableIdentity(
+                pathID: pathID,
+                ownerName: ownerName,
+                ownerBundleIdentifier: ownerBundleIdentifier,
+                role: role,
+                subrole: subrole,
+                title: title,
+                help: help,
+                frame: elementFrame,
+                actions: actions
+            ),
+            role: role,
+            subrole: subrole,
+            title: title,
+            help: help,
             enabled: boolAttribute(element, kAXEnabledAttribute),
-            actions: actionNames(element)
+            actions: actions
+        )
+    }
+
+    private func verifyElementIdentity(_ stableIdentity: StableIdentity?) throws -> IdentityVerification? {
+        let expectedID = option("--expect-identity")
+        let minimumConfidence = option("--min-identity-confidence")
+        guard expectedID != nil || minimumConfidence != nil else {
+            return nil
+        }
+
+        guard let stableIdentity else {
+            return IdentityVerification(
+                ok: false,
+                code: "identity_unavailable",
+                message: "element identity is unavailable",
+                expectedID: expectedID,
+                actualID: "unavailable",
+                minimumConfidence: minimumConfidence,
+                actualConfidence: "unknown",
+                identityMatched: expectedID == nil ? nil : false,
+                confidenceAccepted: minimumConfidence == nil ? nil : false
+            )
+        }
+
+        let identityMatched = expectedID.map { $0 == stableIdentity.id }
+        let confidenceAccepted: Bool?
+        if let minimumConfidence {
+            guard let minimumRank = identityConfidenceRank(minimumConfidence) else {
+                throw CommandError(description: "invalid --min-identity-confidence '\(minimumConfidence)'. Use low, medium, or high.")
+            }
+            let actualRank = identityConfidenceRank(stableIdentity.confidence) ?? -1
+            confidenceAccepted = actualRank >= minimumRank
+        } else {
+            confidenceAccepted = nil
+        }
+
+        if identityMatched == false {
+            return IdentityVerification(
+                ok: false,
+                code: "identity_mismatch",
+                message: "element identity \(stableIdentity.id) did not match expected identity \(expectedID!)",
+                expectedID: expectedID,
+                actualID: stableIdentity.id,
+                minimumConfidence: minimumConfidence,
+                actualConfidence: stableIdentity.confidence,
+                identityMatched: identityMatched,
+                confidenceAccepted: confidenceAccepted
+            )
+        }
+
+        if confidenceAccepted == false {
+            return IdentityVerification(
+                ok: false,
+                code: "identity_confidence_too_low",
+                message: "element identity confidence \(stableIdentity.confidence) is below required \(minimumConfidence!)",
+                expectedID: expectedID,
+                actualID: stableIdentity.id,
+                minimumConfidence: minimumConfidence,
+                actualConfidence: stableIdentity.confidence,
+                identityMatched: identityMatched,
+                confidenceAccepted: confidenceAccepted
+            )
+        }
+
+        return IdentityVerification(
+            ok: true,
+            code: "identity_verified",
+            message: "element identity matched requested constraints",
+            expectedID: expectedID,
+            actualID: stableIdentity.id,
+            minimumConfidence: minimumConfidence,
+            actualConfidence: stableIdentity.confidence,
+            identityMatched: identityMatched,
+            confidenceAccepted: confidenceAccepted
         )
     }
 
@@ -4383,6 +4530,19 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func identityConfidenceRank(_ confidence: String) -> Int? {
+        switch confidence {
+        case "low":
+            return 0
+        case "medium":
+            return 1
+        case "high":
+            return 2
+        default:
+            return nil
+        }
+    }
+
     private func schema() {
         print("""
         {
@@ -4496,9 +4656,22 @@ final class ZeroThreeCLI {
             }
           },
           "perform": {
-            "command": "03 perform --pid 456 --element a0.w0.3.1 --action AXPress --allow-risk low --reason 'Open details'",
+            "command": "03 perform --pid 456 --element a0.w0.3.1 --expect-identity accessibilityElement:stable-semantic-digest --min-identity-confidence medium --action AXPress --allow-risk low --reason 'Open details'",
             "result": {
               "ok": true,
+              "stableIdentity": {
+                "id": "accessibilityElement:stable-semantic-digest",
+                "kind": "accessibilityElement",
+                "confidence": "high"
+              },
+              "identityVerification": {
+                "ok": true,
+                "code": "identity_verified",
+                "expectedID": "accessibilityElement:stable-semantic-digest",
+                "actualID": "accessibilityElement:stable-semantic-digest",
+                "minimumConfidence": "medium",
+                "actualConfidence": "high"
+              },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -4514,6 +4687,11 @@ final class ZeroThreeCLI {
               "app": { "name": "Finder", "bundleIdentifier": "com.apple.finder", "pid": 456 },
               "elementID": "w0.3.1",
               "element": {
+                "stableIdentity": {
+                  "id": "accessibilityElement:stable-semantic-digest",
+                  "kind": "accessibilityElement",
+                  "confidence": "high"
+                },
                 "role": "AXButton",
                 "title": "Save",
                 "enabled": true,
@@ -4525,6 +4703,14 @@ final class ZeroThreeCLI {
                 "actionRisk": "low",
                 "allowed": true,
                 "message": "policy allowed low action with --allow-risk low"
+              },
+              "identityVerification": {
+                "ok": true,
+                "code": "identity_verified",
+                "expectedID": "accessibilityElement:stable-semantic-digest",
+                "actualID": "accessibilityElement:stable-semantic-digest",
+                "minimumConfidence": "medium",
+                "actualConfidence": "high"
               },
               "outcome": { "ok": true, "code": "performed", "message": "Performed AXPress on w0.3.1." }
             }
