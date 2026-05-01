@@ -1120,6 +1120,61 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutRollingBackMove() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next rollback \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("draft.txt")
+        let destination = directory.appendingPathComponent("archive.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "rollback workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let move = try runLn1([
+            "files",
+            "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "move before workflow rollback",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(move.status, 0, move.stderr)
+        let moveObject = try decodeJSONObject(move.stdout)
+        let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "rollback-file-move",
+            "--audit-id", moveAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "rollback-file-move")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "rollback",
+            "--audit-id", moveAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1899,6 +1954,72 @@ final class Ln1SmokeTests: XCTestCase {
             "--path", createdURL.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("directory creation completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsRestoredSourceStatAfterRollbackFileMove() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-rollback-file-move-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let sourceURL = directory.appendingPathComponent("draft.txt")
+        let destinationURL = directory.appendingPathComponent("archive.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "rollback-file-move-transcript",
+            "operation": "rollback-file-move",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "rollback",
+                    "--audit-id", "move-audit-id",
+                    "--allow-risk", "medium",
+                    "--reason", "Undo mistaken move"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "filesystem.rollbackMove",
+                    "rollbackOfAuditID": "move-audit-id",
+                    "restoredSource": [
+                        "path": sourceURL.path,
+                        "kind": "regularFile",
+                        "sizeBytes": 42
+                    ],
+                    "previousDestination": [
+                        "path": destinationURL.path,
+                        "exists": false
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "move_restored",
+                        "message": "original source restored and moved destination removed"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "rollback-file-move",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "rollback-file-move")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", sourceURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("rollback completed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
@@ -3046,6 +3167,75 @@ final class Ln1SmokeTests: XCTestCase {
         var isDirectory = ObjCBool(false)
         XCTAssertTrue(FileManager.default.fileExists(atPath: created.path, isDirectory: &isDirectory))
         XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesMutatingRollbackWithExplicitApprovalAndReason() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow run execute rollback \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("draft.txt")
+        let destination = directory.appendingPathComponent("archive.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "restore through workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let move = try runLn1([
+            "files",
+            "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "move before workflow rollback execution",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(move.status, 0, move.stderr)
+        let moveObject = try decodeJSONObject(move.stdout)
+        let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "rollback-file-move",
+            "--audit-id", moveAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false",
+            "--execute-mutating", "true",
+            "--reason", "Verify approved workflow rollback"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "rollback-file-move")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "rollback",
+            "--audit-id", moveAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Verify approved workflow rollback"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["action"] as? String, "filesystem.rollbackMove")
+        XCTAssertEqual(outputJSON["rollbackOfAuditID"] as? String, moveAuditID)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertTrue((object["message"] as? String)?.contains("mutating command") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "restore through workflow")
         XCTAssertTrue(FileManager.default.fileExists(atPath: auditLog.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
