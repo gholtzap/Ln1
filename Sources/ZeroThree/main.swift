@@ -2436,6 +2436,14 @@ final class ZeroThreeCLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "wait-browser-text" {
+            return workflowBrowserTextWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                workflowURL: workflowURL
+            )
+        }
 
         guard latestOperation == "read-browser" else {
             return nil
@@ -2557,6 +2565,34 @@ final class ZeroThreeCLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser selector wait completed; dry-run DOM inspection to choose the next action."
+        )
+    }
+
+    private func workflowBrowserTextWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let verification = outputJSON["verification"] as? [String: Any],
+              verification["ok"] as? Bool == true else {
+            return nil
+        }
+        guard let tabID = outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "03", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser text wait completed; dry-run DOM inspection for the matched page state."
         )
     }
 
@@ -8185,6 +8221,20 @@ final class ZeroThreeCLI {
               "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
               "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
               "message": "Latest browser selector wait found a ready actionable element; click it by selector after confirming intent."
+            }
+          },
+          "workflowResumeWaitText": {
+            "command": "03 workflow resume --allow-risk medium --operation wait-browser-text",
+            "result": {
+              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "operation": "wait-browser-text",
+              "status": "completed",
+              "transcriptID": "UUID",
+              "latestOperation": "wait-browser-text",
+              "blockers": [],
+              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
+              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "message": "Latest browser text wait completed; dry-run DOM inspection for the matched page state."
             }
           },
           "files": {
