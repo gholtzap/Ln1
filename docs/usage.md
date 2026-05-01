@@ -115,7 +115,7 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 .build/debug/Ln1 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run false --execute-mutating true --reason "Organize completed draft"
 ```
 
-Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct.
+Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. After a successful verified `move-file` workflow, `workflow resume` suggests a destination `files stat` check so the next step is grounded in current metadata.
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline. Pass `--size-bytes N` and/or `--digest SHA256` when the file must exist with specific metadata before the workflow should continue.
 

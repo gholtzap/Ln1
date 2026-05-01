@@ -1637,6 +1637,68 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsDestinationStatAfterMoveFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-move-file-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let sourceURL = directory.appendingPathComponent("draft.txt")
+        let destinationURL = directory.appendingPathComponent("archive/draft.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "move-file-transcript",
+            "operation": "move-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "move",
+                    "--path", sourceURL.path,
+                    "--to", destinationURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "Archive completed draft"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "filesystem.move",
+                    "destination": [
+                        "path": destinationURL.path,
+                        "kind": "regularFile",
+                        "sizeBytes": 42
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "moved_and_metadata_matched",
+                        "message": "source path is gone, destination exists, and size matches original source"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "move-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "move-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", destinationURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("move completed") == true)
+    }
+
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-file-wait-resume-\(UUID().uuidString)")

@@ -4218,6 +4218,12 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "move-file" {
+            return workflowMoveFileRecommendation(
+                outputJSON: outputJSON,
+                execution: execution
+            )
+        }
         if latestOperation == "wait-file" {
             return workflowFileWaitRecommendation(
                 outputJSON: outputJSON,
@@ -4260,6 +4266,32 @@ final class Ln1CLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
+        )
+    }
+
+    private func workflowMoveFileRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any]
+    ) -> (arguments: [String], message: String)? {
+        guard outputJSON["ok"] as? Bool == true else {
+            return nil
+        }
+        guard let verification = outputJSON["verification"] as? [String: Any],
+              verification["ok"] as? Bool == true else {
+            return nil
+        }
+        let destination = outputJSON["destination"] as? [String: Any]
+        guard let destinationPath = destination?["path"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--to") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "Ln1", "files", "stat",
+                "--path", destinationPath
+            ],
+            message: "Latest file move completed and verified; inspect destination metadata before further file operations."
         )
     }
 
