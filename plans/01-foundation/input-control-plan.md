@@ -23,6 +23,7 @@ The system should support basic interaction with the graphical desktop, includin
 ## Implemented Increments
 
 - Browser focus control: `03 browser focus` focuses one CSS selector through DevTools, verifies the active element, and audits selector/target metadata without storing page text.
+- Browser key control: `03 browser press-key` dispatches one bounded key press through DevTools with optional focus and redacted audit metadata.
 
 ## Relationship To The Product
 

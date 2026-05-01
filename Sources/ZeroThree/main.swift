@@ -532,6 +532,9 @@ struct BrowserAuditSummary: Codable {
     var clickTagName: String? = nil
     var focusSelector: String? = nil
     var focusTagName: String? = nil
+    var keyName: String? = nil
+    var keyModifiers: [String]? = nil
+    var keyModifierMask: Int? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -905,6 +908,36 @@ struct BrowserFocusResult: Codable {
     let targetDisabled: Bool?
     let targetReadOnly: Bool?
     let activeElementMatched: Bool
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserKeyPressVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let key: String
+    let modifiers: [String]
+    let modifierMask: Int
+    let selector: String?
+    let keyDownDispatched: Bool
+    let keyUpDispatched: Bool
+}
+
+struct BrowserKeyPressResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let key: String
+    let modifiers: [String]
+    let modifierMask: Int
+    let selector: String?
+    let focusVerification: FileOperationVerification?
+    let verification: BrowserKeyPressVerification
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -1307,6 +1340,13 @@ private struct CDPEvaluateResponse: Decodable {
 private struct CDPCommandResponse: Decodable {
     let id: Int?
     let error: CDPError?
+}
+
+private struct BrowserKeyDefinition {
+    let key: String
+    let code: String
+    let windowsVirtualKeyCode: Int
+    let text: String?
 }
 
 private struct CDPEvaluateResult: Decodable {
@@ -1865,6 +1905,8 @@ final class ZeroThreeCLI {
             return workflowPreflightBrowserAction(kind: "check")
         case "focus-browser":
             return workflowPreflightBrowserAction(kind: "focus")
+        case "press-browser-key":
+            return workflowPreflightBrowserAction(kind: "press-key")
         case "click-browser":
             return workflowPreflightBrowserAction(kind: "click")
         case "navigate-browser":
@@ -1894,7 +1936,7 @@ final class ZeroThreeCLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-clipboard, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-clipboard, move-file, or wait-file.")
         }
     }
 
@@ -2064,6 +2106,8 @@ final class ZeroThreeCLI {
         let url = option("--url")
         let expectedURL = option("--expect-url")
         let match = option("--match")
+        let key = option("--key")
+        let modifiers = option("--modifiers")
         if id == nil {
             prerequisites.append(DoctorCheck(
                 name: "workflow.browserTabID",
@@ -2081,6 +2125,42 @@ final class ZeroThreeCLI {
                 message: "No CSS selector was provided for \(kind)-browser.",
                 remediation: "Run `03 workflow run --operation read-browser --id TARGET_ID --dry-run false --allow-risk medium` and choose an element selector."
             ))
+        }
+        if kind == "press-key" {
+            if let key {
+                do {
+                    _ = try browserKeyDefinition(for: key)
+                } catch {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserKey",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Pass a supported key with `--key Enter`, `--key Escape`, `--key Tab`, an arrow key, a function key, or one ASCII letter/digit."
+                    ))
+                }
+            } else {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserKey",
+                    status: "fail",
+                    required: true,
+                    message: "No key was provided for press-browser-key.",
+                    remediation: "Pass `--key Enter`, `--key Escape`, `--key Tab`, an arrow key, a function key, or one ASCII letter/digit."
+                ))
+            }
+            if let modifiers {
+                do {
+                    _ = try browserModifierMask(modifiers)
+                } catch {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.browserModifiers",
+                        status: "fail",
+                        required: true,
+                        message: (error as? CommandError)?.description ?? error.localizedDescription,
+                        remediation: "Use comma-separated modifiers from shift, control, alt, or meta."
+                    ))
+                }
+            }
         }
         if kind == "fill", text == nil {
             prerequisites.append(DoctorCheck(
@@ -2234,7 +2314,7 @@ final class ZeroThreeCLI {
         }
 
         let blockers = workflowBlockers(from: prerequisites)
-        let operation = "\(kind)-browser"
+        let operation = kind == "press-key" ? "press-browser-key" : "\(kind)-browser"
         let nextArguments: [String]?
         if blockers.isEmpty, kind == "navigate", let id, let normalizedURL {
             var arguments = ["03", "browser", "navigate"]
@@ -2247,6 +2327,23 @@ final class ZeroThreeCLI {
             }
             if let match {
                 arguments += ["--match", match]
+            }
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
+            nextArguments = arguments
+        } else if blockers.isEmpty, kind == "press-key", let id, let key {
+            var arguments = ["03", "browser", "press-key"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += ["--id", id, "--key", key]
+            if let selector {
+                arguments += ["--selector", selector]
+            }
+            if let modifiers {
+                arguments += ["--modifiers", modifiers]
             }
             if let auditLog = option("--audit-log") {
                 arguments += ["--audit-log", auditLog]
@@ -4913,6 +5010,10 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
             try writeJSON(browserFocus(id: id, selector: selector))
+        case "press-key":
+            let id = try requiredOption("--id")
+            let key = try requiredOption("--key")
+            try writeJSON(browserPressKey(id: id, key: key))
         case "click":
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
@@ -6398,6 +6499,11 @@ final class ZeroThreeCLI {
                     mutates: true
                 ),
                 BrowserAction(
+                    name: "browser.pressKey",
+                    risk: browserActionRisk(for: "browser.pressKey"),
+                    mutates: true
+                ),
+                BrowserAction(
                     name: "browser.clickElement",
                     risk: browserActionRisk(for: "browser.clickElement"),
                     mutates: true
@@ -7234,6 +7340,165 @@ final class ZeroThreeCLI {
                 targetDisabled: payload.disabled,
                 targetReadOnly: payload.readOnly,
                 activeElementMatched: payload.matched,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserPressKey(id: String, key rawKey: String) throws -> BrowserKeyPressResult {
+        let action = "browser.pressKey"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let key = try browserKeyDefinition(for: rawKey)
+        let modifierSet = try browserModifierSet(option("--modifiers"))
+        let modifierMask = browserModifierMask(for: modifierSet)
+        let selector = option("--selector")
+        var focusVerification: FileOperationVerification?
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            focusSelector: selector,
+            keyName: key.key,
+            keyModifiers: modifierSet,
+            keyModifierMask: modifierMask
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String, verification: FileOperationVerification? = nil) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.press-key",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                focusSelector: selector,
+                keyName: key.key,
+                keyModifiers: modifierSet,
+                keyModifierMask: modifierMask
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let selector {
+                let focusPayload = try focusBrowserElement(selector: selector, at: webSocketURL)
+                focusVerification = FileOperationVerification(
+                    ok: focusPayload.ok && focusPayload.matched,
+                    code: focusPayload.ok && focusPayload.matched ? "element_focused" : focusPayload.code,
+                    message: focusPayload.ok && focusPayload.matched
+                        ? "browser active element matches the requested selector"
+                        : focusPayload.message
+                )
+                tabSummary?.focusTagName = focusPayload.tagName
+
+                guard focusVerification?.ok == true else {
+                    let message = focusVerification?.message ?? focusPayload.message
+                    try writeAudit(ok: false, code: focusPayload.code, message: message, verification: focusVerification)
+                    throw CommandError(description: message)
+                }
+            }
+
+            let verification = try dispatchBrowserKey(
+                key,
+                modifiers: modifierSet,
+                modifierMask: modifierMask,
+                selector: selector,
+                at: webSocketURL
+            )
+
+            guard verification.ok else {
+                try writeAudit(
+                    ok: false,
+                    code: verification.code,
+                    message: verification.message,
+                    verification: FileOperationVerification(ok: verification.ok, code: verification.code, message: verification.message)
+                )
+                throw CommandError(description: verification.message)
+            }
+
+            let message = "Pressed browser key '\(key.key)' in tab \(id)."
+            try writeAudit(
+                ok: true,
+                code: "key_pressed",
+                message: message,
+                verification: FileOperationVerification(ok: true, code: verification.code, message: verification.message)
+            )
+
+            return BrowserKeyPressResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                key: key.key,
+                modifiers: modifierSet,
+                modifierMask: modifierMask,
+                selector: selector,
+                focusVerification: focusVerification,
+                verification: verification,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -8575,6 +8840,62 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func dispatchBrowserKey(
+        _ key: BrowserKeyDefinition,
+        modifiers: [String],
+        modifierMask: Int,
+        selector: String?,
+        at webSocketURL: URL
+    ) throws -> BrowserKeyPressVerification {
+        if webSocketURL.isFileURL {
+            let data = try Data(contentsOf: webSocketURL)
+            return try JSONDecoder().decode(BrowserKeyPressVerification.self, from: data)
+        }
+
+        let timeout = option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        var downParams: [String: Any] = [
+            "type": key.text == nil ? "rawKeyDown" : "keyDown",
+            "key": key.key,
+            "code": key.code,
+            "windowsVirtualKeyCode": key.windowsVirtualKeyCode,
+            "nativeVirtualKeyCode": key.windowsVirtualKeyCode,
+            "modifiers": modifierMask
+        ]
+        if let text = key.text, modifierMask == 0 {
+            downParams["text"] = text
+            downParams["unmodifiedText"] = text
+        }
+        let upParams: [String: Any] = [
+            "type": "keyUp",
+            "key": key.key,
+            "code": key.code,
+            "windowsVirtualKeyCode": key.windowsVirtualKeyCode,
+            "nativeVirtualKeyCode": key.windowsVirtualKeyCode,
+            "modifiers": modifierMask
+        ]
+
+        let down = try sendCDPCommand(method: "Input.dispatchKeyEvent", params: downParams, at: webSocketURL, timeout: timeout)
+        if let error = down.error {
+            throw CommandError(description: "Chrome DevTools Input.dispatchKeyEvent keyDown failed with \(error.code): \(error.message)")
+        }
+        let up = try sendCDPCommand(method: "Input.dispatchKeyEvent", params: upParams, at: webSocketURL, timeout: timeout)
+        if let error = up.error {
+            throw CommandError(description: "Chrome DevTools Input.dispatchKeyEvent keyUp failed with \(error.code): \(error.message)")
+        }
+
+        return BrowserKeyPressVerification(
+            ok: true,
+            code: "key_pressed",
+            message: "browser key press dispatched through Chrome DevTools",
+            key: key.key,
+            modifiers: modifiers,
+            modifierMask: modifierMask,
+            selector: selector,
+            keyDownDispatched: true,
+            keyUpDispatched: true
+        )
+    }
+
     private func focusBrowserElement(
         selector: String,
         at webSocketURL: URL
@@ -9861,6 +10182,109 @@ final class ZeroThreeCLI {
         }
     }
 
+    private func browserKeyDefinition(for rawKey: String) throws -> BrowserKeyDefinition {
+        let trimmed = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CommandError(description: "browser key must not be empty")
+        }
+
+        let namedKeys: [String: BrowserKeyDefinition] = [
+            "enter": BrowserKeyDefinition(key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r"),
+            "return": BrowserKeyDefinition(key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r"),
+            "tab": BrowserKeyDefinition(key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, text: "\t"),
+            "escape": BrowserKeyDefinition(key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, text: nil),
+            "esc": BrowserKeyDefinition(key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, text: nil),
+            "backspace": BrowserKeyDefinition(key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8, text: nil),
+            "delete": BrowserKeyDefinition(key: "Delete", code: "Delete", windowsVirtualKeyCode: 46, text: nil),
+            "arrowup": BrowserKeyDefinition(key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38, text: nil),
+            "up": BrowserKeyDefinition(key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38, text: nil),
+            "arrowdown": BrowserKeyDefinition(key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, text: nil),
+            "down": BrowserKeyDefinition(key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40, text: nil),
+            "arrowleft": BrowserKeyDefinition(key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, text: nil),
+            "left": BrowserKeyDefinition(key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37, text: nil),
+            "arrowright": BrowserKeyDefinition(key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39, text: nil),
+            "right": BrowserKeyDefinition(key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39, text: nil),
+            "home": BrowserKeyDefinition(key: "Home", code: "Home", windowsVirtualKeyCode: 36, text: nil),
+            "end": BrowserKeyDefinition(key: "End", code: "End", windowsVirtualKeyCode: 35, text: nil),
+            "pageup": BrowserKeyDefinition(key: "PageUp", code: "PageUp", windowsVirtualKeyCode: 33, text: nil),
+            "pagedown": BrowserKeyDefinition(key: "PageDown", code: "PageDown", windowsVirtualKeyCode: 34, text: nil),
+            "space": BrowserKeyDefinition(key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " ")
+        ]
+        if let named = namedKeys[trimmed.lowercased()] {
+            return named
+        }
+
+        if let functionKey = browserFunctionKeyDefinition(for: trimmed) {
+            return functionKey
+        }
+
+        guard trimmed.range(of: #"^[A-Za-z0-9]$"#, options: .regularExpression) != nil,
+              let scalar = trimmed.uppercased().unicodeScalars.first else {
+            throw CommandError(description: "unsupported browser key '\(rawKey)'. Use a named key, function key, or one ASCII letter/digit.")
+        }
+        let upper = String(scalar)
+        let lower = trimmed.lowercased()
+        let code = scalar.properties.isAlphabetic ? "Key\(upper)" : "Digit\(upper)"
+        return BrowserKeyDefinition(key: lower, code: code, windowsVirtualKeyCode: Int(scalar.value), text: lower)
+    }
+
+    private func browserFunctionKeyDefinition(for rawKey: String) -> BrowserKeyDefinition? {
+        let upper = rawKey.uppercased()
+        guard upper.range(of: #"^F([1-9]|1[0-2])$"#, options: .regularExpression) != nil,
+              let number = Int(upper.dropFirst()) else {
+            return nil
+        }
+        return BrowserKeyDefinition(key: upper, code: upper, windowsVirtualKeyCode: 111 + number, text: nil)
+    }
+
+    private func browserModifierSet(_ rawModifiers: String?) throws -> [String] {
+        guard let rawModifiers, !rawModifiers.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+        var normalized: [String] = []
+        for rawPart in rawModifiers.split(separator: ",") {
+            let part = rawPart.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let modifier: String
+            switch part {
+            case "shift":
+                modifier = "shift"
+            case "control", "ctrl":
+                modifier = "control"
+            case "alt", "option":
+                modifier = "alt"
+            case "meta", "command", "cmd":
+                modifier = "meta"
+            default:
+                throw CommandError(description: "unsupported browser key modifier '\(part)'. Use shift, control, alt, or meta.")
+            }
+            if !normalized.contains(modifier) {
+                normalized.append(modifier)
+            }
+        }
+        return normalized
+    }
+
+    private func browserModifierMask(_ rawModifiers: String) throws -> Int {
+        browserModifierMask(for: try browserModifierSet(rawModifiers))
+    }
+
+    private func browserModifierMask(for modifiers: [String]) -> Int {
+        var mask = 0
+        if modifiers.contains("alt") {
+            mask |= 1
+        }
+        if modifiers.contains("control") {
+            mask |= 2
+        }
+        if modifiers.contains("meta") {
+            mask |= 4
+        }
+        if modifiers.contains("shift") {
+            mask |= 8
+        }
+        return mask
+    }
+
     private func validatedBrowserSelector(_ rawSelector: String) throws -> String {
         guard !rawSelector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw CommandError(description: "browser selector must not be empty")
@@ -10911,7 +11335,7 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled":
             return "low"
-        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.clickElement", "browser.navigate":
+        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -10991,6 +11415,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.selectOption", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.setChecked", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.focusElement", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.pressKey", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.waitURL", domain: "browser", risk: "low", mutates: false),
@@ -11590,6 +12015,7 @@ final class ZeroThreeCLI {
                     { "name": "browser.selectOption", "risk": "medium", "mutates": true },
                     { "name": "browser.setChecked", "risk": "medium", "mutates": true },
                     { "name": "browser.focusElement", "risk": "medium", "mutates": true },
+                    { "name": "browser.pressKey", "risk": "medium", "mutates": true },
                     { "name": "browser.clickElement", "risk": "medium", "mutates": true },
                     { "name": "browser.navigate", "risk": "medium", "mutates": true },
                     { "name": "browser.waitURL", "risk": "low", "mutates": false },
@@ -11739,6 +12165,31 @@ final class ZeroThreeCLI {
               "targetDisabled": false,
               "targetReadOnly": false,
               "activeElementMatched": true,
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "browserPressKey": {
+            "command": "03 browser press-key --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --key Enter --allow-risk medium",
+            "result": {
+              "action": "browser.pressKey",
+              "risk": "medium",
+              "key": "Enter",
+              "modifiers": [],
+              "modifierMask": 0,
+              "selector": "input[name=q]",
+              "focusVerification": {
+                "ok": true,
+                "code": "element_focused",
+                "message": "browser active element matches the requested selector"
+              },
+              "verification": {
+                "ok": true,
+                "code": "key_pressed",
+                "message": "browser key press dispatched through Chrome DevTools",
+                "keyDownDispatched": true,
+                "keyUpDispatched": true
+              },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -12261,11 +12712,11 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--title TITLE] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -12303,6 +12754,7 @@ final class ZeroThreeCLI {
           03 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser check --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser focus --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser press-key --id TARGET_ID --key KEY --allow-risk medium [--selector CSS_SELECTOR] [--modifiers shift,control,alt,meta] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
@@ -12349,6 +12801,7 @@ final class ZeroThreeCLI {
           - `browser select` chooses one select option through Chrome DevTools only after medium-risk policy approval, verifies the selection, and audits selector plus option length/digest without storing option text.
           - `browser check` sets one checkbox or radio input through Chrome DevTools only after medium-risk policy approval and audits selector plus requested checked state.
           - `browser focus` focuses one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
+          - `browser press-key` dispatches one key press through Chrome DevTools only after medium-risk policy approval and audits key/modifier metadata.
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
@@ -12360,7 +12813,7 @@ final class ZeroThreeCLI {
           - `browser wait-title` waits for one tab title to match without reading page contents.
           - `browser wait-checked` waits for one checkbox or radio checked state without mutating the page.
           - `browser wait-enabled` waits for one element enabled or disabled state without mutating the page.
-          - Workflow fill-browser, select-browser, check-browser, focus-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
+          - Workflow fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow mutating execution requires --execute-mutating true and a non-placeholder --reason before running the underlying audited command.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
           - Workflow wait-browser-selector waits for dynamic page UI readiness or disappearance before the next browser action.

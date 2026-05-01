@@ -69,6 +69,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.focusElement"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.focusElement"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.focusElement"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.pressKey"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.pressKey"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.pressKey"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["browser.clickElement"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.clickElement"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.clickElement"]?["mutates"] as? Bool, true)
@@ -431,6 +434,37 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
+            "--audit-log", auditLog.path,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
+        let pressKey = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "press-browser-key",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--key", "Enter",
+            "--modifiers", "control",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(pressKey.status, 0, pressKey.stderr)
+        let pressKeyObject = try decodeJSONObject(pressKey.stdout)
+        let pressKeyBlockers = try XCTUnwrap(pressKeyObject["blockers"] as? [String])
+        XCTAssertEqual(pressKeyObject["operation"] as? String, "press-browser-key")
+        XCTAssertEqual(pressKeyObject["risk"] as? String, "medium")
+        XCTAssertEqual(pressKeyObject["mutates"] as? Bool, true)
+        XCTAssertTrue(pressKeyBlockers.isEmpty)
+        XCTAssertEqual(pressKeyObject["nextArguments"] as? [String], [
+            "03", "browser", "press-key",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--key", "Enter",
+            "--selector", "input[name=\"q\"]",
+            "--modifiers", "control",
             "--audit-log", auditLog.path,
             "--allow-risk", "medium",
             "--reason", "Describe intent"
@@ -2431,6 +2465,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.pressKey"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.clickElement"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -3399,6 +3438,140 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "element_focused")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "focused")
+    }
+
+    func testBrowserPressKeyRequiresPolicyDispatchesAndAuditsMetadataOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-press-key-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("key-response.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let keyPayload: [String: Any] = [
+            "ok": true,
+            "code": "key_pressed",
+            "message": "browser key press dispatched through Chrome DevTools",
+            "key": "Enter",
+            "modifiers": ["control"],
+            "modifierMask": 2,
+            "selector": NSNull(),
+            "keyDownDispatched": true,
+            "keyUpDispatched": true
+        ]
+        let keyData = try JSONSerialization.data(withJSONObject: keyPayload, options: [.prettyPrinted, .sortedKeys])
+        try keyData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Key Page",
+            "url": "https://example.com/key",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "press-key",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--key", "Enter",
+            "--modifiers", "control",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "press-key",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--key", "Enter",
+            "--modifiers", "control",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "submit focused form"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.pressKey")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["key"] as? String, "Enter")
+        XCTAssertEqual(object["modifiers"] as? [String], ["control"])
+        XCTAssertEqual(object["modifierMask"] as? Int, 2)
+        XCTAssertNil(object["selector"])
+        XCTAssertNil(object["text"])
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "key_pressed")
+        XCTAssertEqual(verification["keyDownDispatched"] as? Bool, true)
+        XCTAssertEqual(verification["keyUpDispatched"] as? Bool, true)
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.press-key",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.pressKey")
+        XCTAssertEqual(deniedBrowserTab["keyName"] as? String, "Enter")
+        XCTAssertEqual(deniedBrowserTab["keyModifiers"] as? [String], ["control"])
+        XCTAssertEqual(deniedBrowserTab["keyModifierMask"] as? Int, 2)
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.press-key",
+            "--code", "key_pressed",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.press-key")
+        XCTAssertEqual(entry["action"] as? String, "browser.pressKey")
+        XCTAssertEqual(entry["reason"] as? String, "submit focused form")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Key Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/key")
+        XCTAssertEqual(browserTab["keyName"] as? String, "Enter")
+        XCTAssertEqual(browserTab["keyModifiers"] as? [String], ["control"])
+        XCTAssertEqual(browserTab["keyModifierMask"] as? Int, 2)
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "key_pressed")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "key_pressed")
     }
 
     func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
