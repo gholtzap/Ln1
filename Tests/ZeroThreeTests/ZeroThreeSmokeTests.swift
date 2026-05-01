@@ -93,6 +93,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitChecked"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitChecked"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitChecked"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitEnabled"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitEnabled"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitEnabled"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -740,6 +743,35 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
             "--checked", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitEnabled = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-enabled",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--enabled", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitEnabled.status, 0, waitEnabled.stderr)
+        let waitEnabledObject = try decodeJSONObject(waitEnabled.stdout)
+        let waitEnabledBlockers = try XCTUnwrap(waitEnabledObject["blockers"] as? [String])
+        XCTAssertEqual(waitEnabledObject["operation"] as? String, "wait-browser-enabled")
+        XCTAssertEqual(waitEnabledObject["risk"] as? String, "low")
+        XCTAssertEqual(waitEnabledObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitEnabledBlockers.isEmpty)
+        XCTAssertEqual(waitEnabledObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-enabled",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--enabled", "true",
             "--timeout-ms", "500",
             "--interval-ms", "50"
         ])
@@ -1918,6 +1950,72 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsBrowserActionAfterBrowserEnabledWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-enabled-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-enabled-transcript",
+            "operation": "wait-browser-enabled",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "03", "browser", "wait-enabled",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--selector", "button[type='submit']",
+                    "--enabled", "true"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": "button[type='submit']",
+                    "verification": [
+                        "ok": true,
+                        "code": "enabled_matched",
+                        "selector": "button[type='submit']",
+                        "expectedEnabled": true,
+                        "currentEnabled": true,
+                        "currentURL": "https://example.com/form",
+                        "tagName": "button",
+                        "disabled": false
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-browser-enabled",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-enabled")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "03", "browser", "click",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "button[type='submit']",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("enabled actionable element") == true)
+    }
+
     func testWorkflowRunRejectsMutatingExecutionMode() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03 workflow run reject \(UUID().uuidString)")
@@ -2226,6 +2324,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitChecked"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitEnabled"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -4021,6 +4124,87 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/preferences")
         XCTAssertEqual(verification["tagName"] as? String, "input")
         XCTAssertEqual(verification["inputType"] as? String, "checkbox")
+        XCTAssertEqual(verification["disabled"] as? Bool, false)
+        XCTAssertEqual(verification["readOnly"] as? Bool, false)
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+    }
+
+    func testBrowserWaitEnabledReturnsVerificationWithoutMutating() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-enabled-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let enabledPayload: [String: Any] = [
+            "ok": true,
+            "code": "enabled_matched",
+            "message": "browser element enabled state matched expected value",
+            "selector": "button[type='submit']",
+            "expectedEnabled": true,
+            "currentEnabled": true,
+            "currentURL": "https://example.com/form",
+            "tagName": "button",
+            "disabled": false,
+            "readOnly": false,
+            "matched": true
+        ]
+        let enabledData = try JSONSerialization.data(withJSONObject: enabledPayload, options: [.sortedKeys])
+        let enabledJSONString = String(decoding: enabledData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": enabledJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Form",
+            "url": "https://example.com/form",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-enabled",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type='submit']",
+            "--enabled", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["selector"] as? String, "button[type='submit']")
+        XCTAssertEqual(object["expectedEnabled"] as? Bool, true)
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(object["html"])
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "enabled_matched")
+        XCTAssertEqual(verification["selector"] as? String, "button[type='submit']")
+        XCTAssertEqual(verification["expectedEnabled"] as? Bool, true)
+        XCTAssertEqual(verification["currentEnabled"] as? Bool, true)
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/form")
+        XCTAssertEqual(verification["tagName"] as? String, "button")
         XCTAssertEqual(verification["disabled"] as? Bool, false)
         XCTAssertEqual(verification["readOnly"] as? Bool, false)
         XCTAssertEqual(verification["matched"] as? Bool, true)

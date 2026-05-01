@@ -39,6 +39,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - DevTools ready-state waiting: `03 browser wait-ready` waits for `document.readyState` to reach loading, interactive, or complete before the next inspection or action.
 - DevTools title waiting: `03 browser wait-title` waits for tab title metadata to match without reading page contents.
 - DevTools checked-state waiting: `03 browser wait-checked` waits for checkbox or radio state to match using read-only DevTools runtime evaluation.
+- DevTools enabled-state waiting: `03 browser wait-enabled` waits for one selector to become enabled or disabled using read-only DevTools runtime evaluation.
 
 ## Relationship To The Product
 
