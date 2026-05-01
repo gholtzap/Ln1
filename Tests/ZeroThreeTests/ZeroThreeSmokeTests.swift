@@ -585,6 +585,119 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(latest["transcriptID"] as? String, transcriptID)
     }
 
+    func testWorkflowResumeSuggestsBrowserActionsAfterDOMInspection() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-dom-resume-\(UUID().uuidString)")
+        let fillWorkflowLog = directory.appendingPathComponent("fill-workflow-runs.jsonl")
+        let clickWorkflowLog = directory.appendingPathComponent("click-workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let baseExecution: [String: Any] = [
+            "argv": [
+                "03", "browser", "dom",
+                "--endpoint", endpoint,
+                "--id", "page-1",
+                "--allow-risk", "medium"
+            ],
+            "exitCode": 0,
+            "timedOut": false
+        ]
+
+        let fillTranscript: [String: Any] = [
+            "transcriptID": "fill-transcript",
+            "operation": "read-browser",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": baseExecution.merging([
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tab": ["id": "page-1"],
+                    "elements": [
+                        [
+                            "id": "dom.1",
+                            "selector": "input[name=\"q\"]",
+                            "tagName": "input",
+                            "role": "textbox",
+                            "inputType": "search",
+                            "disabled": false
+                        ]
+                    ]
+                ]
+            ]) { _, new in new }
+        ]
+        try writeJSONObjectLine(fillTranscript, to: fillWorkflowLog)
+
+        let fillResume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", fillWorkflowLog.path,
+            "--operation", "read-browser",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(fillResume.status, 0, fillResume.stderr)
+        let fillObject = try decodeJSONObject(fillResume.stdout)
+        XCTAssertEqual(fillObject["status"] as? String, "completed")
+        XCTAssertEqual(fillObject["nextArguments"] as? [String], [
+            "03", "browser", "fill",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--text", "Describe text",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((fillObject["message"] as? String)?.contains("text field") == true)
+
+        let clickTranscript: [String: Any] = [
+            "transcriptID": "click-transcript",
+            "operation": "read-browser",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": baseExecution.merging([
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tab": ["id": "page-1"],
+                    "elements": [
+                        [
+                            "id": "dom.1",
+                            "selector": "button[type=\"submit\"]",
+                            "tagName": "button",
+                            "role": "button",
+                            "disabled": false
+                        ]
+                    ]
+                ]
+            ]) { _, new in new }
+        ]
+        try writeJSONObjectLine(clickTranscript, to: clickWorkflowLog)
+
+        let clickResume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", clickWorkflowLog.path,
+            "--operation", "read-browser",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(clickResume.status, 0, clickResume.stderr)
+        let clickObject = try decodeJSONObject(clickResume.stdout)
+        XCTAssertEqual(clickObject["status"] as? String, "completed")
+        XCTAssertEqual(clickObject["nextArguments"] as? [String], [
+            "03", "browser", "click",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "button[type=\"submit\"]",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((clickObject["message"] as? String)?.contains("actionable element") == true)
+    }
+
     func testWorkflowRunRejectsMutatingExecutionMode() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03 workflow run reject \(UUID().uuidString)")
@@ -2946,6 +3059,12 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let data = try XCTUnwrap(string.data(using: .utf8))
         let object = try JSONSerialization.jsonObject(with: data)
         return try XCTUnwrap(object as? [String: Any])
+    }
+
+    private func writeJSONObjectLine(_ object: [String: Any], to url: URL) throws {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let line = String(decoding: data, as: UTF8.self) + "\n"
+        try line.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private var packageRoot: URL {

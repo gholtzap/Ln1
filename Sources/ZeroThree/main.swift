@@ -1874,16 +1874,29 @@ final class ZeroThreeCLI {
     ) -> (arguments: [String], message: String)? {
         guard latest["operation"] as? String == "read-browser",
               let execution = latest["execution"] as? [String: Any],
-              let outputJSON = execution["outputJSON"] as? [String: Any],
-              let tabs = outputJSON["tabs"] as? [[String: Any]],
-              let firstTab = tabs.first,
-              let tabID = firstTab["id"] as? String else {
+              let outputJSON = execution["outputJSON"] as? [String: Any] else {
             return nil
         }
 
         let endpoint = outputJSON["endpoint"] as? String
             ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--endpoint")
             ?? "http://127.0.0.1:9222"
+
+        if let domRecommendation = workflowBrowserDOMRecommendation(
+            outputJSON: outputJSON,
+            execution: execution,
+            endpoint: endpoint
+        ) {
+            return domRecommendation
+        }
+
+        guard
+              let tabs = outputJSON["tabs"] as? [[String: Any]],
+              let firstTab = tabs.first,
+              let tabID = firstTab["id"] as? String else {
+            return nil
+        }
+
         return (
             arguments: [
                 "03", "workflow", "run",
@@ -1895,6 +1908,99 @@ final class ZeroThreeCLI {
             ],
             message: "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
         )
+    }
+
+    private func workflowBrowserDOMRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String
+    ) -> (arguments: [String], message: String)? {
+        guard let elements = outputJSON["elements"] as? [[String: Any]], !elements.isEmpty else {
+            return nil
+        }
+        let tab = outputJSON["tab"] as? [String: Any]
+        guard let tabID = tab?["id"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        if let fillTarget = elements.first(where: workflowDOMElementAcceptsText),
+           let selector = fillTarget["selector"] as? String {
+            return (
+                arguments: [
+                    "03", "browser", "fill",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--text", "Describe text",
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser DOM inspection found a text field; fill it by selector after replacing the text and reason."
+            )
+        }
+
+        if let clickTarget = elements.first(where: workflowDOMElementCanClick),
+           let selector = clickTarget["selector"] as? String {
+            return (
+                arguments: [
+                    "03", "browser", "click",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser DOM inspection found an actionable element; click it by selector after confirming intent."
+            )
+        }
+
+        return nil
+    }
+
+    private func workflowDOMElementAcceptsText(_ element: [String: Any]) -> Bool {
+        guard let selector = element["selector"] as? String, !selector.isEmpty else {
+            return false
+        }
+        if element["disabled"] as? Bool == true {
+            return false
+        }
+        let tagName = element["tagName"] as? String
+        let role = element["role"] as? String
+        let inputType = element["inputType"] as? String
+        if tagName == "textarea" || role == "textbox" {
+            return workflowInputTypeAcceptsText(inputType)
+        }
+        return tagName == "input" && workflowInputTypeAcceptsText(inputType)
+    }
+
+    private func workflowInputTypeAcceptsText(_ inputType: String?) -> Bool {
+        guard let inputType else {
+            return true
+        }
+        switch inputType {
+        case "text", "search", "email", "url", "tel", "number":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func workflowDOMElementCanClick(_ element: [String: Any]) -> Bool {
+        guard let selector = element["selector"] as? String, !selector.isEmpty else {
+            return false
+        }
+        if element["disabled"] as? Bool == true {
+            return false
+        }
+        let tagName = element["tagName"] as? String
+        let role = element["role"] as? String
+        let attributes = element["attributes"] as? [String: Any]
+        return role == "button"
+            || role == "link"
+            || tagName == "button"
+            || tagName == "a"
+            || attributes?["href"] != nil
     }
 
     private func workflowArgumentValue(in arguments: [String]?, for option: String) -> String? {
@@ -6373,6 +6479,20 @@ final class ZeroThreeCLI {
               "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
               "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
               "message": "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
+            }
+          },
+          "workflowResumeDOM": {
+            "command": "03 workflow resume --allow-risk medium --operation read-browser",
+            "result": {
+              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "operation": "read-browser",
+              "status": "completed",
+              "transcriptID": "UUID",
+              "latestOperation": "read-browser",
+              "blockers": [],
+              "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "message": "Latest browser DOM inspection found an actionable element; click it by selector after confirming intent."
             }
           },
           "workflowWaitFile": {
