@@ -53,6 +53,8 @@ The system should support task execution as a sequence of observations and actio
 - Browser checked-state wait resume: after a successful `wait-browser-checked` transcript, `03 workflow resume --operation wait-browser-checked` suggests a dry-run DOM inspection for the matched form state.
 - Browser enabled-state wait workflow: `03 workflow run --operation wait-browser-enabled ... --dry-run false` waits for an element to become enabled or disabled before the next browser action.
 - Browser enabled-state wait resume: after a successful `wait-browser-enabled` transcript, `03 workflow resume --operation wait-browser-enabled` suggests a direct action when the enabled element is actionable.
+- Browser focus-state wait workflow: `03 workflow run --operation wait-browser-focus ... --dry-run false` waits for an element to become focused or unfocused before inspecting or acting.
+- Browser focus-state wait resume: after a successful `wait-browser-focus` transcript, `03 workflow resume --operation wait-browser-focus` suggests a dry-run DOM inspection for the focused element state.
 
 ## Relationship To The Product
 

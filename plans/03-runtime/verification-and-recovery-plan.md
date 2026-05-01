@@ -30,6 +30,7 @@ The system should define expected outcomes for actions, observe whether those ou
 - Browser form fill verification: `03 browser fill` verifies that the targeted form field contains text with the requested length after dispatching input/change events.
 - Browser navigation verification: `03 browser navigate` verifies that the tab reaches the expected URL after a DevTools navigation, with exact, prefix, or contains matching for redirect-aware workflows.
 - Browser enabled-state verification: `03 browser wait-enabled` provides bounded evidence that a target selector is enabled or disabled before the assistant tries to click, fill, or choose it.
+- Browser focus-state verification: `03 browser wait-focus` provides bounded evidence that a target selector is focused or unfocused before the assistant sends keyboard input or inspects follow-up state.
 - Accessibility target identity verification: `03 perform --expect-identity --min-identity-confidence` verifies the resolved element's current stable identity before invoking an Accessibility action, preventing stale path IDs from acting on a different control.
 
 ## Relationship To The Product

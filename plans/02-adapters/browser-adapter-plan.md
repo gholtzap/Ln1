@@ -42,6 +42,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - DevTools title waiting: `03 browser wait-title` waits for tab title metadata to match without reading page contents.
 - DevTools checked-state waiting: `03 browser wait-checked` waits for checkbox or radio state to match using read-only DevTools runtime evaluation.
 - DevTools enabled-state waiting: `03 browser wait-enabled` waits for one selector to become enabled or disabled using read-only DevTools runtime evaluation.
+- DevTools focus-state waiting: `03 browser wait-focus` waits for one selector to become focused or unfocused using read-only DevTools runtime evaluation.
 
 ## Relationship To The Product
 

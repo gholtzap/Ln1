@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-clipboard`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-clipboard`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -77,6 +77,7 @@ Examples:
 .build/debug/03 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
 .build/debug/03 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
 .build/debug/03 workflow preflight --operation wait-browser-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true
+.build/debug/03 workflow preflight --operation wait-browser-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true
 .build/debug/03 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
@@ -136,6 +137,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 
 `wait-browser-enabled` is a non-mutating workflow operation for bounded element readiness checks. It polls the tab's DevTools runtime until `--selector` matches the expected `--enabled true|false` state, accounting for native disabled controls and `aria-disabled="true"`.
 
+`wait-browser-focus` is a non-mutating workflow operation for bounded keyboard focus checks. It polls the tab's DevTools runtime until `--selector` matches the expected `--focused true|false` state.
+
 After a successful `wait-browser-url` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the arrived page so the next step can be selected from the new page state.
 
 After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
@@ -153,6 +156,8 @@ After a successful `wait-browser-title` transcript, `workflow resume` suggests a
 After a successful `wait-browser-checked` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched form state.
 
 After a successful `wait-browser-enabled` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the now-enabled selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
+
+After a successful `wait-browser-focus` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the focused element state.
 
 Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
 
@@ -645,7 +650,15 @@ Wait for an element to become enabled or disabled without mutating the page:
 
 `browser.waitEnabled` is a low-risk read action. It polls one selector through the tab's DevTools runtime until the enabled state matches, returning tag, input type, disabled/read-only metadata, current URL, and match status without clicking the element.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed focus control, typed key presses, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded selector count checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, bounded checked-state readiness checks, and bounded enabled-state readiness checks.
+Wait for an element to become focused or unfocused without mutating the page:
+
+```sh
+.build/debug/03 browser wait-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true --timeout-ms 5000
+```
+
+`browser.waitFocus` is a low-risk read action. It polls one selector through the tab's DevTools runtime until the focus state matches, returning target and active-element metadata, current URL, and match status without focusing the element.
+
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed focus control, typed key presses, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded selector count checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, bounded checked-state readiness checks, bounded enabled-state readiness checks, and bounded focus-state readiness checks.
 
 ## Product Direction
 
