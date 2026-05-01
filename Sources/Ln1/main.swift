@@ -1339,7 +1339,14 @@ struct FilesystemWaitResult: Codable {
     let platform: String
     let path: String
     let expectedExists: Bool
+    let expectedSizeBytes: Int?
+    let expectedDigest: String?
+    let algorithm: String?
+    let maxFileBytes: Int?
     let matched: Bool
+    let sizeMatched: Bool?
+    let digestMatched: Bool?
+    let currentDigest: String?
     let elapsedMilliseconds: Int
     let timeoutMilliseconds: Int
     let intervalMilliseconds: Int
@@ -3773,6 +3780,11 @@ final class Ln1CLI {
     private func workflowPreflightWaitFile() -> WorkflowPreflight {
         var prerequisites: [DoctorCheck] = []
         let path = option("--path")
+        let expectedExists = option("--exists").map(parseBool) ?? true
+        let expectedSizeBytes = option("--size-bytes")
+        let expectedDigest = option("--digest")
+        let algorithm = option("--algorithm")
+        let maxFileBytes = option("--max-file-bytes")
         if path == nil {
             prerequisites.append(DoctorCheck(
                 name: "workflow.path",
@@ -3782,20 +3794,87 @@ final class Ln1CLI {
                 remediation: "Pass `--path PATH`."
             ))
         }
+        if let expectedSizeBytes {
+            do {
+                _ = try fileExpectedSizeBytes(expectedSizeBytes)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.fileSize",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-negative integer with `--size-bytes N`."
+                ))
+            }
+        }
+        if let expectedDigest, !isSHA256HexDigest(expectedDigest) {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.fileDigest",
+                status: "fail",
+                required: true,
+                message: "file digest must be a 64-character SHA-256 hex digest",
+                remediation: "Pass a digest from `Ln1 files checksum --path PATH` with `--digest HEX`."
+            ))
+        }
+        if let algorithm {
+            do {
+                _ = try normalizedChecksumAlgorithm(algorithm)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.fileDigestAlgorithm",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--algorithm sha256`."
+                ))
+            }
+        }
+        if let maxFileBytes {
+            do {
+                _ = try fileMaxBytes(maxFileBytes, optionName: "--max-file-bytes")
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.fileMaxBytes",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-negative integer with `--max-file-bytes N`."
+                ))
+            }
+        }
+        if expectedExists == false && (expectedSizeBytes != nil || expectedDigest != nil) {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.fileMetadataExpectation",
+                status: "fail",
+                required: true,
+                message: "wait-file cannot verify size or digest while expecting the path to be missing.",
+                remediation: "Use `--exists true` with metadata expectations, or remove `--size-bytes` and `--digest`."
+            ))
+        }
 
-        let expectedExists = option("--exists").map(parseBool) ?? true
         let waitTimeoutMilliseconds = max(100, option("--wait-timeout-ms").flatMap(Int.init) ?? 5_000)
         let intervalMilliseconds = max(50, option("--interval-ms").flatMap(Int.init) ?? 100)
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let path {
-            nextArguments = [
+            var arguments = [
                 "Ln1", "files", "wait",
                 "--path", path,
                 "--exists", String(expectedExists),
                 "--timeout-ms", String(waitTimeoutMilliseconds),
                 "--interval-ms", String(intervalMilliseconds)
             ]
+            if let expectedSizeBytes {
+                arguments += ["--size-bytes", expectedSizeBytes]
+            }
+            if let expectedDigest {
+                arguments += ["--digest", expectedDigest.lowercased()]
+                arguments += ["--algorithm", algorithm ?? "sha256"]
+                if let maxFileBytes {
+                    arguments += ["--max-file-bytes", maxFileBytes]
+                }
+            }
+            nextArguments = arguments
         } else {
             nextArguments = nil
         }
@@ -5450,9 +5529,29 @@ final class Ln1CLI {
             let expectedExists = option("--exists").map(parseBool) ?? true
             let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
             let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+            let expectedSizeBytes = try option("--size-bytes").map(fileExpectedSizeBytes)
+            let rawExpectedDigest = option("--digest")
+            if let rawExpectedDigest, !isSHA256HexDigest(rawExpectedDigest) {
+                throw CommandError(description: "file digest must be a 64-character SHA-256 hex digest")
+            }
+            let expectedDigest = rawExpectedDigest?.lowercased()
+            if expectedExists == false && (expectedSizeBytes != nil || expectedDigest != nil) {
+                throw CommandError(description: "files wait cannot verify size or digest while expecting the path to be missing")
+            }
+            let algorithm: String?
+            if expectedDigest == nil {
+                algorithm = nil
+            } else {
+                algorithm = try normalizedChecksumAlgorithm(option("--algorithm") ?? "sha256")
+            }
+            let maxFileBytes = try fileMaxBytes(option("--max-file-bytes") ?? "104857600", optionName: "--max-file-bytes")
             let result = try waitForFileState(
                 at: requestedFileURL(),
                 expectedExists: expectedExists,
+                expectedSizeBytes: expectedSizeBytes,
+                expectedDigest: expectedDigest,
+                algorithm: algorithm,
+                maxFileBytes: maxFileBytes,
                 timeoutMilliseconds: timeoutMilliseconds,
                 intervalMilliseconds: intervalMilliseconds
             )
@@ -6737,32 +6836,69 @@ final class Ln1CLI {
     private func waitForFileState(
         at url: URL,
         expectedExists: Bool,
+        expectedSizeBytes: Int?,
+        expectedDigest: String?,
+        algorithm: String?,
+        maxFileBytes: Int,
         timeoutMilliseconds: Int,
         intervalMilliseconds: Int
     ) throws -> FilesystemWaitResult {
         let start = Date()
         let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
-        var exists = FileManager.default.fileExists(atPath: url.path)
+        var snapshot = fileWaitSnapshot(
+            at: url,
+            expectedDigest: expectedDigest,
+            algorithm: algorithm,
+            maxFileBytes: maxFileBytes
+        )
 
-        while exists != expectedExists && Date() < deadline {
+        while !fileWaitSnapshot(
+            snapshot,
+            matchesExpectedExists: expectedExists,
+            expectedSizeBytes: expectedSizeBytes,
+            expectedDigest: expectedDigest
+        ), Date() < deadline {
             let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
             let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
             Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
-            exists = FileManager.default.fileExists(atPath: url.path)
+            snapshot = fileWaitSnapshot(
+                at: url,
+                expectedDigest: expectedDigest,
+                algorithm: algorithm,
+                maxFileBytes: maxFileBytes
+            )
         }
 
         let elapsedMilliseconds = max(0, Int(Date().timeIntervalSince(start) * 1_000))
-        let matched = exists == expectedExists
-        let record = exists ? try fileRecord(for: url) : nil
+        let matched = fileWaitSnapshot(
+            snapshot,
+            matchesExpectedExists: expectedExists,
+            expectedSizeBytes: expectedSizeBytes,
+            expectedDigest: expectedDigest
+        )
+        let record = snapshot.record
+        let sizeMatched = expectedSizeBytes.map { record?.sizeBytes == $0 }
+        let digestMatched = expectedDigest.map { snapshot.digest == $0 }
         let message: String
         if matched {
-            message = expectedExists
-                ? "Path exists at \(url.path)."
-                : "Path does not exist at \(url.path)."
+            if expectedExists {
+                if expectedSizeBytes != nil || expectedDigest != nil {
+                    message = "Path exists at \(url.path) and matched expected metadata."
+                } else {
+                    message = "Path exists at \(url.path)."
+                }
+            } else {
+                message = "Path does not exist at \(url.path)."
+            }
         } else {
-            message = expectedExists
-                ? "Timed out waiting for path to exist at \(url.path)."
-                : "Timed out waiting for path to disappear at \(url.path)."
+            if expectedExists {
+                let digestMessage = snapshot.digestError.map { " Last digest check: \($0)" } ?? ""
+                message = expectedSizeBytes != nil || expectedDigest != nil
+                    ? "Timed out waiting for path metadata to match at \(url.path).\(digestMessage)"
+                    : "Timed out waiting for path to exist at \(url.path)."
+            } else {
+                message = "Timed out waiting for path to disappear at \(url.path)."
+            }
         }
 
         return FilesystemWaitResult(
@@ -6770,13 +6906,90 @@ final class Ln1CLI {
             platform: "macOS",
             path: url.path,
             expectedExists: expectedExists,
+            expectedSizeBytes: expectedSizeBytes,
+            expectedDigest: expectedDigest,
+            algorithm: algorithm,
+            maxFileBytes: expectedDigest == nil ? nil : maxFileBytes,
             matched: matched,
+            sizeMatched: sizeMatched,
+            digestMatched: digestMatched,
+            currentDigest: snapshot.digest,
             elapsedMilliseconds: elapsedMilliseconds,
             timeoutMilliseconds: timeoutMilliseconds,
             intervalMilliseconds: intervalMilliseconds,
             file: record,
             message: message
         )
+    }
+
+    private struct FileWaitSnapshot {
+        let exists: Bool
+        let record: FileRecord?
+        let digest: String?
+        let digestError: String?
+    }
+
+    private func fileWaitSnapshot(
+        at url: URL,
+        expectedDigest: String?,
+        algorithm: String?,
+        maxFileBytes: Int
+    ) -> FileWaitSnapshot {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return FileWaitSnapshot(exists: false, record: nil, digest: nil, digestError: nil)
+        }
+
+        guard let record = try? fileRecord(for: url) else {
+            return FileWaitSnapshot(exists: true, record: nil, digest: nil, digestError: "file metadata is unavailable")
+        }
+
+        guard expectedDigest != nil else {
+            return FileWaitSnapshot(exists: true, record: record, digest: nil, digestError: nil)
+        }
+        guard algorithm == "sha256" else {
+            return FileWaitSnapshot(exists: true, record: record, digest: nil, digestError: "unsupported checksum algorithm")
+        }
+        guard record.kind == "regularFile" else {
+            return FileWaitSnapshot(exists: true, record: record, digest: nil, digestError: "file is not a regular file")
+        }
+        guard record.readable else {
+            return FileWaitSnapshot(exists: true, record: record, digest: nil, digestError: "file is not readable")
+        }
+        if let size = record.sizeBytes, size > maxFileBytes {
+            return FileWaitSnapshot(exists: true, record: record, digest: nil, digestError: "file size \(size) exceeds --max-file-bytes \(maxFileBytes)")
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return FileWaitSnapshot(exists: true, record: record, digest: digest, digestError: nil)
+        } catch {
+            return FileWaitSnapshot(exists: true, record: record, digest: nil, digestError: error.localizedDescription)
+        }
+    }
+
+    private func fileWaitSnapshot(
+        _ snapshot: FileWaitSnapshot,
+        matchesExpectedExists expectedExists: Bool,
+        expectedSizeBytes: Int?,
+        expectedDigest: String?
+    ) -> Bool {
+        guard snapshot.exists == expectedExists else {
+            return false
+        }
+        guard expectedExists else {
+            return true
+        }
+        guard let record = snapshot.record else {
+            return false
+        }
+        if let expectedSizeBytes, record.sizeBytes != expectedSizeBytes {
+            return false
+        }
+        if let expectedDigest, snapshot.digest != expectedDigest {
+            return false
+        }
+        return true
     }
 
     private struct FileWatchSnapshot {
@@ -11812,10 +12025,7 @@ final class Ln1CLI {
         algorithm: String,
         maxFileBytes: Int
     ) throws -> FilesystemChecksumResult {
-        let normalizedAlgorithm = algorithm.lowercased()
-        guard normalizedAlgorithm == "sha256" else {
-            throw CommandError(description: "unsupported checksum algorithm '\(algorithm)'. Use sha256.")
-        }
+        let normalizedAlgorithm = try normalizedChecksumAlgorithm(algorithm)
 
         let record = try fileRecord(for: url)
         guard record.kind == "regularFile" else {
@@ -12209,6 +12419,28 @@ final class Ln1CLI {
 
     private func isSHA256HexDigest(_ value: String) -> Bool {
         value.range(of: #"^[0-9a-fA-F]{64}$"#, options: .regularExpression) != nil
+    }
+
+    private func normalizedChecksumAlgorithm(_ algorithm: String) throws -> String {
+        let normalizedAlgorithm = algorithm.lowercased()
+        guard normalizedAlgorithm == "sha256" else {
+            throw CommandError(description: "unsupported checksum algorithm '\(algorithm)'. Use sha256.")
+        }
+        return normalizedAlgorithm
+    }
+
+    private func fileExpectedSizeBytes(_ rawValue: String) throws -> Int {
+        guard let value = Int(rawValue), value >= 0 else {
+            throw CommandError(description: "--size-bytes must be a non-negative integer")
+        }
+        return value
+    }
+
+    private func fileMaxBytes(_ rawValue: String, optionName: String) throws -> Int {
+        guard let value = Int(rawValue), value >= 0 else {
+            throw CommandError(description: "\(optionName) must be a non-negative integer")
+        }
+        return value
     }
 
     private func booleanOption(_ rawValue: String, optionName: String) throws -> Bool {
@@ -13877,14 +14109,20 @@ final class Ln1CLI {
             }
           },
           "fileWait": {
-            "command": "Ln1 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100",
+            "command": "Ln1 files wait --path ~/Downloads/report.pdf --exists true --size-bytes 1048576 --digest 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824 --timeout-ms 5000 --interval-ms 100",
             "result": {
               "path": "/Users/example/Downloads/report.pdf",
               "expectedExists": true,
+              "expectedSizeBytes": 1048576,
+              "expectedDigest": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+              "algorithm": "sha256",
               "matched": true,
+              "sizeMatched": true,
+              "digestMatched": true,
+              "currentDigest": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
               "elapsedMilliseconds": 100,
               "file": { "path": "/Users/example/Downloads/report.pdf", "kind": "regularFile" },
-              "message": "Path exists at /Users/example/Downloads/report.pdf."
+              "message": "Path exists at /Users/example/Downloads/report.pdf and matched expected metadata."
             }
           },
           "fileWatch": {
@@ -14028,11 +14266,11 @@ final class Ln1CLI {
           Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           Ln1 policy
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--size-bytes N] [--digest SHA256] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--size-bytes N] [--digest SHA256] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
@@ -14047,7 +14285,7 @@ final class Ln1CLI {
           Ln1 files stat --path PATH
           Ln1 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
-          Ln1 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
+          Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
           Ln1 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
           Ln1 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
           Ln1 files compare --path LEFT --to RIGHT [--algorithm sha256] [--max-file-bytes N]
@@ -14099,7 +14337,7 @@ final class Ln1CLI {
           - `audit` can filter records by command name and outcome code before applying the limit.
           - `task` stores and reads task-scoped memory as medium-risk local persistence with sensitive-summary redaction.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
-          - `files wait` waits for a path to exist or disappear and returns typed evidence.
+          - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
           - `files watch` waits for created, deleted, or modified file metadata events under a path and returns normalized event records.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
           - `files compare` compares two regular files by bounded SHA-256 digest and size.

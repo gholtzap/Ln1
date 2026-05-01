@@ -315,6 +315,46 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowPreflightWaitFileForwardsMetadataExpectations() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-report-\(UUID().uuidString).pdf")
+            .path
+        let digest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "wait-file",
+            "--path", path,
+            "--exists", "true",
+            "--size-bytes", "5",
+            "--digest", digest.uppercased(),
+            "--max-file-bytes", "10",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-file")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "wait",
+            "--path", path,
+            "--exists", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50",
+            "--size-bytes", "5",
+            "--digest", digest,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "10"
+        ])
+    }
+
     func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-browser-action-\(UUID().uuidString)")
@@ -5440,6 +5480,73 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
         XCTAssertEqual(fileObject["path"] as? String, file.path)
         XCTAssertEqual(fileObject["kind"] as? String, "regularFile")
+    }
+
+    func testFilesWaitCanMatchExpectedSizeAndDigestWithoutContents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-wait-digest-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let digest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        let result = try runLn1([
+            "files",
+            "wait",
+            "--path", file.path,
+            "--exists", "true",
+            "--size-bytes", "5",
+            "--digest", digest.uppercased(),
+            "--max-file-bytes", "10",
+            "--timeout-ms", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let fileObject = try XCTUnwrap(object["file"] as? [String: Any])
+
+        XCTAssertEqual(object["path"] as? String, file.path)
+        XCTAssertEqual(object["expectedExists"] as? Bool, true)
+        XCTAssertEqual(object["expectedSizeBytes"] as? Int, 5)
+        XCTAssertEqual(object["expectedDigest"] as? String, digest)
+        XCTAssertEqual(object["algorithm"] as? String, "sha256")
+        XCTAssertEqual(object["maxFileBytes"] as? Int, 10)
+        XCTAssertEqual(object["matched"] as? Bool, true)
+        XCTAssertEqual(object["sizeMatched"] as? Bool, true)
+        XCTAssertEqual(object["digestMatched"] as? Bool, true)
+        XCTAssertEqual(object["currentDigest"] as? String, digest)
+        XCTAssertEqual(fileObject["path"] as? String, file.path)
+        XCTAssertNil(object["contents"])
+    }
+
+    func testFilesWaitReportsDigestMismatchWithoutContents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-wait-digest-mismatch-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let expectedDigest = String(repeating: "0", count: 64)
+        let actualDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        let result = try runLn1([
+            "files",
+            "wait",
+            "--path", file.path,
+            "--exists", "true",
+            "--digest", expectedDigest,
+            "--timeout-ms", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["expectedDigest"] as? String, expectedDigest)
+        XCTAssertEqual(object["matched"] as? Bool, false)
+        XCTAssertEqual(object["digestMatched"] as? Bool, false)
+        XCTAssertEqual(object["currentDigest"] as? String, actualDigest)
+        XCTAssertNil(object["contents"])
     }
 
     func testFilesWaitReturnsMatchedMissingPathWithoutMetadata() throws {

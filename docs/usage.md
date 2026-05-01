@@ -82,7 +82,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
 .build/debug/Ln1 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
 .build/debug/Ln1 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
-.build/debug/Ln1 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
+.build/debug/Ln1 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --size-bytes 1048576 --digest SHA256_HEX --wait-timeout-ms 5000
 ```
 
 When an automation loop needs an executable plan, use `workflow next` with the same operation and options:
@@ -117,7 +117,7 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 
 Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct.
 
-`wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline.
+`wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline. Pass `--size-bytes N` and/or `--digest SHA256` when the file must exist with specific metadata before the workflow should continue.
 
 `wait-clipboard` is a non-mutating workflow operation for bounded clipboard metadata waiting. It can wait for the pasteboard change count to differ from `--changed-from N`, for plain-text availability with `--has-string true|false`, or for a specific text digest with `--string-digest HEX`, without returning clipboard text.
 
@@ -389,10 +389,11 @@ Wait for a path to appear or disappear with bounded polling:
 
 ```sh
 .build/debug/Ln1 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100
+.build/debug/Ln1 files wait --path ~/Downloads/report.pdf --exists true --size-bytes 1048576 --digest SHA256_HEX --timeout-ms 30000
 .build/debug/Ln1 files wait --path ~/Downloads/report.part --exists false --timeout-ms 30000
 ```
 
-`files wait` returns structured evidence about whether the expected existence state matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`. This is useful for downloads, generated files, and verification loops without relying on Finder state.
+`files wait` returns structured evidence about whether the expected existence state and optional size/digest metadata matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`; when `--digest` is provided, it also returns the current SHA-256 digest and whether it matched without exposing file contents. This is useful for downloads, generated files, and verification loops without relying on Finder state.
 
 Watch a file or directory for metadata changes:
 
