@@ -244,7 +244,58 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["canProceed"] as? Bool, true)
         XCTAssertTrue(blockers.isEmpty)
         XCTAssertTrue((object["nextCommand"] as? String)?.contains("03 files move") == true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "03", "files", "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "filesystem.sourceExists" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testWorkflowNextReturnsStructuredArgvWithoutExecutingMove() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03 workflow next \(UUID().uuidString)")
+        let source = directory.appendingPathComponent("source file.txt")
+        let destination = directory.appendingPathComponent("destination file.txt")
+        let auditLog = directory.appendingPathComponent("audit log.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow".write(to: source, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "workflow",
+            "next",
+            "--operation", "move-file",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "move-file")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "03", "files", "move",
+            "--path", source.path,
+            "--to", destination.path,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((command["display"] as? String)?.contains("'") == true)
+        XCTAssertTrue((command["display"] as? String)?.contains("source file.txt") == true)
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }

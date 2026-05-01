@@ -107,6 +107,28 @@ struct WorkflowPreflight: Codable {
     let prerequisites: [DoctorCheck]
     let blockers: [String]
     let nextCommand: String?
+    let nextArguments: [String]?
+    let message: String
+}
+
+struct WorkflowCommand: Codable {
+    let display: String
+    let argv: [String]
+    let risk: String
+    let mutates: Bool
+    let requiresReason: Bool
+}
+
+struct WorkflowNextPlan: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let ready: Bool
+    let risk: String
+    let mutates: Bool
+    let blockers: [String]
+    let command: WorkflowCommand?
+    let preflight: WorkflowPreflight
     let message: String
 }
 
@@ -1108,27 +1130,63 @@ final class ZeroThreeCLI {
         switch mode {
         case "preflight":
             try workflowPreflight()
+        case "next":
+            try workflowNext()
         default:
             throw CommandError(description: "unknown workflow mode '\(mode)'")
         }
     }
 
     private func workflowPreflight() throws {
+        let result = try workflowPreflightForOperation()
+        try writeJSON(result)
+    }
+
+    private func workflowNext() throws {
+        let preflight = try workflowPreflightForOperation()
+        let command: WorkflowCommand?
+        if preflight.canProceed, let argv = preflight.nextArguments {
+            command = WorkflowCommand(
+                display: workflowDisplayCommand(argv),
+                argv: argv,
+                risk: preflight.risk,
+                mutates: preflight.mutates,
+                requiresReason: preflight.mutates
+            )
+        } else {
+            command = nil
+        }
+
+        try writeJSON(WorkflowNextPlan(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: preflight.operation,
+            ready: command != nil,
+            risk: preflight.risk,
+            mutates: preflight.mutates,
+            blockers: preflight.blockers,
+            command: command,
+            preflight: preflight,
+            message: command == nil
+                ? "Workflow is blocked; run the remediation command from preflight before executing."
+                : "Workflow is ready; execute the argv array directly or review the display command."
+        ))
+    }
+
+    private func workflowPreflightForOperation() throws -> WorkflowPreflight {
         let operation = try requiredOption("--operation")
-        let result: WorkflowPreflight
         switch operation {
         case "inspect-active-app":
-            result = workflowPreflightInspectActiveApp()
+            return workflowPreflightInspectActiveApp()
         case "control-active-app":
-            result = workflowPreflightControlActiveApp()
+            return workflowPreflightControlActiveApp()
         case "read-browser":
-            result = workflowPreflightReadBrowser()
+            return workflowPreflightReadBrowser()
         case "move-file":
-            result = try workflowPreflightMoveFile()
+            return try workflowPreflightMoveFile()
         default:
             throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, or move-file.")
         }
-        try writeJSON(result)
     }
 
     private func workflowPreflightInspectActiveApp() -> WorkflowPreflight {
@@ -1138,16 +1196,26 @@ final class ZeroThreeCLI {
             doctorDesktopMetadataCheck()
         ]
         let blockers = workflowBlockers(from: prerequisites)
-        let nextCommand = blockers.isEmpty
-            ? "03 state\(activePid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80"
-            : workflowRemediationCommand(for: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty {
+            var arguments = ["03", "state"]
+            if let activePid {
+                arguments += ["--pid", String(activePid)]
+            }
+            arguments += ["--depth", "3", "--max-children", "80"]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+        let nextCommand = nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites)
         return workflowPreflightResult(
             operation: "inspect-active-app",
             risk: "low",
             mutates: false,
             prerequisites: prerequisites,
             blockers: blockers,
-            nextCommand: nextCommand
+            nextCommand: nextCommand,
+            nextArguments: nextArguments
         )
     }
 
@@ -1183,12 +1251,22 @@ final class ZeroThreeCLI {
 
         let blockers = workflowBlockers(from: prerequisites)
         let nextCommand: String?
+        let nextArguments: [String]?
         if blockers.isEmpty, let element {
-            let pidArgument = activePid.map { " --pid \($0)" } ?? ""
-            let identityArgument = option("--expect-identity").map { " --expect-identity \($0)" } ?? ""
-            let confidenceArgument = option("--min-identity-confidence").map { " --min-identity-confidence \($0)" } ?? " --min-identity-confidence medium"
-            nextCommand = "03 perform\(pidArgument) --element \(element)\(identityArgument)\(confidenceArgument) --action \(action) --allow-risk \(risk) --reason \"Describe intent\""
+            var arguments = ["03", "perform"]
+            if let activePid {
+                arguments += ["--pid", String(activePid)]
+            }
+            arguments += ["--element", element]
+            if let expectedIdentity = option("--expect-identity") {
+                arguments += ["--expect-identity", expectedIdentity]
+            }
+            arguments += ["--min-identity-confidence", option("--min-identity-confidence") ?? "medium"]
+            arguments += ["--action", action, "--allow-risk", risk, "--reason", "Describe intent"]
+            nextArguments = arguments
+            nextCommand = workflowDisplayCommand(arguments)
         } else {
+            nextArguments = nil
             nextCommand = workflowRemediationCommand(for: prerequisites)
         }
 
@@ -1198,7 +1276,8 @@ final class ZeroThreeCLI {
             mutates: true,
             prerequisites: prerequisites,
             blockers: blockers,
-            nextCommand: nextCommand
+            nextCommand: nextCommand,
+            nextArguments: nextArguments
         )
     }
 
@@ -1216,11 +1295,27 @@ final class ZeroThreeCLI {
         let prerequisites = [requiredBrowserCheck]
         let blockers = workflowBlockers(from: prerequisites)
         let nextCommand: String?
+        let nextArguments: [String]?
         if blockers.isEmpty, let id = option("--id") {
-            nextCommand = "03 browser dom --id \(id) --allow-risk medium --max-elements 200 --max-text-characters 120 --reason \"Inspect browser state\""
+            var arguments = ["03", "browser", "dom"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += [
+                "--id", id,
+                "--allow-risk", "medium",
+                "--max-elements", "200",
+                "--max-text-characters", "120",
+                "--reason", "Inspect browser state"
+            ]
+            nextArguments = arguments
+            nextCommand = workflowDisplayCommand(arguments)
         } else if blockers.isEmpty {
-            nextCommand = "03 browser tabs --endpoint \(endpoint?.absoluteString ?? "http://127.0.0.1:9222")"
+            let arguments = ["03", "browser", "tabs", "--endpoint", endpoint?.absoluteString ?? "http://127.0.0.1:9222"]
+            nextArguments = arguments
+            nextCommand = workflowDisplayCommand(arguments)
         } else {
+            nextArguments = nil
             nextCommand = workflowRemediationCommand(for: prerequisites)
         }
 
@@ -1230,7 +1325,8 @@ final class ZeroThreeCLI {
             mutates: false,
             prerequisites: prerequisites,
             blockers: blockers,
-            nextCommand: nextCommand
+            nextCommand: nextCommand,
+            nextArguments: nextArguments
         )
     }
 
@@ -1272,11 +1368,29 @@ final class ZeroThreeCLI {
 
         let blockers = workflowBlockers(from: prerequisites)
         let nextCommand: String?
+        let nextArguments: [String]?
         if blockers.isEmpty, let sourcePath, let destinationPath {
-            nextCommand = "03 files move --path \(sourcePath) --to \(destinationPath) --allow-risk medium --reason \"Describe intent\""
+            let arguments = [
+                "03", "files", "move",
+                "--path", sourcePath,
+                "--to", destinationPath,
+                "--allow-risk", "medium",
+                "--reason", "Describe intent"
+            ]
+            nextArguments = arguments
+            nextCommand = workflowDisplayCommand(arguments)
         } else if sourcePath != nil, destinationPath != nil {
-            nextCommand = "03 files plan --operation move --path \(sourcePath!) --to \(destinationPath!) --allow-risk medium"
+            let arguments = [
+                "03", "files", "plan",
+                "--operation", "move",
+                "--path", sourcePath!,
+                "--to", destinationPath!,
+                "--allow-risk", "medium"
+            ]
+            nextArguments = arguments
+            nextCommand = workflowDisplayCommand(arguments)
         } else {
+            nextArguments = nil
             nextCommand = workflowRemediationCommand(for: prerequisites)
         }
 
@@ -1286,7 +1400,8 @@ final class ZeroThreeCLI {
             mutates: true,
             prerequisites: prerequisites,
             blockers: blockers,
-            nextCommand: nextCommand
+            nextCommand: nextCommand,
+            nextArguments: nextArguments
         )
     }
 
@@ -1296,7 +1411,8 @@ final class ZeroThreeCLI {
         mutates: Bool,
         prerequisites: [DoctorCheck],
         blockers: [String],
-        nextCommand: String?
+        nextCommand: String?,
+        nextArguments: [String]?
     ) -> WorkflowPreflight {
         WorkflowPreflight(
             generatedAt: ISO8601DateFormatter().string(from: Date()),
@@ -1308,6 +1424,7 @@ final class ZeroThreeCLI {
             prerequisites: prerequisites,
             blockers: blockers,
             nextCommand: nextCommand,
+            nextArguments: nextArguments,
             message: blockers.isEmpty
                 ? "\(operation) can proceed with the suggested command."
                 : "\(operation) is blocked; resolve required prerequisites first."
@@ -1322,6 +1439,20 @@ final class ZeroThreeCLI {
 
     private func workflowRemediationCommand(for prerequisites: [DoctorCheck]) -> String? {
         prerequisites.first { $0.required && $0.status != "pass" }?.remediation
+    }
+
+    private func workflowDisplayCommand(_ arguments: [String]) -> String {
+        arguments.map(shellQuotedArgument).joined(separator: " ")
+    }
+
+    private func shellQuotedArgument(_ argument: String) -> String {
+        if argument.isEmpty {
+            return "''"
+        }
+        if argument.range(of: #"^[A-Za-z0-9_@%+=:,./-]+$"#, options: .regularExpression) != nil {
+            return argument
+        }
+        return "'" + argument.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 
     private func observationBlockers(
@@ -5200,7 +5331,25 @@ final class ZeroThreeCLI {
               ],
               "blockers": [],
               "nextCommand": "03 state --pid 123 --depth 3 --max-children 80",
+              "nextArguments": ["03", "state", "--pid", "123", "--depth", "3", "--max-children", "80"],
               "message": "inspect-active-app can proceed with the suggested command."
+            }
+          },
+          "workflowNext": {
+            "command": "03 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium",
+            "result": {
+              "operation": "move-file",
+              "ready": true,
+              "risk": "medium",
+              "mutates": true,
+              "blockers": [],
+              "command": {
+                "display": "03 files move --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --reason 'Describe intent'",
+                "argv": ["03", "files", "move", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/b.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
+                "risk": "medium",
+                "mutates": true,
+                "requiresReason": true
+              }
             }
           },
           "observe": {
@@ -5771,6 +5920,7 @@ final class ZeroThreeCLI {
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|move-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID]
           03 apps [--all]
           03 desktop windows [--limit N] [--include-desktop] [--all-layers]
           03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]

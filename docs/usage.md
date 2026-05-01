@@ -64,6 +64,14 @@ Examples:
 .build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 ```
 
+When an automation loop needs an executable plan, use `workflow next` with the same operation and options:
+
+```sh
+.build/debug/03 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
+```
+
+`workflow next` embeds the full preflight result and, when unblocked, returns a structured command with both a display string and an `argv` array. Prefer the `argv` array when launching a follow-up command so paths, selectors, and reason text do not need shell parsing.
+
 ## Inspect Running Apps
 
 ```sh
