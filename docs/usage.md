@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -72,6 +72,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
 .build/debug/Ln1 workflow preflight --operation wait-browser-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least
 .build/debug/Ln1 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
+.build/debug/Ln1 workflow preflight --operation wait-browser-element-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '[data-testid=status]' --text "Saved successfully" --match contains
 .build/debug/Ln1 workflow preflight --operation wait-browser-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact
 .build/debug/Ln1 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
 .build/debug/Ln1 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
@@ -128,6 +129,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 
 `wait-browser-text` is a non-mutating workflow operation for bounded page text readiness checks. It polls visible page text until `--text` matches with `--match contains|exact`, returning only text lengths and SHA-256 digests rather than page text contents.
 
+`wait-browser-element-text` is a non-mutating workflow operation for bounded element text readiness checks. It polls one selector until `--text` matches with `--match contains|exact`, returning only selector metadata, text lengths, and SHA-256 digests rather than element text contents.
+
 `wait-browser-value` is a non-mutating workflow operation for bounded form value readiness checks. It polls one input, textarea, or select until `--text` matches the field value with `--match exact|contains`, returning only value lengths and SHA-256 digests rather than field contents.
 
 `wait-browser-ready` is a non-mutating workflow operation for bounded page load readiness checks. It polls `document.readyState` until the tab reaches `--state loading|interactive|complete`, defaulting to `complete`.
@@ -149,6 +152,8 @@ After a successful `wait-browser-selector` transcript, `workflow resume` suggest
 After a successful `wait-browser-count` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched collection state.
 
 After a successful `wait-browser-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched page state.
+
+After a successful `wait-browser-element-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched element state.
 
 After a successful `wait-browser-value` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched field state.
 
@@ -614,6 +619,14 @@ Wait for visible page text without returning page contents:
 ```
 
 `browser.waitText` is a low-risk read action. It polls page inner text until the expected value matches, returning only lengths, digests, URL, and match status.
+
+Wait for one element's text without returning text contents:
+
+```sh
+.build/debug/Ln1 browser wait-element-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '[data-testid=status]' --text "Saved successfully" --match contains --timeout-ms 5000
+```
+
+`browser.waitElementText` is a low-risk read action. It polls one selector's normalized text until the expected value matches, returning only lengths, digests, URL, target tag, selector, and match status.
 
 Wait for one field value without returning value contents:
 

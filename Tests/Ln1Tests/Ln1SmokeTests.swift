@@ -90,6 +90,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitText"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitText"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitText"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitElementText"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitElementText"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitElementText"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.waitValue"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitValue"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitValue"]?["mutates"] as? Bool, false)
@@ -706,6 +709,37 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "browser", "wait-text",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
+            "--text", "Saved successfully",
+            "--match", "contains",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitElementText = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-element-text",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "[data-testid=\"status\"]",
+            "--text", "Saved successfully",
+            "--match", "contains",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitElementText.status, 0, waitElementText.stderr)
+        let waitElementTextObject = try decodeJSONObject(waitElementText.stdout)
+        let waitElementTextBlockers = try XCTUnwrap(waitElementTextObject["blockers"] as? [String])
+        XCTAssertEqual(waitElementTextObject["operation"] as? String, "wait-browser-element-text")
+        XCTAssertEqual(waitElementTextObject["risk"] as? String, "low")
+        XCTAssertEqual(waitElementTextObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitElementTextBlockers.isEmpty)
+        XCTAssertEqual(waitElementTextObject["nextArguments"] as? [String], [
+            "Ln1", "browser", "wait-element-text",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "[data-testid=\"status\"]",
             "--text", "Saved successfully",
             "--match", "contains",
             "--timeout-ms", "500",
@@ -1833,6 +1867,69 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsDOMInspectionAfterBrowserElementTextWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-element-text-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-element-text-transcript",
+            "operation": "wait-browser-element-text",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "browser", "wait-element-text",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--selector", "[data-testid='status']",
+                    "--text", "Saved successfully"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": "[data-testid='status']",
+                    "verification": [
+                        "ok": true,
+                        "code": "element_text_matched",
+                        "selector": "[data-testid='status']",
+                        "currentURL": "https://example.com/form",
+                        "currentTextLength": 18
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-browser-element-text",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-element-text")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "read-browser",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
+    }
+
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserCountWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-count-wait-resume-\(UUID().uuidString)")
@@ -2694,6 +2791,11 @@ final class Ln1SmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitText"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitElementText"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -4626,6 +4728,89 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNil(verification["value"])
         XCTAssertNotNil(verification["expectedValueDigest"] as? String)
         XCTAssertNotNil(verification["currentValueDigest"] as? String)
+    }
+
+    func testBrowserWaitElementTextReturnsVerificationWithoutTextContents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-wait-element-text-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let textPayload: [String: Any] = [
+            "ok": true,
+            "code": "element_text_matched",
+            "message": "browser element text matched expected contains value",
+            "selector": "[data-testid='status']",
+            "currentText": "Saved successfully",
+            "currentURL": "https://example.com/form",
+            "tagName": "div",
+            "match": "contains",
+            "matched": true
+        ]
+        let textData = try JSONSerialization.data(withJSONObject: textPayload, options: [.sortedKeys])
+        let textJSONString = String(decoding: textData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": textJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Saved Page",
+            "url": "https://example.com/form",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "browser",
+            "wait-element-text",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "[data-testid='status']",
+            "--text", "Saved",
+            "--match", "contains",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["selector"] as? String, "[data-testid='status']")
+        XCTAssertEqual(object["expectedTextLength"] as? Int, 5)
+        XCTAssertEqual(object["match"] as? String, "contains")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(object["html"])
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "element_text_matched")
+        XCTAssertEqual(verification["selector"] as? String, "[data-testid='status']")
+        XCTAssertEqual(verification["expectedTextLength"] as? Int, 5)
+        XCTAssertEqual(verification["currentTextLength"] as? Int, 18)
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/form")
+        XCTAssertEqual(verification["tagName"] as? String, "div")
+        XCTAssertEqual(verification["match"] as? String, "contains")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertNil(verification["text"])
+        XCTAssertNotNil(verification["expectedTextDigest"] as? String)
+        XCTAssertNotNil(verification["currentTextDigest"] as? String)
     }
 
     func testBrowserWaitReadyReturnsVerificationWithoutMutating() throws {

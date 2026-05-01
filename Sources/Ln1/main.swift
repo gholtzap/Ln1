@@ -581,6 +581,48 @@ struct BrowserTextWaitResult: Codable {
     let message: String
 }
 
+struct BrowserElementTextWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let currentTextLength: Int?
+    let currentTextDigest: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserElementTextWaitPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let currentText: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserElementTextWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserElementTextWaitVerification
+    let message: String
+}
+
 struct BrowserValueWaitVerification: Codable {
     let ok: Bool
     let code: String
@@ -1992,6 +2034,8 @@ final class Ln1CLI {
             return workflowPreflightWaitBrowserCount()
         case "wait-browser-text":
             return workflowPreflightWaitBrowserText()
+        case "wait-browser-element-text":
+            return workflowPreflightWaitBrowserElementText()
         case "wait-browser-value":
             return workflowPreflightWaitBrowserValue()
         case "wait-browser-ready":
@@ -2013,7 +2057,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, move-file, or wait-file.")
         }
     }
 
@@ -2850,6 +2894,119 @@ final class Ln1CLI {
 
         return workflowPreflightResult(
             operation: "wait-browser-text",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightWaitBrowserElementText() -> WorkflowPreflight {
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let endpoint = try? browserEndpoint()
+        let browserCheck = doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        let requiredBrowserCheck = DoctorCheck(
+            name: browserCheck.name,
+            status: browserCheck.status == "pass" ? "pass" : "fail",
+            required: true,
+            message: browserCheck.message,
+            remediation: browserCheck.status == "pass" ? nil : browserCheck.remediation
+        )
+        var prerequisites = [requiredBrowserCheck]
+        let id = option("--id")
+        let selector = option("--selector")
+        let text = option("--text")
+        let match = option("--match")
+        if id == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserTabID",
+                status: "fail",
+                required: true,
+                message: "No browser tab ID was provided for wait-browser-element-text.",
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+            ))
+        }
+        if let selector {
+            do {
+                _ = try validatedBrowserSelector(selector)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserSelector",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-empty CSS selector with `--selector CSS_SELECTOR`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserSelector",
+                status: "fail",
+                required: true,
+                message: "No CSS selector was provided for wait-browser-element-text.",
+                remediation: "Pass `--selector CSS_SELECTOR` for the target element."
+            ))
+        }
+        if let text {
+            do {
+                _ = try validatedBrowserExpectedText(text)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserText",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass non-empty expected element text with `--text TEXT`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserText",
+                status: "fail",
+                required: true,
+                message: "No expected element text was provided for wait-browser-element-text.",
+                remediation: "Pass `--text TEXT` for the expected element text."
+            ))
+        }
+        if let match {
+            do {
+                _ = try browserTextMatchMode(match)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserElementTextMatch",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--match exact` or `--match contains`."
+                ))
+            }
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let id, let selector, let text {
+            var arguments = ["Ln1", "browser", "wait-element-text"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += [
+                "--id", id,
+                "--selector", selector,
+                "--text", text,
+                "--match", match ?? "contains",
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-browser-element-text",
             risk: "low",
             mutates: false,
             prerequisites: prerequisites,
@@ -3918,6 +4075,14 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "wait-browser-element-text" {
+            return workflowBrowserElementTextWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                workflowURL: workflowURL
+            )
+        }
         if latestOperation == "wait-browser-value" {
             return workflowBrowserValueWaitRecommendation(
                 outputJSON: outputJSON,
@@ -4181,6 +4346,34 @@ final class Ln1CLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser text wait completed; dry-run DOM inspection for the matched page state."
+        )
+    }
+
+    private func workflowBrowserElementTextWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let verification = outputJSON["verification"] as? [String: Any],
+              verification["ok"] as? Bool == true else {
+            return nil
+        }
+        guard let tabID = outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "Ln1", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser element text wait completed; dry-run DOM inspection for the matched element state."
         )
     }
 
@@ -5413,6 +5606,11 @@ final class Ln1CLI {
             let id = try requiredOption("--id")
             let text = try requiredOption("--text")
             try writeJSON(browserWaitText(id: id, expectedText: text))
+        case "wait-element-text":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitElementText(id: id, selector: selector, expectedText: text))
         case "wait-value":
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
@@ -6919,6 +7117,11 @@ final class Ln1CLI {
                     mutates: false
                 ),
                 BrowserAction(
+                    name: "browser.waitElementText",
+                    risk: browserActionRisk(for: "browser.waitElementText"),
+                    mutates: false
+                ),
+                BrowserAction(
                     name: "browser.waitValue",
                     risk: browserActionRisk(for: "browser.waitValue"),
                     mutates: false
@@ -8384,6 +8587,41 @@ final class Ln1CLI {
         )
     }
 
+    private func browserWaitElementText(id: String, selector: String, expectedText: String) throws -> BrowserElementTextWaitResult {
+        let endpoint = try browserEndpoint()
+        let normalizedSelector = try validatedBrowserSelector(selector)
+        let normalizedExpectedText = try validatedBrowserExpectedText(expectedText)
+        let match = try browserTextMatchMode(option("--match") ?? "contains")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = try waitForBrowserElementText(
+            tabID: id,
+            selector: normalizedSelector,
+            expectedText: normalizedExpectedText,
+            match: match,
+            endpoint: endpoint,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+        let message = verification.ok
+            ? "Browser tab \(id) reached the expected element text state."
+            : "Timed out waiting for browser tab \(id) to reach the expected element text state."
+        return BrowserElementTextWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            tabID: id,
+            selector: normalizedSelector,
+            expectedTextLength: normalizedExpectedText.count,
+            expectedTextDigest: sha256Digest(normalizedExpectedText),
+            match: match,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: message
+        )
+    }
+
     private func browserWaitValue(id: String, selector: String, expectedValue: String) throws -> BrowserValueWaitResult {
         let endpoint = try browserEndpoint()
         let normalizedSelector = try validatedBrowserSelector(selector)
@@ -9305,6 +9543,96 @@ final class Ln1CLI {
             )
         } catch {
             throw CommandError(description: "Chrome DevTools value wait result was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
+    private func inspectBrowserElementText(
+        selector: String,
+        expectedText: String,
+        match: String,
+        currentURL: String?,
+        at webSocketURL: URL
+    ) throws -> BrowserElementTextWaitVerification {
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const expectedText = \(try javascriptStringLiteral(expectedText));
+          const match = \(try javascriptStringLiteral(match));
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            currentText: extra.currentText ?? null,
+            currentURL: location.href || null,
+            tagName: extra.tagName || null,
+            match,
+            matched: extra.matched || false
+          });
+
+          let element = null;
+          try {
+            element = document.querySelector(selector);
+          } catch {
+            return result(false, "selector_invalid", "The CSS selector is invalid.");
+          }
+
+          if (!element) {
+            return result(false, "element_missing", `No element matches selector '${selector}'.`);
+          }
+
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const rawText = "innerText" in element ? element.innerText : element.textContent;
+          const currentText = String(rawText || "").replace(/\\s+/g, " ").trim();
+          const matched = match === "exact"
+            ? currentText === expectedText
+            : currentText.includes(expectedText);
+          return result(
+            matched,
+            matched ? "element_text_matched" : "element_text_mismatch",
+            matched
+              ? `browser element text matched expected ${match} value`
+              : `browser element text did not match expected ${match} value`,
+            { tagName, currentText, matched }
+          );
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return an element text wait result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools element text wait result was not valid UTF-8")
+        }
+        do {
+            let payload = try JSONDecoder().decode(BrowserElementTextWaitPayload.self, from: data)
+            return BrowserElementTextWaitVerification(
+                ok: payload.ok,
+                code: payload.code,
+                message: payload.message,
+                selector: payload.selector,
+                expectedTextLength: expectedText.count,
+                expectedTextDigest: sha256Digest(expectedText),
+                currentTextLength: payload.currentText?.count,
+                currentTextDigest: payload.currentText.map(sha256Digest),
+                currentURL: payload.currentURL ?? currentURL,
+                tagName: payload.tagName,
+                match: payload.match,
+                matched: payload.matched
+            )
+        } catch {
+            throw CommandError(description: "Chrome DevTools element text wait result was not valid JSON: \(error.localizedDescription)")
         }
     }
 
@@ -10864,6 +11192,82 @@ final class Ln1CLI {
         )
     }
 
+    private func waitForBrowserElementText(
+        tabID: String,
+        selector: String,
+        expectedText: String,
+        match: String,
+        endpoint: URL,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> BrowserElementTextWaitVerification {
+        let start = Date()
+        let deadline = start.addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var lastVerification: BrowserElementTextWaitVerification?
+
+        repeat {
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == tabID }) else {
+                lastVerification = BrowserElementTextWaitVerification(
+                    ok: false,
+                    code: "tab_missing",
+                    message: "No browser page tab found with id \(tabID).",
+                    selector: selector,
+                    expectedTextLength: expectedText.count,
+                    expectedTextDigest: sha256Digest(expectedText),
+                    currentTextLength: nil,
+                    currentTextDigest: nil,
+                    currentURL: nil,
+                    tagName: nil,
+                    match: match,
+                    matched: false
+                )
+                if Date() >= deadline {
+                    break
+                }
+                Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+                continue
+            }
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                throw CommandError(description: "browser tab \(tabID) does not expose a valid webSocketDebuggerURL")
+            }
+
+            let verification = try inspectBrowserElementText(
+                selector: selector,
+                expectedText: expectedText,
+                match: match,
+                currentURL: tab.url,
+                at: webSocketURL
+            )
+            lastVerification = verification
+            if verification.ok || verification.code == "selector_invalid" {
+                return verification
+            }
+
+            if Date() >= deadline {
+                break
+            }
+            Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1_000.0)
+        } while true
+
+        return BrowserElementTextWaitVerification(
+            ok: false,
+            code: lastVerification?.code ?? "element_text_mismatch",
+            message: "browser element text did not match expected \(match) value before timeout",
+            selector: selector,
+            expectedTextLength: expectedText.count,
+            expectedTextDigest: sha256Digest(expectedText),
+            currentTextLength: lastVerification?.currentTextLength,
+            currentTextDigest: lastVerification?.currentTextDigest,
+            currentURL: lastVerification?.currentURL,
+            tagName: lastVerification?.tagName,
+            match: match,
+            matched: false
+        )
+    }
+
     private func browserURL(_ currentURL: String?, matches expectedURL: String, mode: String) -> Bool {
         guard let currentURL else {
             return false
@@ -12167,7 +12571,7 @@ final class Ln1CLI {
 
     private func browserActionRisk(for action: String) -> String {
         switch action {
-        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
+        case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
         case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
@@ -12256,6 +12660,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.waitSelector", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitCount", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitText", domain: "browser", risk: "low", mutates: false),
+            PolicyActionRecord(name: "browser.waitElementText", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitValue", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitReady", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitTitle", domain: "browser", risk: "low", mutates: false),
@@ -12858,6 +13263,7 @@ final class Ln1CLI {
                     { "name": "browser.waitSelector", "risk": "low", "mutates": false },
                     { "name": "browser.waitCount", "risk": "low", "mutates": false },
                     { "name": "browser.waitText", "risk": "low", "mutates": false },
+                    { "name": "browser.waitElementText", "risk": "low", "mutates": false },
                     { "name": "browser.waitValue", "risk": "low", "mutates": false },
                     { "name": "browser.waitReady", "risk": "low", "mutates": false },
                     { "name": "browser.waitTitle", "risk": "low", "mutates": false },
@@ -13152,6 +13558,28 @@ final class Ln1CLI {
               }
             }
           },
+          "browserWaitElementText": {
+            "command": "Ln1 browser wait-element-text --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector '[data-testid=status]' --text 'Saved successfully' --match contains --timeout-ms 5000",
+            "result": {
+              "tabID": "devtools-target-id",
+              "selector": "[data-testid=status]",
+              "expectedTextLength": 18,
+              "expectedTextDigest": "hex encoded SHA-256 digest",
+              "match": "contains",
+              "timeoutMilliseconds": 5000,
+              "intervalMilliseconds": 100,
+              "verification": {
+                "ok": true,
+                "code": "element_text_matched",
+                "message": "browser element text matched expected contains value",
+                "currentTextLength": 18,
+                "currentTextDigest": "hex encoded SHA-256 digest",
+                "currentURL": "https://example.com/form",
+                "tagName": "div",
+                "matched": true
+              }
+            }
+          },
           "browserWaitValue": {
             "command": "Ln1 browser wait-value --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --text 'bounded text' --match exact --timeout-ms 5000",
             "result": {
@@ -13340,6 +13768,20 @@ final class Ln1CLI {
               "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
               "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser text wait completed; dry-run DOM inspection for the matched page state."
+            }
+          },
+          "workflowResumeWaitElementText": {
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-element-text",
+            "result": {
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
+              "operation": "wait-browser-element-text",
+              "status": "completed",
+              "transcriptID": "UUID",
+              "latestOperation": "wait-browser-element-text",
+              "blockers": [],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
+              "message": "Latest browser element text wait completed; dry-run DOM inspection for the matched element state."
             }
           },
           "workflowResumeWaitValue": {
@@ -13586,11 +14028,11 @@ final class Ln1CLI {
           Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           Ln1 policy
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
@@ -13635,6 +14077,7 @@ final class Ln1CLI {
           Ln1 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible|hidden|detached] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-count --id TARGET_ID --selector CSS_SELECTOR --count N [--endpoint URL_OR_PATH] [--count-match exact|at-least|at-most] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-text --id TARGET_ID --text TEXT [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-element-text --id TARGET_ID --selector CSS_SELECTOR --text TEXT [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-value --id TARGET_ID --selector CSS_SELECTOR --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-ready --id TARGET_ID [--endpoint URL_OR_PATH] [--state loading|interactive|complete] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-title --id TARGET_ID --title TITLE [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
@@ -13684,6 +14127,7 @@ final class Ln1CLI {
           - `browser wait-selector` waits for one DOM selector to become attached, visible, hidden, or detached without mutating the page.
           - `browser wait-count` waits for a selector count to match exact, at-least, or at-most criteria without mutating the page.
           - `browser wait-text` waits for page text to match without returning page text contents.
+          - `browser wait-element-text` waits for one element's text to match without returning text contents.
           - `browser wait-value` waits for one input, textarea, or select value without returning value contents.
           - `browser wait-ready` waits for one tab document readiness state without mutating the page.
           - `browser wait-title` waits for one tab title to match without reading page contents.
@@ -13697,6 +14141,7 @@ final class Ln1CLI {
           - Workflow wait-browser-selector waits for dynamic page UI readiness or disappearance before the next browser action.
           - Workflow wait-browser-count waits for dynamic collection sizes before inspecting or acting.
           - Workflow wait-browser-text waits for page text readiness without fixed sleeps.
+          - Workflow wait-browser-element-text waits for one element's text readiness without fixed sleeps.
           - Workflow wait-browser-value waits for field value readiness without exposing value contents.
           - Workflow wait-browser-ready waits for document readiness before inspecting or acting.
           - Workflow wait-browser-title waits for title changes before inspecting or acting.
