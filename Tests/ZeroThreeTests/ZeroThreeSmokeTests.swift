@@ -78,6 +78,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitText"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitText"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitText"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitValue"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitValue"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitValue"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.waitReady"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitReady"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitReady"]?["mutates"] as? Bool, false)
@@ -614,6 +617,37 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--title", "Workflow Browser",
             "--match", "contains",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitValue = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-value",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--text", "bounded text",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitValue.status, 0, waitValue.stderr)
+        let waitValueObject = try decodeJSONObject(waitValue.stdout)
+        let waitValueBlockers = try XCTUnwrap(waitValueObject["blockers"] as? [String])
+        XCTAssertEqual(waitValueObject["operation"] as? String, "wait-browser-value")
+        XCTAssertEqual(waitValueObject["risk"] as? String, "low")
+        XCTAssertEqual(waitValueObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitValueBlockers.isEmpty)
+        XCTAssertEqual(waitValueObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-value",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--text", "bounded text",
+            "--match", "exact",
             "--timeout-ms", "500",
             "--interval-ms", "50"
         ])
@@ -1509,6 +1543,69 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsDOMInspectionAfterBrowserValueWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-value-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-value-transcript",
+            "operation": "wait-browser-value",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "03", "browser", "wait-value",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--selector", "input[name='q']",
+                    "--text", "bounded text"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": "input[name='q']",
+                    "verification": [
+                        "ok": true,
+                        "code": "value_matched",
+                        "currentURL": "https://example.com/form",
+                        "currentValueLength": 12,
+                        "currentValueDigest": "digest"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-browser-value",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-value")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "03", "workflow", "run",
+            "--operation", "read-browser",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
+    }
+
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserReadyWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-workflow-ready-wait-resume-\(UUID().uuidString)")
@@ -1976,6 +2073,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitText"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitValue"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -3308,6 +3410,95 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(verification["text"])
         XCTAssertNotNil(verification["expectedTextDigest"] as? String)
         XCTAssertNotNil(verification["currentTextDigest"] as? String)
+    }
+
+    func testBrowserWaitValueReturnsVerificationWithoutValueContents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-value-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let valuePayload: [String: Any] = [
+            "ok": true,
+            "code": "value_matched",
+            "message": "browser field value matched expected exact value",
+            "selector": "input[name='q']",
+            "currentValue": "bounded text",
+            "currentURL": "https://example.com/form",
+            "tagName": "input",
+            "inputType": "search",
+            "disabled": false,
+            "readOnly": false,
+            "match": "exact",
+            "matched": true
+        ]
+        let valueData = try JSONSerialization.data(withJSONObject: valuePayload, options: [.sortedKeys])
+        let valueJSONString = String(decoding: valueData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": valueJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Search Page",
+            "url": "https://example.com/form",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-value",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name='q']",
+            "--text", "bounded text",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["selector"] as? String, "input[name='q']")
+        XCTAssertEqual(object["expectedValueLength"] as? Int, 12)
+        XCTAssertEqual(object["match"] as? String, "exact")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(object["value"])
+        XCTAssertNil(object["html"])
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "value_matched")
+        XCTAssertEqual(verification["expectedValueLength"] as? Int, 12)
+        XCTAssertEqual(verification["currentValueLength"] as? Int, 12)
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/form")
+        XCTAssertEqual(verification["tagName"] as? String, "input")
+        XCTAssertEqual(verification["inputType"] as? String, "search")
+        XCTAssertEqual(verification["disabled"] as? Bool, false)
+        XCTAssertEqual(verification["readOnly"] as? Bool, false)
+        XCTAssertEqual(verification["match"] as? String, "exact")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertNil(verification["value"])
+        XCTAssertNotNil(verification["expectedValueDigest"] as? String)
+        XCTAssertNotNil(verification["currentValueDigest"] as? String)
     }
 
     func testBrowserWaitReadyReturnsVerificationWithoutMutating() throws {

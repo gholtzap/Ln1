@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/03 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `move-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `move-file`, and `wait-file`.
 
 Examples:
 
@@ -69,6 +69,7 @@ Examples:
 .build/debug/03 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
 .build/debug/03 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
 .build/debug/03 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
+.build/debug/03 workflow preflight --operation wait-browser-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact
 .build/debug/03 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
 .build/debug/03 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
 .build/debug/03 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
@@ -108,6 +109,8 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 
 `wait-browser-text` is a non-mutating workflow operation for bounded page text readiness checks. It polls visible page text until `--text` matches with `--match contains|exact`, returning only text lengths and SHA-256 digests rather than page text contents.
 
+`wait-browser-value` is a non-mutating workflow operation for bounded form value readiness checks. It polls one input, textarea, or select until `--text` matches the field value with `--match exact|contains`, returning only value lengths and SHA-256 digests rather than field contents.
+
 `wait-browser-ready` is a non-mutating workflow operation for bounded page load readiness checks. It polls `document.readyState` until the tab reaches `--state loading|interactive|complete`, defaulting to `complete`.
 
 `wait-browser-title` is a non-mutating workflow operation for bounded browser title checks. It polls structured tab metadata until `--title` matches with `--match contains|exact` without reading page contents.
@@ -119,6 +122,8 @@ After a successful `wait-browser-url` transcript, `workflow resume` suggests a d
 After a successful `wait-browser-selector` transcript, `workflow resume` suggests a direct fill, select, check, or click command when the selector metadata is clearly actionable, otherwise it suggests a dry-run DOM inspection.
 
 After a successful `wait-browser-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched page state.
+
+After a successful `wait-browser-value` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched field state.
 
 After a successful `wait-browser-ready` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the loaded page state.
 
@@ -545,6 +550,14 @@ Wait for visible page text without returning page contents:
 
 `browser.waitText` is a low-risk read action. It polls page inner text until the expected value matches, returning only lengths, digests, URL, and match status.
 
+Wait for one field value without returning value contents:
+
+```sh
+.build/debug/03 browser wait-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact --timeout-ms 5000
+```
+
+`browser.waitValue` is a low-risk read action. It polls an input, textarea, or select value until the expected text matches, returning only lengths, digests, URL, target metadata, and match status. Password inputs are refused.
+
 Wait for one page to reach a document readiness state without mutating the page:
 
 ```sh
@@ -569,7 +582,7 @@ Wait for one checkbox or radio input to reach a checked state without mutating t
 
 `browser.waitChecked` is a low-risk read action. It polls a checkbox or radio input through the tab's DevTools runtime until its checked state matches, returning input metadata, current URL, and match status.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded document readiness checks, bounded title readiness checks, and bounded checked-state readiness checks.
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed select-option control, typed checked-state control, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, and bounded checked-state readiness checks.
 
 ## Product Direction
 

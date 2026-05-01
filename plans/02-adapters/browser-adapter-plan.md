@@ -34,6 +34,7 @@ The system should understand open tabs, active pages, page content, forms, links
 - DevTools URL waiting: `03 browser wait-url` waits for a tab URL to match expected exact, prefix, or contains criteria using structured DevTools tab metadata.
 - DevTools selector waiting: `03 browser wait-selector` waits for a selector to become attached or visible using read-only DevTools runtime evaluation.
 - DevTools text waiting: `03 browser wait-text` waits for page text to match while returning only text lengths and digests.
+- DevTools value waiting: `03 browser wait-value` waits for one input, textarea, or select value to match while returning only lengths and digests.
 - DevTools ready-state waiting: `03 browser wait-ready` waits for `document.readyState` to reach loading, interactive, or complete before the next inspection or action.
 - DevTools title waiting: `03 browser wait-title` waits for tab title metadata to match without reading page contents.
 - DevTools checked-state waiting: `03 browser wait-checked` waits for checkbox or radio state to match using read-only DevTools runtime evaluation.
