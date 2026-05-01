@@ -63,6 +63,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.navigate"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.navigate"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.navigate"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.waitURL"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitURL"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitURL"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -363,6 +366,35 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--match", "exact",
             "--allow-risk", "medium",
             "--reason", "Describe intent"
+        ])
+
+        let waitURL = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-url",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--expect-url", "https://example.com/next",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitURL.status, 0, waitURL.stderr)
+        let waitObject = try decodeJSONObject(waitURL.stdout)
+        let waitBlockers = try XCTUnwrap(waitObject["blockers"] as? [String])
+        XCTAssertEqual(waitObject["operation"] as? String, "wait-browser-url")
+        XCTAssertEqual(waitObject["risk"] as? String, "low")
+        XCTAssertEqual(waitObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitBlockers.isEmpty)
+        XCTAssertEqual(waitObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-url",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--expect-url", "https://example.com/next",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
         ])
     }
 
@@ -1062,6 +1094,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
             $0["name"] as? String == "browser.navigate"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitURL"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
         })
 
         let tabResult = try runZeroThree([
@@ -1802,6 +1839,49 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "url_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "navigated")
+    }
+
+    func testBrowserWaitURLReturnsVerificationWithoutMutating() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-url-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Wait Page",
+            "url": "https://example.com/done"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-url",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--expect-url", "https://example.com/done",
+            "--match", "exact",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["expectedURL"] as? String, "https://example.com/done")
+        XCTAssertEqual(object["match"] as? String, "exact")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "url_matched")
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/done")
     }
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {

@@ -661,6 +661,19 @@ struct BrowserNavigationResult: Codable {
     let message: String
 }
 
+struct BrowserURLWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let expectedURL: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserNavigationVerification
+    let message: String
+}
+
 struct ClipboardAuditSummary: Codable {
     let pasteboard: String
     let changeCount: Int
@@ -1475,12 +1488,14 @@ final class ZeroThreeCLI {
             return workflowPreflightBrowserAction(kind: "click")
         case "navigate-browser":
             return workflowPreflightBrowserAction(kind: "navigate")
+        case "wait-browser-url":
+            return workflowPreflightWaitBrowserURL()
         case "move-file":
             return try workflowPreflightMoveFile()
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, move-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, click-browser, navigate-browser, wait-browser-url, move-file, or wait-file.")
         }
     }
 
@@ -1765,6 +1780,96 @@ final class ZeroThreeCLI {
             operation: operation,
             risk: "medium",
             mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightWaitBrowserURL() -> WorkflowPreflight {
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let endpoint = try? browserEndpoint()
+        let browserCheck = doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        let requiredBrowserCheck = DoctorCheck(
+            name: browserCheck.name,
+            status: browserCheck.status == "pass" ? "pass" : "fail",
+            required: true,
+            message: browserCheck.message,
+            remediation: browserCheck.status == "pass" ? nil : browserCheck.remediation
+        )
+        var prerequisites = [requiredBrowserCheck]
+        let id = option("--id")
+        let expectedURL = option("--expect-url")
+        let match = option("--match")
+        if id == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserTabID",
+                status: "fail",
+                required: true,
+                message: "No browser tab ID was provided for wait-browser-url.",
+                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+            ))
+        }
+        if let expectedURL {
+            do {
+                _ = try validatedBrowserExpectedURL(expectedURL)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserExpectedURL",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-empty URL or text fragment with `--expect-url VALUE`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.browserExpectedURL",
+                status: "fail",
+                required: true,
+                message: "No expected URL was provided for wait-browser-url.",
+                remediation: "Pass `--expect-url VALUE` for the target URL."
+            ))
+        }
+        if let match {
+            do {
+                _ = try browserURLMatchMode(match)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.browserURLMatch",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--match exact`, `--match prefix`, or `--match contains`."
+                ))
+            }
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let id, let expectedURL {
+            var arguments = ["03", "browser", "wait-url"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += [
+                "--id", id,
+                "--expect-url", expectedURL,
+                "--match", match ?? "exact",
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds)
+            ]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-browser-url",
+            risk: "low",
+            mutates: false,
             prerequisites: prerequisites,
             blockers: blockers,
             nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
@@ -2869,6 +2974,10 @@ final class ZeroThreeCLI {
             let id = try requiredOption("--id")
             let url = try requiredOption("--url")
             try writeJSON(browserNavigate(id: id, requestedURL: url))
+        case "wait-url":
+            let id = try requiredOption("--id")
+            let expectedURL = try requiredOption("--expect-url")
+            try writeJSON(browserWaitURL(id: id, expectedURL: expectedURL))
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
@@ -4303,6 +4412,11 @@ final class ZeroThreeCLI {
                     name: "browser.navigate",
                     risk: browserActionRisk(for: "browser.navigate"),
                     mutates: true
+                ),
+                BrowserAction(
+                    name: "browser.waitURL",
+                    risk: browserActionRisk(for: "browser.waitURL"),
+                    mutates: false
                 )
             ]
         )
@@ -4975,6 +5089,38 @@ final class ZeroThreeCLI {
             }
             throw CommandError(description: message)
         }
+    }
+
+    private func browserWaitURL(id: String, expectedURL: String) throws -> BrowserURLWaitResult {
+        let endpoint = try browserEndpoint()
+        let normalizedExpectedURL = try validatedBrowserExpectedURL(expectedURL)
+        let match = try browserURLMatchMode(option("--match") ?? "exact")
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = try waitForBrowserURL(
+            tabID: id,
+            requestedURL: normalizedExpectedURL,
+            expectedURL: normalizedExpectedURL,
+            match: match,
+            endpoint: endpoint,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+        let message = verification.ok
+            ? "Browser tab \(id) reached the expected URL."
+            : "Timed out waiting for browser tab \(id) to reach the expected URL."
+        return BrowserURLWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            endpoint: endpoint.absoluteString,
+            tabID: id,
+            expectedURL: normalizedExpectedURL,
+            match: match,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: message
+        )
     }
 
     private func readBrowserInnerText(from webSocketURL: URL) throws -> String {
@@ -6349,7 +6495,7 @@ final class ZeroThreeCLI {
 
     private func browserActionRisk(for action: String) -> String {
         switch action {
-        case "browser.listTabs", "browser.inspectTab":
+        case "browser.listTabs", "browser.inspectTab", "browser.waitURL":
             return "low"
         case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.clickElement", "browser.navigate":
             return "medium"
@@ -6429,6 +6575,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.waitURL", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
@@ -6976,7 +7123,8 @@ final class ZeroThreeCLI {
                     { "name": "browser.readDOM", "risk": "medium", "mutates": false },
                     { "name": "browser.fillFormField", "risk": "medium", "mutates": true },
                     { "name": "browser.clickElement", "risk": "medium", "mutates": true },
-                    { "name": "browser.navigate", "risk": "medium", "mutates": true }
+                    { "name": "browser.navigate", "risk": "medium", "mutates": true },
+                    { "name": "browser.waitURL", "risk": "low", "mutates": false }
                   ]
                 }
               ]
@@ -7090,6 +7238,23 @@ final class ZeroThreeCLI {
               },
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "browserWaitURL": {
+            "command": "03 browser wait-url --endpoint http://127.0.0.1:9222 --id devtools-target-id --expect-url https://example.com/next --match exact --timeout-ms 5000",
+            "result": {
+              "tabID": "devtools-target-id",
+              "expectedURL": "https://example.com/next",
+              "match": "exact",
+              "timeoutMilliseconds": 5000,
+              "intervalMilliseconds": 100,
+              "verification": {
+                "ok": true,
+                "code": "url_matched",
+                "message": "browser tab URL matched expected exact value",
+                "currentURL": "https://example.com/next",
+                "matched": true
+              }
             }
           },
           "files": {
@@ -7280,10 +7445,10 @@ final class ZeroThreeCLI {
           03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL]
-          03 workflow run --operation inspect-active-app|read-browser|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT]
+          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT]
+          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--run-timeout-ms N] [--max-output-bytes N]
+          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|click-browser|navigate-browser|wait-browser-url|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--text TEXT] [--url URL] [--expect-url URL_OR_TEXT] [--run-timeout-ms N] [--max-output-bytes N]
           03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           03 apps [--all]
@@ -7319,6 +7484,7 @@ final class ZeroThreeCLI {
           03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
           03 schema
 
         Notes:
@@ -7352,7 +7518,9 @@ final class ZeroThreeCLI {
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
+          - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
           - Workflow fill-browser, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
+          - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
         """)
     }
 
