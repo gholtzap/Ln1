@@ -506,6 +506,8 @@ struct BrowserAuditSummary: Codable {
     var navigationURL: String? = nil
     var currentURL: String? = nil
     var urlMatched: Bool? = nil
+    var clickSelector: String? = nil
+    var clickTagName: String? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -599,6 +601,34 @@ struct BrowserFormFillResult: Codable {
     let targetDisabled: Bool?
     let targetReadOnly: Bool?
     let resultingValueLength: Int?
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserClickPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let tagName: String?
+    let disabled: Bool?
+    let href: String?
+    let matched: Bool
+}
+
+struct BrowserClickResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let selector: String
+    let verification: FileOperationVerification
+    let targetTagName: String?
+    let targetDisabled: Bool?
+    let targetHref: String?
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -2572,6 +2602,10 @@ final class ZeroThreeCLI {
             let selector = try requiredOption("--selector")
             let text = try requiredOption("--text")
             try writeJSON(browserFill(id: id, selector: selector, text: text))
+        case "click":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserClick(id: id, selector: selector))
         case "navigate":
             let id = try requiredOption("--id")
             let url = try requiredOption("--url")
@@ -4002,6 +4036,11 @@ final class ZeroThreeCLI {
                     mutates: true
                 ),
                 BrowserAction(
+                    name: "browser.clickElement",
+                    risk: browserActionRisk(for: "browser.clickElement"),
+                    mutates: true
+                ),
+                BrowserAction(
                     name: "browser.navigate",
                     risk: browserActionRisk(for: "browser.navigate"),
                     mutates: true
@@ -4378,6 +4417,138 @@ final class ZeroThreeCLI {
                 targetDisabled: payload.disabled,
                 targetReadOnly: payload.readOnly,
                 resultingValueLength: payload.valueLength,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserClick(id: String, selector: String) throws -> BrowserClickResult {
+        let action = "browser.clickElement"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            clickSelector: selector
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String, verification: FileOperationVerification? = nil) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.click",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                clickSelector: selector
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let payload = try clickBrowserElement(selector: selector, at: webSocketURL)
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                clickSelector: selector,
+                clickTagName: payload.tagName
+            )
+            let verification = FileOperationVerification(
+                ok: payload.ok && payload.matched,
+                code: payload.ok && payload.matched ? "element_clicked" : payload.code,
+                message: payload.ok && payload.matched
+                    ? "browser element matched selector and received a click"
+                    : payload.message
+            )
+
+            guard verification.ok else {
+                try writeAudit(ok: false, code: payload.code, message: payload.message, verification: verification)
+                throw CommandError(description: payload.message)
+            }
+
+            let message = "Clicked browser element matching selector '\(selector)' in tab \(id)."
+            try writeAudit(ok: true, code: "clicked", message: message, verification: verification)
+
+            return BrowserClickResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                selector: selector,
+                verification: verification,
+                targetTagName: payload.tagName,
+                targetDisabled: payload.disabled,
+                targetHref: payload.href,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -4844,6 +5015,69 @@ final class ZeroThreeCLI {
             return try JSONDecoder().decode(BrowserFormFillPayload.self, from: data)
         } catch {
             throw CommandError(description: "Chrome DevTools form fill result was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
+    private func clickBrowserElement(
+        selector: String,
+        at webSocketURL: URL
+    ) throws -> BrowserClickPayload {
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const element = document.querySelector(selector);
+
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            tagName: extra.tagName || null,
+            disabled: extra.disabled ?? null,
+            href: extra.href || null,
+            matched: extra.matched || false
+          });
+
+          if (!element) {
+            return result(false, "element_missing", `No element matches selector '${selector}'.`);
+          }
+
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const disabled = Boolean(element.disabled);
+          const href = element.href || element.getAttribute("href") || null;
+          const metadata = { tagName, disabled, href, matched: true };
+
+          if (disabled) {
+            return result(false, "element_disabled", "The matched element is disabled.", metadata);
+          }
+
+          element.scrollIntoView({ block: "center", inline: "center" });
+          element.click();
+          return result(true, "clicked", "The matched element received a click.", metadata);
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a click result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools click result was not valid UTF-8")
+        }
+        do {
+            return try JSONDecoder().decode(BrowserClickPayload.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools click result was not valid JSON: \(error.localizedDescription)")
         }
     }
 
@@ -5858,7 +6092,7 @@ final class ZeroThreeCLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab":
             return "low"
-        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.navigate":
+        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -5934,6 +6168,7 @@ final class ZeroThreeCLI {
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryStart", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryRecord", domain: "task", risk: "medium", mutates: true),
@@ -6440,6 +6675,7 @@ final class ZeroThreeCLI {
                     { "name": "browser.readText", "risk": "medium", "mutates": false },
                     { "name": "browser.readDOM", "risk": "medium", "mutates": false },
                     { "name": "browser.fillFormField", "risk": "medium", "mutates": true },
+                    { "name": "browser.clickElement", "risk": "medium", "mutates": true },
                     { "name": "browser.navigate", "risk": "medium", "mutates": true }
                   ]
                 }
@@ -6515,6 +6751,24 @@ final class ZeroThreeCLI {
               "targetTagName": "input",
               "targetInputType": "text",
               "resultingValueLength": 12,
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+            }
+          },
+          "browserClick": {
+            "command": "03 browser click --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --allow-risk medium",
+            "result": {
+              "action": "browser.clickElement",
+              "risk": "medium",
+              "selector": "button[type=submit]",
+              "verification": {
+                "ok": true,
+                "code": "element_clicked",
+                "message": "browser element matched selector and received a click"
+              },
+              "targetTagName": "button",
+              "targetDisabled": false,
+              "targetHref": null,
               "auditID": "UUID",
               "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
             }
@@ -6763,6 +7017,7 @@ final class ZeroThreeCLI {
           03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           03 schema
 
@@ -6795,6 +7050,7 @@ final class ZeroThreeCLI {
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
+          - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
         """)
     }

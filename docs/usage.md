@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/03 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -454,6 +454,14 @@ Fill one browser form field through the tab's DevTools WebSocket:
 
 `browser.fillFormField` is a medium-risk mutating action because it changes page state and may enter private text into a web app. The command targets one CSS selector, refuses disabled, read-only, and unsupported elements, dispatches `input` and `change` events, and verifies that the field contains text with the requested length. The result includes the selector, text length, SHA-256 digest, target metadata, verification, and audit ID. The audit record stores tab metadata, selector, text length, digest, policy decision, reason, verification, and outcome without storing the entered text.
 
+Click one browser element through the tab's DevTools WebSocket:
+
+```sh
+.build/debug/03 browser click --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --allow-risk medium --reason "Submit search"
+```
+
+`browser.clickElement` is a medium-risk mutating action because it changes page state and may trigger navigation, form submission, or web-app side effects. The command targets one CSS selector, refuses missing or disabled elements, scrolls the element into view, dispatches a DOM click, and records selector/target metadata plus verification in the audit log.
+
 Navigate one browser tab through DevTools and verify the resulting URL from structured tab metadata:
 
 ```sh
@@ -462,7 +470,7 @@ Navigate one browser tab through DevTools and verify the resulting URL from stru
 
 `browser.navigate` is a medium-risk mutating action because it changes browser state and may contact an external site. The command only accepts absolute HTTP(S) URLs, sends a typed `Page.navigate` command through the tab's DevTools WebSocket, then verifies the resulting URL through DevTools target metadata. By default verification requires an exact match with `--url`; use `--expect-url` with `--match exact|prefix|contains` for redirect-aware workflows. The audit record stores tab metadata, requested URL, verified current URL, policy decision, reason, verification, and outcome.
 
-This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, and verified navigation.
+This adapter is now using browser-native DevTools metadata, page text, structured DOM snapshots, typed form filling, typed element clicking, and verified navigation.
 
 ## Product Direction
 

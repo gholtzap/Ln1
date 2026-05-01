@@ -57,6 +57,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.fillFormField"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.fillFormField"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.fillFormField"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.clickElement"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.clickElement"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.clickElement"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["browser.navigate"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.navigate"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.navigate"]?["mutates"] as? Bool, true)
@@ -834,6 +837,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.clickElement"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.navigate"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -1314,6 +1322,142 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "value_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "filled")
+    }
+
+    func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-click-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let clickPayload: [String: Any] = [
+            "ok": true,
+            "code": "clicked",
+            "message": "The matched element received a click.",
+            "selector": "button[type='submit']",
+            "tagName": "button",
+            "disabled": false,
+            "href": NSNull(),
+            "matched": true
+        ]
+        let clickData = try JSONSerialization.data(withJSONObject: clickPayload, options: [.sortedKeys])
+        let clickJSONString = String(decoding: clickData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": clickJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Click Page",
+            "url": "https://example.com/click",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "click",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type='submit']",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "click",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "button[type='submit']",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "submit form"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.clickElement")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["selector"] as? String, "button[type='submit']")
+        XCTAssertEqual(object["targetTagName"] as? String, "button")
+        XCTAssertEqual(object["targetDisabled"] as? Bool, false)
+        XCTAssertNil(object["targetHref"])
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "element_clicked")
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.click",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.clickElement")
+        XCTAssertEqual(deniedBrowserTab["clickSelector"] as? String, "button[type='submit']")
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.click",
+            "--code", "clicked",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.click")
+        XCTAssertEqual(entry["action"] as? String, "browser.clickElement")
+        XCTAssertEqual(entry["reason"] as? String, "submit form")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Click Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/click")
+        XCTAssertEqual(browserTab["clickSelector"] as? String, "button[type='submit']")
+        XCTAssertEqual(browserTab["clickTagName"] as? String, "button")
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "element_clicked")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "clicked")
     }
 
     func testBrowserNavigateRequiresPolicyVerifiesURLAndAudits() throws {
