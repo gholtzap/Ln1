@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -85,6 +85,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation rollback-file-move --audit-id AUDIT_ID --allow-risk medium
+.build/debug/Ln1 workflow preflight --operation watch-file --path ~/Downloads --depth 1 --watch-timeout-ms 30000
 .build/debug/Ln1 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --size-bytes 1048576 --digest SHA256_HEX --wait-timeout-ms 5000
 ```
 
@@ -121,6 +122,8 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. After a successful verified `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline. Pass `--size-bytes N` and/or `--digest SHA256` when the file must exist with specific metadata before the workflow should continue.
+
+`watch-file` is a non-mutating workflow operation for bounded filesystem event waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--watch-timeout-ms` when the outer control loop needs a hard deadline. After a successful watch, `workflow resume` suggests a metadata or directory-list command for the first observed event.
 
 `wait-clipboard` is a non-mutating workflow operation for bounded clipboard metadata waiting. It can wait for the pasteboard change count to differ from `--changed-from N`, for plain-text availability with `--has-string true|false`, or for a specific text digest with `--string-digest HEX`, without returning clipboard text.
 

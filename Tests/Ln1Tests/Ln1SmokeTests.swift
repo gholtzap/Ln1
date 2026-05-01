@@ -1175,6 +1175,46 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutWatchingFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next watch \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "watch-file",
+            "--path", directory.path,
+            "--depth", "2",
+            "--limit", "25",
+            "--watch-timeout-ms", "500",
+            "--interval-ms", "50",
+            "--include-hidden"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "watch-file")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "watch",
+            "--path", directory.path,
+            "--depth", "2",
+            "--limit", "25",
+            "--timeout-ms", "500",
+            "--interval-ms", "50",
+            "--include-hidden"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, false)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1331,6 +1371,58 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["changedFrom"] as? Int, changedFrom)
         XCTAssertNil(outputJSON["text"])
+    }
+
+    func testWorkflowRunExecutesNonMutatingFileWatchAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-watch-\(UUID().uuidString)")
+        let created = directory.appendingPathComponent("created.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+            try? "created".write(to: created, atomically: true, encoding: .utf8)
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "watch-file",
+            "--path", directory.path,
+            "--depth", "1",
+            "--watch-timeout-ms", "3000",
+            "--interval-ms", "50",
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let events = try XCTUnwrap(outputJSON["events"] as? [[String: Any]])
+        let event = try XCTUnwrap(events.first)
+
+        XCTAssertEqual(object["operation"] as? String, "watch-file")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "watch",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "200",
+            "--timeout-ms", "3000",
+            "--interval-ms", "50"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["matched"] as? Bool, true)
+        XCTAssertEqual(outputJSON["eventCount"] as? Int, 1)
+        XCTAssertEqual(event["type"] as? String, "created")
+        XCTAssertTrue((event["path"] as? String)?.hasSuffix("/created.txt") == true)
     }
 
     func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
@@ -2020,6 +2112,68 @@ final class Ln1SmokeTests: XCTestCase {
             "--path", sourceURL.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("rollback completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsFileStatAfterWatchFileEvent() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-watch-file-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let createdURL = directory.appendingPathComponent("created.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "watch-file-transcript",
+            "operation": "watch-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "watch",
+                    "--path", directory.path,
+                    "--depth", "1",
+                    "--timeout-ms", "5000"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "matched": true,
+                    "events": [
+                        [
+                            "id": "created:\(createdURL.path)",
+                            "type": "created",
+                            "path": createdURL.path,
+                            "current": [
+                                "path": createdURL.path,
+                                "kind": "regularFile",
+                                "sizeBytes": 7
+                            ]
+                        ]
+                    ],
+                    "eventCount": 1
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "watch-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "watch-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", createdURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file watch observed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
