@@ -20,6 +20,10 @@ The user should be able to give tasks naturally, inspect the assistant's current
 - The product does not require users to understand low-level UI automation details.
 - The assistant communicates uncertainty clearly.
 
+## Implemented Increments
+
+- Readiness diagnostics: `03 doctor` reports control-readiness checks with pass, warning, failure, required/optional classification, and concrete remediation steps before the assistant attempts UI control.
+
 ## Relationship To The Product
 
 The user experience is how trust becomes usable. It should expose the power of the system without exposing unnecessary implementation complexity.

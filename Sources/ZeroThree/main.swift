@@ -81,6 +81,22 @@ struct ObservationSnapshot: Codable {
     let suggestedActions: [ObservationAction]
 }
 
+struct DoctorCheck: Codable {
+    let name: String
+    let status: String
+    let required: Bool
+    let message: String
+    let remediation: String?
+}
+
+struct DoctorReport: Codable {
+    let generatedAt: String
+    let platform: String
+    let status: String
+    let ready: Bool
+    let checks: [DoctorCheck]
+}
+
 struct DesktopWindowRecord: Codable {
     let id: String
     let stableIdentity: StableIdentity
@@ -746,6 +762,23 @@ private final class CDPCommandResponseBox: @unchecked Sendable {
     }
 }
 
+private final class DataResponseBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<Data, Error>?
+
+    func set(_ newValue: Result<Data, Error>) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> Result<Data, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
@@ -779,6 +812,8 @@ final class ZeroThreeCLI {
         switch command {
         case "trust":
             try trust()
+        case "doctor":
+            try doctor()
         case "policy":
             try policy()
         case "observe":
@@ -831,6 +866,160 @@ final class ZeroThreeCLI {
                 ? "Accessibility access is enabled."
                 : "Grant Accessibility access to the terminal app running 03, then retry."
         ))
+    }
+
+    private func doctor() throws {
+        let endpoint = try? browserEndpoint()
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 1_000)
+        let checks = [
+            doctorAccessibilityCheck(),
+            doctorDesktopMetadataCheck(),
+            doctorAuditLogCheck(),
+            doctorClipboardCheck(),
+            doctorBrowserDevToolsCheck(endpoint: endpoint, timeoutMilliseconds: timeoutMilliseconds)
+        ]
+        let hasRequiredFailure = checks.contains { $0.required && $0.status == "fail" }
+        let hasWarning = checks.contains { $0.status == "warn" || $0.status == "fail" }
+        let status: String
+        if hasRequiredFailure {
+            status = "blocked"
+        } else if hasWarning {
+            status = "degraded"
+        } else {
+            status = "ready"
+        }
+
+        try writeJSON(DoctorReport(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            status: status,
+            ready: status == "ready",
+            checks: checks
+        ))
+    }
+
+    private func doctorAccessibilityCheck() -> DoctorCheck {
+        let trusted = AXIsProcessTrusted()
+        return DoctorCheck(
+            name: "accessibility",
+            status: trusted ? "pass" : "fail",
+            required: true,
+            message: trusted
+                ? "Accessibility permission is enabled."
+                : "Accessibility permission is not enabled, so 03 state and 03 perform cannot inspect or operate app UI.",
+            remediation: trusted ? nil : "Run `03 trust`, grant Accessibility access to the terminal app, then rerun `03 doctor`."
+        )
+    }
+
+    private func doctorDesktopMetadataCheck() -> DoctorCheck {
+        do {
+            let desktop = try desktopWindows(limitOverride: 1)
+            if !desktop.available {
+                return DoctorCheck(
+                    name: "desktop.windowMetadata",
+                    status: "fail",
+                    required: true,
+                    message: desktop.message,
+                    remediation: "Run `03 desktop windows --limit 5` from an interactive macOS user session."
+                )
+            }
+            if desktop.windows.isEmpty {
+                return DoctorCheck(
+                    name: "desktop.windowMetadata",
+                    status: "warn",
+                    required: true,
+                    message: "WindowServer metadata is available, but no visible windows matched the current filters.",
+                    remediation: "Try `03 desktop windows --include-desktop --all-layers --limit 20`."
+                )
+            }
+            return DoctorCheck(
+                name: "desktop.windowMetadata",
+                status: "pass",
+                required: true,
+                message: "WindowServer metadata is available.",
+                remediation: nil
+            )
+        } catch {
+            return DoctorCheck(
+                name: "desktop.windowMetadata",
+                status: "fail",
+                required: true,
+                message: "Could not inspect desktop window metadata: \(error.localizedDescription)",
+                remediation: "Run `03 desktop windows --limit 5` to inspect the desktop adapter error."
+            )
+        }
+    }
+
+    private func doctorAuditLogCheck() -> DoctorCheck {
+        do {
+            let auditURL = try auditLogURL()
+            let directory = auditURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let probeURL = directory.appendingPathComponent(".03-doctor-\(UUID().uuidString).tmp")
+            try "doctor".write(to: probeURL, atomically: true, encoding: .utf8)
+            try FileManager.default.removeItem(at: probeURL)
+            return DoctorCheck(
+                name: "auditLog.writeability",
+                status: "pass",
+                required: true,
+                message: "Audit log directory is writable at \(directory.path).",
+                remediation: nil
+            )
+        } catch {
+            return DoctorCheck(
+                name: "auditLog.writeability",
+                status: "fail",
+                required: true,
+                message: "Could not write an audit log probe: \(error.localizedDescription)",
+                remediation: "Pass `--audit-log` with a writable path or fix permissions on the default Application Support directory."
+            )
+        }
+    }
+
+    private func doctorClipboardCheck() -> DoctorCheck {
+        let pasteboard = targetPasteboard()
+        let state = clipboardState(for: pasteboard)
+        return DoctorCheck(
+            name: "clipboard.metadata",
+            status: "pass",
+            required: true,
+            message: "Clipboard metadata is readable from \(state.pasteboard).",
+            remediation: nil
+        )
+    }
+
+    private func doctorBrowserDevToolsCheck(endpoint: URL?, timeoutMilliseconds: Int) -> DoctorCheck {
+        guard let endpoint else {
+            return DoctorCheck(
+                name: "browser.devTools",
+                status: "warn",
+                required: false,
+                message: "Browser DevTools endpoint configuration is invalid.",
+                remediation: "Use `03 doctor --endpoint http://127.0.0.1:9222` or pass a file path containing a DevTools /json/list fixture."
+            )
+        }
+
+        do {
+            let listURL = browserListURL(for: endpoint)
+            let data = try readURLData(from: listURL, timeoutMilliseconds: timeoutMilliseconds)
+            let targets = try JSONDecoder().decode([DevToolsTarget].self, from: data)
+            let pageCount = targets.filter { ($0.type ?? "page") == "page" }.count
+            return DoctorCheck(
+                name: "browser.devTools",
+                status: "pass",
+                required: false,
+                message: "Browser DevTools endpoint is reachable with \(pageCount) page target(s).",
+                remediation: nil
+            )
+        } catch {
+            return DoctorCheck(
+                name: "browser.devTools",
+                status: "warn",
+                required: false,
+                message: "Browser DevTools endpoint is not reachable or did not return valid target JSON: \(error.localizedDescription)",
+                remediation: "Start Chromium with `--remote-debugging-port=9222`, then rerun `03 doctor --endpoint http://127.0.0.1:9222`."
+            )
+        }
     }
 
     private func appSummaries(includeAll: Bool, activePid: pid_t?) -> [AppSummary] {
@@ -3998,6 +4187,40 @@ final class ZeroThreeCLI {
         return endpoint.appendingPathComponent("json/list")
     }
 
+    private func readURLData(from url: URL, timeoutMilliseconds: Int) throws -> Data {
+        if url.isFileURL {
+            return try Data(contentsOf: url)
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = Double(timeoutMilliseconds) / 1_000.0
+        configuration.timeoutIntervalForResource = Double(timeoutMilliseconds) / 1_000.0
+        let session = URLSession(configuration: configuration)
+        let semaphore = DispatchSemaphore(value: 0)
+        let result = DataResponseBox()
+        let task = session.dataTask(with: url) { data, _, error in
+            if let error {
+                result.set(.failure(error))
+            } else if let data {
+                result.set(.success(data))
+            } else {
+                result.set(.failure(CommandError(description: "no response data from \(url.absoluteString)")))
+            }
+            semaphore.signal()
+        }
+
+        task.resume()
+        if semaphore.wait(timeout: .now() + Double(timeoutMilliseconds) / 1_000.0) == .timedOut {
+            task.cancel()
+            session.invalidateAndCancel()
+            throw CommandError(description: "timed out reading \(url.absoluteString)")
+        }
+        session.finishTasksAndInvalidate()
+        return try result.get()?.get() ?? {
+            throw CommandError(description: "no response from \(url.absoluteString)")
+        }()
+    }
+
     private func fileChecksum(
         for url: URL,
         algorithm: String,
@@ -4701,6 +4924,29 @@ final class ZeroThreeCLI {
               { "name": "filesystem.move", "domain": "filesystem", "risk": "medium", "mutates": true }
             ]
           },
+          "doctor": {
+            "command": "03 doctor --timeout-ms 1000",
+            "result": {
+              "status": "ready|degraded|blocked",
+              "ready": true,
+              "checks": [
+                {
+                  "name": "accessibility",
+                  "status": "pass",
+                  "required": true,
+                  "message": "Accessibility permission is enabled.",
+                  "remediation": null
+                },
+                {
+                  "name": "browser.devTools",
+                  "status": "warn",
+                  "required": false,
+                  "message": "Browser DevTools endpoint is not reachable.",
+                  "remediation": "Start Chromium with --remote-debugging-port=9222."
+                }
+              ]
+            }
+          },
           "observe": {
             "command": "03 observe --app-limit 20 --window-limit 20",
             "result": {
@@ -5265,6 +5511,7 @@ final class ZeroThreeCLI {
 
         Usage:
           03 trust [--prompt true|false]
+          03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           03 policy
           03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           03 apps [--all]

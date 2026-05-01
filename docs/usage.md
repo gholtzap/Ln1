@@ -18,6 +18,20 @@ swift build
 
 macOS will prompt for Accessibility access. Grant access to the terminal app that launched 03, then rerun the command.
 
+## Check Readiness
+
+```sh
+.build/debug/03 doctor
+```
+
+`doctor` checks whether the current shell is ready for computer control. It reports required checks for Accessibility permission, desktop window metadata, audit-log writeability, and clipboard metadata, plus an optional browser DevTools endpoint check. Each check includes `pass`, `warn`, or `fail`, whether it is required, a message, and a remediation command or setup step.
+
+Use a custom audit path or DevTools endpoint when testing a specific setup:
+
+```sh
+.build/debug/03 doctor --audit-log /tmp/03-audit.jsonl --endpoint http://127.0.0.1:9222 --timeout-ms 1000
+```
+
 ## Inspect Action Policy
 
 ```sh

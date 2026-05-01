@@ -146,6 +146,52 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
     }
 
+    func testDoctorReturnsReadinessChecksWithRemediation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-doctor-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Doctor Page",
+            "url": "https://example.com"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "doctor",
+            "--endpoint", directory.path,
+            "--audit-log", auditLog.path,
+            "--timeout-ms", "500"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+        let checkByName = Dictionary(uniqueKeysWithValues: checks.compactMap { check -> (String, [String: Any])? in
+            guard let name = check["name"] as? String else {
+                return nil
+            }
+            return (name, check)
+        })
+
+        XCTAssertNotNil(object["status"] as? String)
+        XCTAssertNotNil(object["ready"] as? Bool)
+        XCTAssertEqual(checkByName["accessibility"]?["required"] as? Bool, true)
+        XCTAssertEqual(checkByName["desktop.windowMetadata"]?["required"] as? Bool, true)
+        XCTAssertEqual(checkByName["auditLog.writeability"]?["status"] as? String, "pass")
+        XCTAssertEqual(checkByName["clipboard.metadata"]?["status"] as? String, "pass")
+        XCTAssertEqual(checkByName["browser.devTools"]?["status"] as? String, "pass")
+        XCTAssertEqual(checkByName["browser.devTools"]?["required"] as? Bool, false)
+    }
+
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
         let result = try runZeroThree(["schema"])
 
