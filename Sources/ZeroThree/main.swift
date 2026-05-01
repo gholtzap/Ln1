@@ -8648,7 +8648,11 @@ final class ZeroThreeCLI {
           const maxTextCharacters = \(maxTextCharacters);
           const root = document.body || document.documentElement;
           const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
-          const attrNames = ["id", "class", "name", "aria-label", "placeholder", "title", "href", "type"];
+          const attrNames = [
+            "id", "class", "name", "aria-label", "placeholder", "title", "href", "type",
+            "aria-expanded", "aria-selected", "aria-checked", "aria-pressed", "aria-disabled",
+            "aria-current", "aria-controls"
+          ];
           const elements = [];
           const ids = new Map();
           const queue = root ? [{ element: root, depth: 0 }] : [];
@@ -8676,7 +8680,7 @@ final class ZeroThreeCLI {
               if (isUniqueSelector(candidate)) return candidate;
             }
 
-            for (const name of ["name", "aria-label", "placeholder", "title", "href", "type"]) {
+            for (const name of ["name", "aria-label", "placeholder", "title", "href", "aria-controls", "aria-current"]) {
               const value = element.getAttribute(name);
               if (!value) continue;
               const candidate = `${tag}[${name}="${cssString(value)}"]`;
