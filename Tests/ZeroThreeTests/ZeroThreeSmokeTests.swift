@@ -75,6 +75,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.waitReady"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.waitReady"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.waitReady"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.waitTitle"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.waitTitle"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["browser.waitTitle"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["task.memoryStart"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryStart"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryStart"]?["mutates"] as? Bool, true)
@@ -517,6 +520,35 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--state", "interactive",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        let waitTitle = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "wait-browser-title",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--title", "Workflow Browser",
+            "--match", "contains",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(waitTitle.status, 0, waitTitle.stderr)
+        let waitTitleObject = try decodeJSONObject(waitTitle.stdout)
+        let waitTitleBlockers = try XCTUnwrap(waitTitleObject["blockers"] as? [String])
+        XCTAssertEqual(waitTitleObject["operation"] as? String, "wait-browser-title")
+        XCTAssertEqual(waitTitleObject["risk"] as? String, "low")
+        XCTAssertEqual(waitTitleObject["mutates"] as? Bool, false)
+        XCTAssertTrue(waitTitleBlockers.isEmpty)
+        XCTAssertEqual(waitTitleObject["nextArguments"] as? [String], [
+            "03", "browser", "wait-title",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--title", "Workflow Browser",
+            "--match", "contains",
             "--timeout-ms", "500",
             "--interval-ms", "50"
         ])
@@ -1251,6 +1283,66 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsDOMInspectionAfterBrowserTitleWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-workflow-title-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-title-transcript",
+            "operation": "wait-browser-title",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "03", "browser", "wait-title",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--title", "Checkout"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "verification": [
+                        "ok": true,
+                        "code": "title_matched",
+                        "currentTitle": "Checkout - Example",
+                        "currentURL": "https://example.com/checkout"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-browser-title",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-title")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "03", "workflow", "run",
+            "--operation", "read-browser",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("DOM inspection") == true)
+    }
+
     func testWorkflowRunRejectsMutatingExecutionMode() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03 workflow run reject \(UUID().uuidString)")
@@ -1529,6 +1621,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
         })
         XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitReady"
+                && $0["risk"] as? String == "low"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.waitTitle"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
         })
@@ -2615,6 +2712,55 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["expectedState"] as? String, "complete")
         XCTAssertEqual(verification["currentState"] as? String, "complete")
         XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/form")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+    }
+
+    func testBrowserWaitTitleReturnsVerificationWithoutPageContents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-wait-title-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Checkout - Example",
+            "url": "https://example.com/checkout"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runZeroThree([
+            "browser",
+            "wait-title",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--title", "Checkout",
+            "--match", "contains",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["tabID"] as? String, "page-1")
+        XCTAssertEqual(object["expectedTitle"] as? String, "Checkout")
+        XCTAssertEqual(object["match"] as? String, "contains")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 50)
+        XCTAssertNil(object["text"])
+        XCTAssertNil(object["html"])
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "title_matched")
+        XCTAssertEqual(verification["expectedTitle"] as? String, "Checkout")
+        XCTAssertEqual(verification["currentTitle"] as? String, "Checkout - Example")
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/checkout")
+        XCTAssertEqual(verification["match"] as? String, "contains")
         XCTAssertEqual(verification["matched"] as? Bool, true)
     }
 

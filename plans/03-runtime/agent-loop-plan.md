@@ -41,6 +41,8 @@ The system should support task execution as a sequence of observations and actio
 - Browser text wait resume: after a successful `wait-browser-text` transcript, `03 workflow resume --operation wait-browser-text` suggests a dry-run DOM inspection for the matched page state.
 - Browser ready-state wait workflow: `03 workflow run --operation wait-browser-ready ... --dry-run false` waits for document readiness before inspecting or acting.
 - Browser ready-state wait resume: after a successful `wait-browser-ready` transcript, `03 workflow resume --operation wait-browser-ready` suggests a dry-run DOM inspection for the loaded page state.
+- Browser title wait workflow: `03 workflow run --operation wait-browser-title ... --dry-run false` waits for tab title metadata without reading page contents.
+- Browser title wait resume: after a successful `wait-browser-title` transcript, `03 workflow resume --operation wait-browser-title` suggests a dry-run DOM inspection for the matched page state.
 
 ## Relationship To The Product
 
