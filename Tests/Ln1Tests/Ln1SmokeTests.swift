@@ -2,9 +2,9 @@ import AppKit
 import Foundation
 import XCTest
 
-final class ZeroThreeSmokeTests: XCTestCase {
+final class Ln1SmokeTests: XCTestCase {
     func testPolicyCommandReturnsKnownActionRiskClassifications() throws {
-        let result = try runZeroThree(["policy"])
+        let result = try runLn1(["policy"])
 
         XCTAssertEqual(result.status, 0, result.stderr)
         let object = try decodeJSONObject(result.stdout)
@@ -129,7 +129,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testDesktopWindowsReturnsStructuredVisibleWindowInventory() throws {
-        let result = try runZeroThree([
+        let result = try runLn1([
             "desktop",
             "windows",
             "--limit", "25"
@@ -171,7 +171,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testObserveReturnsStructuredFirstStepSnapshot() throws {
-        let result = try runZeroThree([
+        let result = try runLn1([
             "observe",
             "--app-limit", "5",
             "--window-limit", "3"
@@ -203,7 +203,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testDoctorReturnsReadinessChecksWithRemediation() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-doctor-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-doctor-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -220,7 +220,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "doctor",
             "--endpoint", directory.path,
             "--audit-log", auditLog.path,
@@ -248,7 +248,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testWorkflowPreflightReportsInspectActiveAppBlockersAndNextCommand() throws {
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "preflight",
             "--operation", "inspect-active-app"
@@ -270,7 +270,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowPreflightMoveFileUsesFilesystemPlanChecks() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("source.txt")
         let destination = directory.appendingPathComponent("destination.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -278,7 +278,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "workflow".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "preflight",
             "--operation", "move-file",
@@ -298,9 +298,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["mutates"] as? Bool, true)
         XCTAssertEqual(object["canProceed"] as? Bool, true)
         XCTAssertTrue(blockers.isEmpty)
-        XCTAssertTrue((object["nextCommand"] as? String)?.contains("03 files move") == true)
+        XCTAssertTrue((object["nextCommand"] as? String)?.contains("Ln1 files move") == true)
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "files", "move",
+            "Ln1", "files", "move",
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
@@ -314,7 +314,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-browser-action-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-browser-action-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -331,7 +331,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let fill = try runZeroThree([
+        let fill = try runLn1([
             "workflow",
             "preflight",
             "--operation", "fill-browser",
@@ -350,7 +350,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(fillObject["mutates"] as? Bool, true)
         XCTAssertTrue(fillBlockers.isEmpty)
         XCTAssertEqual(fillObject["nextArguments"] as? [String], [
-            "03", "browser", "fill",
+            "Ln1", "browser", "fill",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
@@ -360,7 +360,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let select = try runZeroThree([
+        let select = try runLn1([
             "workflow",
             "preflight",
             "--operation", "select-browser",
@@ -379,7 +379,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(selectObject["mutates"] as? Bool, true)
         XCTAssertTrue(selectBlockers.isEmpty)
         XCTAssertEqual(selectObject["nextArguments"] as? [String], [
-            "03", "browser", "select",
+            "Ln1", "browser", "select",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "select[name=\"country\"]",
@@ -389,7 +389,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let check = try runZeroThree([
+        let check = try runLn1([
             "workflow",
             "preflight",
             "--operation", "check-browser",
@@ -408,7 +408,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(checkObject["mutates"] as? Bool, true)
         XCTAssertTrue(checkBlockers.isEmpty)
         XCTAssertEqual(checkObject["nextArguments"] as? [String], [
-            "03", "browser", "check",
+            "Ln1", "browser", "check",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
@@ -418,7 +418,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let focus = try runZeroThree([
+        let focus = try runLn1([
             "workflow",
             "preflight",
             "--operation", "focus-browser",
@@ -436,7 +436,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(focusObject["mutates"] as? Bool, true)
         XCTAssertTrue(focusBlockers.isEmpty)
         XCTAssertEqual(focusObject["nextArguments"] as? [String], [
-            "03", "browser", "focus",
+            "Ln1", "browser", "focus",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
@@ -445,7 +445,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let pressKey = try runZeroThree([
+        let pressKey = try runLn1([
             "workflow",
             "preflight",
             "--operation", "press-browser-key",
@@ -465,7 +465,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(pressKeyObject["mutates"] as? Bool, true)
         XCTAssertTrue(pressKeyBlockers.isEmpty)
         XCTAssertEqual(pressKeyObject["nextArguments"] as? [String], [
-            "03", "browser", "press-key",
+            "Ln1", "browser", "press-key",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--key", "Enter",
@@ -476,7 +476,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let click = try runZeroThree([
+        let click = try runLn1([
             "workflow",
             "next",
             "--operation", "click-browser",
@@ -494,7 +494,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(clickObject["risk"] as? String, "medium")
         XCTAssertEqual(clickObject["mutates"] as? Bool, true)
         XCTAssertEqual(command["argv"] as? [String], [
-            "03", "browser", "click",
+            "Ln1", "browser", "click",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
@@ -503,7 +503,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let clickWithExpectedURL = try runZeroThree([
+        let clickWithExpectedURL = try runLn1([
             "workflow",
             "preflight",
             "--operation", "click-browser",
@@ -521,7 +521,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let clickWithExpectedURLObject = try decodeJSONObject(clickWithExpectedURL.stdout)
         XCTAssertEqual(clickWithExpectedURLObject["operation"] as? String, "click-browser")
         XCTAssertEqual(clickWithExpectedURLObject["nextArguments"] as? [String], [
-            "03", "browser", "click",
+            "Ln1", "browser", "click",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
@@ -534,7 +534,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let navigate = try runZeroThree([
+        let navigate = try runLn1([
             "workflow",
             "preflight",
             "--operation", "navigate-browser",
@@ -554,7 +554,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(navigateObject["mutates"] as? Bool, true)
         XCTAssertTrue(navigateBlockers.isEmpty)
         XCTAssertEqual(navigateObject["nextArguments"] as? [String], [
-            "03", "browser", "navigate",
+            "Ln1", "browser", "navigate",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--url", "https://example.com/next",
@@ -565,7 +565,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
 
-        let waitURL = try runZeroThree([
+        let waitURL = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-url",
@@ -585,7 +585,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitBlockers.isEmpty)
         XCTAssertEqual(waitObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-url",
+            "Ln1", "browser", "wait-url",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--expect-url", "https://example.com/next",
@@ -594,7 +594,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitSelector = try runZeroThree([
+        let waitSelector = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-selector",
@@ -614,7 +614,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitSelectorObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitSelectorBlockers.isEmpty)
         XCTAssertEqual(waitSelectorObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-selector",
+            "Ln1", "browser", "wait-selector",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
@@ -623,7 +623,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitSelectorHidden = try runZeroThree([
+        let waitSelectorHidden = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-selector",
@@ -643,7 +643,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitSelectorHiddenObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitSelectorHiddenBlockers.isEmpty)
         XCTAssertEqual(waitSelectorHiddenObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-selector",
+            "Ln1", "browser", "wait-selector",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", ".loading-overlay",
@@ -652,7 +652,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitCount = try runZeroThree([
+        let waitCount = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-count",
@@ -673,7 +673,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitCountObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitCountBlockers.isEmpty)
         XCTAssertEqual(waitCountObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-count",
+            "Ln1", "browser", "wait-count",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", ".result-row",
@@ -683,7 +683,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitText = try runZeroThree([
+        let waitText = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-text",
@@ -703,7 +703,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitTextObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitTextBlockers.isEmpty)
         XCTAssertEqual(waitTextObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-text",
+            "Ln1", "browser", "wait-text",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--text", "Saved successfully",
@@ -712,7 +712,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitReady = try runZeroThree([
+        let waitReady = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-ready",
@@ -731,7 +731,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitReadyObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitReadyBlockers.isEmpty)
         XCTAssertEqual(waitReadyObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-ready",
+            "Ln1", "browser", "wait-ready",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--state", "interactive",
@@ -739,7 +739,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitTitle = try runZeroThree([
+        let waitTitle = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-title",
@@ -759,7 +759,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitTitleObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitTitleBlockers.isEmpty)
         XCTAssertEqual(waitTitleObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-title",
+            "Ln1", "browser", "wait-title",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--title", "Workflow Browser",
@@ -768,7 +768,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitValue = try runZeroThree([
+        let waitValue = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-value",
@@ -789,7 +789,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitValueObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitValueBlockers.isEmpty)
         XCTAssertEqual(waitValueObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-value",
+            "Ln1", "browser", "wait-value",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
@@ -799,7 +799,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitChecked = try runZeroThree([
+        let waitChecked = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-checked",
@@ -819,7 +819,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitCheckedObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitCheckedBlockers.isEmpty)
         XCTAssertEqual(waitCheckedObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-checked",
+            "Ln1", "browser", "wait-checked",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
@@ -828,7 +828,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitEnabled = try runZeroThree([
+        let waitEnabled = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-enabled",
@@ -848,7 +848,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitEnabledObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitEnabledBlockers.isEmpty)
         XCTAssertEqual(waitEnabledObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-enabled",
+            "Ln1", "browser", "wait-enabled",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
@@ -857,7 +857,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitFocus = try runZeroThree([
+        let waitFocus = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-focus",
@@ -877,7 +877,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitFocusObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitFocusBlockers.isEmpty)
         XCTAssertEqual(waitFocusObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-focus",
+            "Ln1", "browser", "wait-focus",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
@@ -886,7 +886,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--interval-ms", "50"
         ])
 
-        let waitAttribute = try runZeroThree([
+        let waitAttribute = try runLn1([
             "workflow",
             "preflight",
             "--operation", "wait-browser-attribute",
@@ -908,7 +908,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(waitAttributeObject["mutates"] as? Bool, false)
         XCTAssertTrue(waitAttributeBlockers.isEmpty)
         XCTAssertEqual(waitAttributeObject["nextArguments"] as? [String], [
-            "03", "browser", "wait-attribute",
+            "Ln1", "browser", "wait-attribute",
             "--endpoint", directory.standardizedFileURL.absoluteString,
             "--id", "page-1",
             "--selector", "button[aria-expanded]",
@@ -922,7 +922,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowNextReturnsStructuredArgvWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03 workflow next \(UUID().uuidString)")
+            .appendingPathComponent("Ln1 workflow next \(UUID().uuidString)")
         let source = directory.appendingPathComponent("source file.txt")
         let destination = directory.appendingPathComponent("destination file.txt")
         let auditLog = directory.appendingPathComponent("audit log.jsonl")
@@ -930,7 +930,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "workflow".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "next",
             "--operation", "move-file",
@@ -950,7 +950,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["risk"] as? String, "medium")
         XCTAssertEqual(object["mutates"] as? Bool, true)
         XCTAssertEqual(command["argv"] as? [String], [
-            "03", "files", "move",
+            "Ln1", "files", "move",
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
@@ -967,7 +967,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03 workflow run \(UUID().uuidString)")
+            .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
         let source = directory.appendingPathComponent("source file.txt")
         let destination = directory.appendingPathComponent("destination file.txt")
         let auditLog = directory.appendingPathComponent("audit log.jsonl")
@@ -975,7 +975,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "workflow".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "move-file",
@@ -1000,7 +1000,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["risk"] as? String, "medium")
         XCTAssertEqual(object["mutates"] as? Bool, true)
         XCTAssertEqual(command["argv"] as? [String], [
-            "03", "files", "move",
+            "Ln1", "files", "move",
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
@@ -1016,7 +1016,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunExecutesNonMutatingBrowserReadAndCapturesJSON() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-run-browser-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-run-browser-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
@@ -1032,7 +1032,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "read-browser",
@@ -1074,7 +1074,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testWorkflowRunExecutesNonMutatingClipboardWaitAndCapturesJSON() throws {
-        let pasteboardName = "03-workflow-clipboard-\(UUID().uuidString)"
+        let pasteboardName = "Ln1-workflow-clipboard-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
         pasteboard.clearContents()
         pasteboard.setString("workflow old", forType: .string)
@@ -1082,7 +1082,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         pasteboard.clearContents()
         pasteboard.setString("workflow new", forType: .string)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "wait-clipboard",
@@ -1109,7 +1109,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["executed"] as? Bool, true)
         XCTAssertEqual(object["mutates"] as? Bool, false)
         XCTAssertEqual(command["argv"] as? [String], [
-            "03", "clipboard", "wait",
+            "Ln1", "clipboard", "wait",
             "--pasteboard", pasteboardName,
             "--changed-from", String(changedFrom),
             "--has-string", "true",
@@ -1125,7 +1125,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-run-cap-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-run-cap-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
@@ -1142,7 +1142,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "[\n\(targets)\n]".write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "read-browser",
@@ -1166,12 +1166,12 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunTimesOutLongNonMutatingWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-run-timeout-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-run-timeout-\(UUID().uuidString)")
         let missingPath = directory.appendingPathComponent("missing.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "wait-file",
@@ -1199,7 +1199,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunWritesTranscriptAndWorkflowLogReadsIt() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-log-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-log-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
@@ -1216,7 +1216,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let run = try runZeroThree([
+        let run = try runLn1([
             "workflow",
             "run",
             "--operation", "read-browser",
@@ -1232,7 +1232,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let transcriptID = try XCTUnwrap(runObject["transcriptID"] as? String)
         XCTAssertEqual(runObject["transcriptPath"] as? String, workflowLog.path)
 
-        let denied = try runZeroThree([
+        let denied = try runLn1([
             "workflow",
             "log",
             "--workflow-log", workflowLog.path
@@ -1241,7 +1241,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNotEqual(denied.status, 0)
         XCTAssertTrue(denied.stderr.contains("policy denied"))
 
-        let log = try runZeroThree([
+        let log = try runLn1([
             "workflow",
             "log",
             "--workflow-log", workflowLog.path,
@@ -1265,7 +1265,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(entry["executed"] as? Bool, true)
         XCTAssertEqual(outputJSON["count"] as? Int, 1)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -1284,7 +1284,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(resumeObject["latestOperation"] as? String, "read-browser")
         let expectedEndpoint = try XCTUnwrap(outputJSON["endpoint"] as? String)
         XCTAssertEqual(resumeObject["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", expectedEndpoint,
             "--id", "page-1",
@@ -1297,7 +1297,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsBrowserActionsAfterDOMInspection() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-dom-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-dom-resume-\(UUID().uuidString)")
         let fillWorkflowLog = directory.appendingPathComponent("fill-workflow-runs.jsonl")
         let selectWorkflowLog = directory.appendingPathComponent("select-workflow-runs.jsonl")
         let checkWorkflowLog = directory.appendingPathComponent("check-workflow-runs.jsonl")
@@ -1308,7 +1308,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let endpoint = "file://\(directory.path)/"
         let baseExecution: [String: Any] = [
             "argv": [
-                "03", "browser", "dom",
+                "Ln1", "browser", "dom",
                 "--endpoint", endpoint,
                 "--id", "page-1",
                 "--allow-risk", "medium"
@@ -1342,7 +1342,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(fillTranscript, to: fillWorkflowLog)
 
-        let fillResume = try runZeroThree([
+        let fillResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", fillWorkflowLog.path,
@@ -1354,7 +1354,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let fillObject = try decodeJSONObject(fillResume.stdout)
         XCTAssertEqual(fillObject["status"] as? String, "completed")
         XCTAssertEqual(fillObject["nextArguments"] as? [String], [
-            "03", "browser", "fill",
+            "Ln1", "browser", "fill",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
@@ -1388,7 +1388,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(selectTranscript, to: selectWorkflowLog)
 
-        let selectResume = try runZeroThree([
+        let selectResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", selectWorkflowLog.path,
@@ -1400,7 +1400,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let selectObject = try decodeJSONObject(selectResume.stdout)
         XCTAssertEqual(selectObject["status"] as? String, "completed")
         XCTAssertEqual(selectObject["nextArguments"] as? [String], [
-            "03", "browser", "select",
+            "Ln1", "browser", "select",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "select[name=\"country\"]",
@@ -1436,7 +1436,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(checkTranscript, to: checkWorkflowLog)
 
-        let checkResume = try runZeroThree([
+        let checkResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", checkWorkflowLog.path,
@@ -1448,7 +1448,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let checkObject = try decodeJSONObject(checkResume.stdout)
         XCTAssertEqual(checkObject["status"] as? String, "completed")
         XCTAssertEqual(checkObject["nextArguments"] as? [String], [
-            "03", "browser", "check",
+            "Ln1", "browser", "check",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
@@ -1482,7 +1482,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(clickTranscript, to: clickWorkflowLog)
 
-        let clickResume = try runZeroThree([
+        let clickResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", clickWorkflowLog.path,
@@ -1494,7 +1494,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let clickObject = try decodeJSONObject(clickResume.stdout)
         XCTAssertEqual(clickObject["status"] as? String, "completed")
         XCTAssertEqual(clickObject["nextArguments"] as? [String], [
-            "03", "browser", "click",
+            "Ln1", "browser", "click",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
@@ -1506,7 +1506,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserURLWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-url-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-url-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1520,7 +1520,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-url",
+                    "Ln1", "browser", "wait-url",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--expect-url", "https://example.com/done"
@@ -1540,7 +1540,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -1553,7 +1553,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-url")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -1565,7 +1565,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsBrowserActionsAfterSelectorWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-selector-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-selector-wait-resume-\(UUID().uuidString)")
         let clickWorkflowLog = directory.appendingPathComponent("click-workflow-runs.jsonl")
         let fillWorkflowLog = directory.appendingPathComponent("fill-workflow-runs.jsonl")
         let selectWorkflowLog = directory.appendingPathComponent("select-workflow-runs.jsonl")
@@ -1576,7 +1576,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let endpoint = "file://\(directory.path)/"
         let baseExecution: [String: Any] = [
             "argv": [
-                "03", "browser", "wait-selector",
+                "Ln1", "browser", "wait-selector",
                 "--endpoint", endpoint,
                 "--id", "page-1"
             ],
@@ -1608,7 +1608,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(clickTranscript, to: clickWorkflowLog)
 
-        let clickResume = try runZeroThree([
+        let clickResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", clickWorkflowLog.path,
@@ -1621,7 +1621,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(clickObject["status"] as? String, "completed")
         XCTAssertEqual(clickObject["latestOperation"] as? String, "wait-browser-selector")
         XCTAssertEqual(clickObject["nextArguments"] as? [String], [
-            "03", "browser", "click",
+            "Ln1", "browser", "click",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "button[type=\"submit\"]",
@@ -1656,7 +1656,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(fillTranscript, to: fillWorkflowLog)
 
-        let fillResume = try runZeroThree([
+        let fillResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", fillWorkflowLog.path,
@@ -1668,7 +1668,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let fillObject = try decodeJSONObject(fillResume.stdout)
         XCTAssertEqual(fillObject["status"] as? String, "completed")
         XCTAssertEqual(fillObject["nextArguments"] as? [String], [
-            "03", "browser", "fill",
+            "Ln1", "browser", "fill",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
@@ -1702,7 +1702,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(selectTranscript, to: selectWorkflowLog)
 
-        let selectResume = try runZeroThree([
+        let selectResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", selectWorkflowLog.path,
@@ -1714,7 +1714,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let selectObject = try decodeJSONObject(selectResume.stdout)
         XCTAssertEqual(selectObject["status"] as? String, "completed")
         XCTAssertEqual(selectObject["nextArguments"] as? [String], [
-            "03", "browser", "select",
+            "Ln1", "browser", "select",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "select[name=\"country\"]",
@@ -1750,7 +1750,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(checkTranscript, to: checkWorkflowLog)
 
-        let checkResume = try runZeroThree([
+        let checkResume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", checkWorkflowLog.path,
@@ -1762,7 +1762,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let checkObject = try decodeJSONObject(checkResume.stdout)
         XCTAssertEqual(checkObject["status"] as? String, "completed")
         XCTAssertEqual(checkObject["nextArguments"] as? [String], [
-            "03", "browser", "check",
+            "Ln1", "browser", "check",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "input[name=\"subscribe\"]",
@@ -1775,7 +1775,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserTextWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-text-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-text-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1789,7 +1789,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-text",
+                    "Ln1", "browser", "wait-text",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--text", "Saved successfully"
@@ -1810,7 +1810,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -1823,7 +1823,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-text")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -1835,7 +1835,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserCountWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-count-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-count-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1849,7 +1849,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-count",
+                    "Ln1", "browser", "wait-count",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--selector", ".result-row",
@@ -1875,7 +1875,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -1888,7 +1888,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-count")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -1900,7 +1900,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserValueWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-value-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-value-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1914,7 +1914,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-value",
+                    "Ln1", "browser", "wait-value",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--selector", "input[name='q']",
@@ -1938,7 +1938,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -1951,7 +1951,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-value")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -1963,7 +1963,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserReadyWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-ready-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-ready-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1977,7 +1977,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-ready",
+                    "Ln1", "browser", "wait-ready",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--state", "complete"
@@ -1998,7 +1998,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -2011,7 +2011,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-ready")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -2023,7 +2023,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserTitleWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-title-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-title-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2037,7 +2037,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-title",
+                    "Ln1", "browser", "wait-title",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--title", "Checkout"
@@ -2058,7 +2058,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -2071,7 +2071,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-title")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -2083,7 +2083,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserCheckedWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-checked-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-checked-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2097,7 +2097,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-checked",
+                    "Ln1", "browser", "wait-checked",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--selector", "input[name='subscribe']",
@@ -2122,7 +2122,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -2135,7 +2135,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-checked")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -2147,7 +2147,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserFocusWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-focus-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-focus-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2161,7 +2161,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-focus",
+                    "Ln1", "browser", "wait-focus",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--selector", "input[name='q']",
@@ -2186,7 +2186,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -2199,7 +2199,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-focus")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -2211,7 +2211,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserAttributeWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-attribute-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-attribute-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2225,7 +2225,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-attribute",
+                    "Ln1", "browser", "wait-attribute",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--selector", "button[aria-expanded]",
@@ -2252,7 +2252,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -2265,7 +2265,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-attribute")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "workflow", "run",
+            "Ln1", "workflow", "run",
             "--operation", "read-browser",
             "--endpoint", endpoint,
             "--id", "page-1",
@@ -2277,7 +2277,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowResumeSuggestsBrowserActionAfterBrowserEnabledWait() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-workflow-enabled-wait-resume-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-workflow-enabled-wait-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2291,7 +2291,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "wouldExecute": true,
             "execution": [
                 "argv": [
-                    "03", "browser", "wait-enabled",
+                    "Ln1", "browser", "wait-enabled",
                     "--endpoint", endpoint,
                     "--id", "page-1",
                     "--selector", "button[type='submit']",
@@ -2318,7 +2318,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         ]
         try writeJSONObjectLine(transcript, to: workflowLog)
 
-        let resume = try runZeroThree([
+        let resume = try runLn1([
             "workflow",
             "resume",
             "--workflow-log", workflowLog.path,
@@ -2331,7 +2331,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["status"] as? String, "completed")
         XCTAssertEqual(object["latestOperation"] as? String, "wait-browser-enabled")
         XCTAssertEqual(object["nextArguments"] as? [String], [
-            "03", "browser", "click",
+            "Ln1", "browser", "click",
             "--endpoint", endpoint,
             "--id", "page-1",
             "--selector", "button[type='submit']",
@@ -2343,7 +2343,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunRequiresExplicitApprovalForMutatingExecutionMode() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03 workflow run reject \(UUID().uuidString)")
+            .appendingPathComponent("Ln1 workflow run reject \(UUID().uuidString)")
         let source = directory.appendingPathComponent("source file.txt")
         let destination = directory.appendingPathComponent("destination file.txt")
         let auditLog = directory.appendingPathComponent("audit log.jsonl")
@@ -2351,7 +2351,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "workflow".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "move-file",
@@ -2370,7 +2370,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testWorkflowRunExecutesMutatingMoveWithExplicitApprovalAndReason() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03 workflow run execute move \(UUID().uuidString)")
+            .appendingPathComponent("Ln1 workflow run execute move \(UUID().uuidString)")
         let source = directory.appendingPathComponent("source file.txt")
         let destination = directory.appendingPathComponent("destination file.txt")
         let auditLog = directory.appendingPathComponent("audit log.jsonl")
@@ -2379,7 +2379,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "workflow".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "workflow",
             "run",
             "--operation", "move-file",
@@ -2406,7 +2406,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["executed"] as? Bool, true)
         XCTAssertEqual(object["mutates"] as? Bool, true)
         XCTAssertEqual(command["argv"] as? [String], [
-            "03", "files", "move",
+            "Ln1", "files", "move",
             "--path", source.path,
             "--to", destination.path,
             "--allow-risk", "medium",
@@ -2424,7 +2424,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testSchemaDocumentsStableAccessibilityElementIdentities() throws {
-        let result = try runZeroThree(["schema"])
+        let result = try runLn1(["schema"])
 
         XCTAssertEqual(result.status, 0, result.stderr)
         let object = try decodeJSONObject(result.stdout)
@@ -2446,7 +2446,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testSchemaDocumentsIdentityGuardedPerformResults() throws {
-        let result = try runZeroThree(["schema"])
+        let result = try runLn1(["schema"])
 
         XCTAssertEqual(result.status, 0, result.stderr)
         let object = try decodeJSONObject(result.stdout)
@@ -2467,10 +2467,10 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {
         let memoryLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-task-memory-\(UUID().uuidString).jsonl")
+            .appendingPathComponent("Ln1-task-memory-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: memoryLog) }
 
-        let start = try runZeroThree([
+        let start = try runLn1([
             "task",
             "start",
             "--title", "Verify download",
@@ -2493,7 +2493,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(started["summary"] as? String, "Wait for report.pdf and compare checksum")
         XCTAssertEqual(started["sensitivity"] as? String, "private")
 
-        let record = try runZeroThree([
+        let record = try runLn1([
             "task",
             "record",
             "--task-id", taskID,
@@ -2518,7 +2518,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["relatedAuditID"] as? String, "audit-1")
         XCTAssertNil(verification["summary"])
 
-        let finish = try runZeroThree([
+        let finish = try runLn1([
             "task",
             "finish",
             "--task-id", taskID,
@@ -2530,7 +2530,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertEqual(finish.status, 0, finish.stderr)
 
-        let show = try runZeroThree([
+        let show = try runLn1([
             "task",
             "show",
             "--task-id", taskID,
@@ -2553,10 +2553,10 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testTaskMemoryRequiresMediumRiskBeforePersisting() throws {
         let memoryLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-task-memory-policy-\(UUID().uuidString).jsonl")
+            .appendingPathComponent("Ln1-task-memory-policy-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: memoryLog) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "task",
             "start",
             "--title", "Blocked task",
@@ -2570,7 +2570,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserTabsReturnsStructuredDevToolsPageTargets() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
@@ -2604,7 +2604,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "tabs",
             "--endpoint", directory.path
@@ -2733,7 +2733,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == false
         })
 
-        let tabResult = try runZeroThree([
+        let tabResult = try runLn1([
             "browser",
             "tab",
             "--endpoint", directory.path,
@@ -2751,7 +2751,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserTextReadsPageTextWithPolicyAndAuditsSummaryOnly() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-text-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-text-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -2781,7 +2781,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "text",
             "--endpoint", directory.path,
@@ -2792,7 +2792,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "text",
             "--endpoint", directory.path,
@@ -2816,7 +2816,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(tab["id"] as? String, "page-1")
         XCTAssertNil(object["contents"])
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.text",
@@ -2838,7 +2838,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["textDigest"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.text",
@@ -2870,7 +2870,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserDOMReadsStructuredPageStateWithPolicyAndAuditsSummaryOnly() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-dom-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-dom-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -2979,7 +2979,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "dom",
             "--endpoint", directory.path,
@@ -2990,7 +2990,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "dom",
             "--endpoint", directory.path,
@@ -3040,7 +3040,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(buttonAttributes["aria-expanded"] as? String, "false")
         XCTAssertEqual(buttonAttributes["aria-pressed"] as? String, "false")
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.dom",
@@ -3062,7 +3062,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["domDigest"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.dom",
@@ -3092,7 +3092,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserFillSetsFormFieldWithPolicyVerificationAndRedactedAudit() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-fill-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-fill-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -3137,7 +3137,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "fill",
             "--endpoint", directory.path,
@@ -3150,7 +3150,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "fill",
             "--endpoint", directory.path,
@@ -3180,7 +3180,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["code"] as? String, "value_matched")
         XCTAssertNil(object["textValue"])
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.fill",
@@ -3203,7 +3203,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["text"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.fill",
@@ -3239,7 +3239,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserSelectSetsOptionWithPolicyVerificationAndRedactedAudit() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-select-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-select-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -3285,7 +3285,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "select",
             "--endpoint", directory.path,
@@ -3298,7 +3298,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "select",
             "--endpoint", directory.path,
@@ -3333,7 +3333,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(object["value"])
         XCTAssertNil(object["label"])
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.select",
@@ -3356,7 +3356,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["text"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.select",
@@ -3392,7 +3392,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserCheckSetsCheckedStateWithPolicyVerificationAndAudit() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-check-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-check-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -3438,7 +3438,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "check",
             "--endpoint", directory.path,
@@ -3451,7 +3451,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "check",
             "--endpoint", directory.path,
@@ -3481,7 +3481,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "checked_matched")
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.check",
@@ -3503,7 +3503,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["text"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.check",
@@ -3538,7 +3538,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserFocusRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-focus-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-focus-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -3582,7 +3582,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "focus",
             "--endpoint", directory.path,
@@ -3594,7 +3594,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "focus",
             "--endpoint", directory.path,
@@ -3622,7 +3622,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "element_focused")
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.focus",
@@ -3642,7 +3642,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["text"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.focus",
@@ -3677,7 +3677,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserPressKeyRequiresPolicyDispatchesAndAuditsMetadataOnly() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-press-key-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-press-key-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("key-response.json")
@@ -3710,7 +3710,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "press-key",
             "--endpoint", directory.path,
@@ -3723,7 +3723,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "press-key",
             "--endpoint", directory.path,
@@ -3753,7 +3753,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["keyDownDispatched"] as? Bool, true)
         XCTAssertEqual(verification["keyUpDispatched"] as? Bool, true)
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.press-key",
@@ -3775,7 +3775,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["text"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.press-key",
@@ -3811,7 +3811,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-click-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-click-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -3854,7 +3854,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "click",
             "--endpoint", directory.path,
@@ -3866,7 +3866,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "click",
             "--endpoint", directory.path,
@@ -3892,7 +3892,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "element_clicked")
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.click",
@@ -3912,7 +3912,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["text"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.click",
@@ -3947,7 +3947,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserClickCanVerifyExpectedURLAfterClick() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-click-url-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-click-url-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -3990,7 +3990,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "click",
             "--endpoint", directory.path,
@@ -4018,7 +4018,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(urlVerification["code"] as? String, "url_matched")
         XCTAssertEqual(urlVerification["currentURL"] as? String, "https://example.com/done")
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.click",
@@ -4042,7 +4042,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserNavigateRequiresPolicyVerifiesURLAndAudits() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-navigate-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-navigate-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("navigate.json")
@@ -4074,7 +4074,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "browser",
             "navigate",
             "--endpoint", directory.path,
@@ -4086,7 +4086,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "navigate",
             "--endpoint", directory.path,
@@ -4113,7 +4113,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/next")
         XCTAssertEqual(verification["matched"] as? Bool, true)
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.navigate",
@@ -4134,7 +4134,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNil(deniedBrowserTab["currentURL"])
         XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "browser.navigate",
@@ -4169,7 +4169,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitURLReturnsVerificationWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-url-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-url-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
@@ -4185,7 +4185,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-url",
             "--endpoint", directory.path,
@@ -4212,7 +4212,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitSelectorReturnsVerificationWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-selector-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-selector-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4257,7 +4257,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-selector",
             "--endpoint", directory.path,
@@ -4287,7 +4287,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitSelectorSupportsHiddenAndDetachedStates() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-selector-hidden-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-selector-hidden-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4328,7 +4328,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-selector",
             "--endpoint", directory.path,
@@ -4374,7 +4374,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let detachedCDPData = try JSONSerialization.data(withJSONObject: detachedCDPPayload, options: [.prettyPrinted, .sortedKeys])
         try detachedCDPData.write(to: cdpResponse)
 
-        let detachedResult = try runZeroThree([
+        let detachedResult = try runLn1([
             "browser",
             "wait-selector",
             "--endpoint", directory.path,
@@ -4399,7 +4399,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitCountReturnsSelectorCountVerification() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-count-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-count-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4442,7 +4442,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-count",
             "--endpoint", directory.path,
@@ -4478,7 +4478,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitTextReturnsVerificationWithoutTextContents() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-text-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-text-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4507,7 +4507,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-text",
             "--endpoint", directory.path,
@@ -4541,7 +4541,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitValueReturnsVerificationWithoutValueContents() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-value-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-value-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4587,7 +4587,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-value",
             "--endpoint", directory.path,
@@ -4630,7 +4630,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitReadyReturnsVerificationWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-ready-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-ready-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4671,7 +4671,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-ready",
             "--endpoint", directory.path,
@@ -4699,7 +4699,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitTitleReturnsVerificationWithoutPageContents() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-title-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-title-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
@@ -4715,7 +4715,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-title",
             "--endpoint", directory.path,
@@ -4748,7 +4748,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitCheckedReturnsVerificationWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-checked-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-checked-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4794,7 +4794,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-checked",
             "--endpoint", directory.path,
@@ -4831,7 +4831,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitEnabledReturnsVerificationWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-enabled-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-enabled-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4876,7 +4876,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-enabled",
             "--endpoint", directory.path,
@@ -4912,7 +4912,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitFocusReturnsVerificationWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-focus-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-focus-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -4958,7 +4958,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-focus",
             "--endpoint", directory.path,
@@ -4995,7 +4995,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testBrowserWaitAttributeReturnsVerificationWithoutAttributeContents() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-browser-wait-attribute-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-browser-wait-attribute-\(UUID().uuidString)")
         let jsonDirectory = directory.appendingPathComponent("json")
         let targetList = jsonDirectory.appendingPathComponent("list")
         let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
@@ -5039,7 +5039,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         """.write(to: targetList, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "browser",
             "wait-attribute",
             "--endpoint", directory.path,
@@ -5082,13 +5082,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesStatReturnsStructuredMetadataForFile() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-files-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-files-\(UUID().uuidString)")
         let file = directory.appendingPathComponent("note.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try "hello".write(to: file, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "stat",
             "--path", file.path
@@ -5110,7 +5110,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesListReturnsDirectoryEntriesWithoutHiddenFilesByDefault() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-files-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-files-\(UUID().uuidString)")
         let nested = directory.appendingPathComponent("nested")
         let visible = directory.appendingPathComponent("visible.txt")
         let hidden = directory.appendingPathComponent(".secret")
@@ -5121,7 +5121,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "inner".write(to: inner, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "list",
             "--path", directory.path,
@@ -5148,7 +5148,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesSearchReturnsStructuredNameAndContentMatches() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-search-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-search-\(UUID().uuidString)")
         let nested = directory.appendingPathComponent("nested")
         let contentMatch = directory.appendingPathComponent("alpha.txt")
         let nameMatch = nested.appendingPathComponent("needle-name.txt")
@@ -5160,7 +5160,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "needle should be skipped".write(to: hiddenMatch, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "search",
             "--path", directory.path,
@@ -5203,13 +5203,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesSearchLimitsContentMatchesPerFile() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-search-limit-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-search-limit-\(UUID().uuidString)")
         let file = directory.appendingPathComponent("many.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try "needle one\nneedle two\nneedle three".write(to: file, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "search",
             "--path", directory.path,
@@ -5231,13 +5231,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesWaitReturnsMatchedExistingFileMetadata() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-wait-exists-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-wait-exists-\(UUID().uuidString)")
         let file = directory.appendingPathComponent("ready.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try "ready".write(to: file, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "wait",
             "--path", file.path,
@@ -5259,12 +5259,12 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesWaitReturnsMatchedMissingPathWithoutMetadata() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-wait-missing-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-wait-missing-\(UUID().uuidString)")
         let missing = directory.appendingPathComponent("missing.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "wait",
             "--path", missing.path,
@@ -5284,7 +5284,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesWatchReturnsCreatedFileEventWithMetadata() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-watch-created-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-watch-created-\(UUID().uuidString)")
         let created = directory.appendingPathComponent("created.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -5293,7 +5293,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             try? "created".write(to: created, atomically: true, encoding: .utf8)
         }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "watch",
             "--path", directory.path,
@@ -5328,11 +5328,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesWatchTimesOutWithoutEvents() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-watch-timeout-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-watch-timeout-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "watch",
             "--path", directory.path,
@@ -5352,13 +5352,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesChecksumReturnsBoundedSHA256WithoutContent() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-checksum-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-checksum-\(UUID().uuidString)")
         let file = directory.appendingPathComponent("hello.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try "hello".write(to: file, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "checksum",
             "--path", file.path,
@@ -5379,7 +5379,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesCompareReportsMatchingFilesBySizeAndDigest() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-compare-match-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-compare-match-\(UUID().uuidString)")
         let left = directory.appendingPathComponent("left.txt")
         let right = directory.appendingPathComponent("right.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -5387,7 +5387,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "same".write(to: right, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "compare",
             "--path", left.path,
@@ -5411,7 +5411,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesCompareReportsDifferentFilesByDigest() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-compare-different-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-compare-different-\(UUID().uuidString)")
         let left = directory.appendingPathComponent("left.txt")
         let right = directory.appendingPathComponent("right.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -5419,7 +5419,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "right".write(to: right, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "compare",
             "--path", left.path,
@@ -5437,14 +5437,14 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesPlanPreflightsMoveWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-plan-move-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-plan-move-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("draft.txt")
         let destination = directory.appendingPathComponent("archive.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try "plan me".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "plan",
             "--operation", "move",
@@ -5487,14 +5487,14 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesPlanReportsPolicyDenialWithoutMutating() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-plan-policy-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-plan-policy-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("source.txt")
         let destination = directory.appendingPathComponent("copy.txt")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try "stay".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "plan",
             "--operation", "duplicate",
@@ -5523,7 +5523,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesPlanPreflightsRollbackWithoutRestoring() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-plan-rollback-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-plan-rollback-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("draft.txt")
         let destination = directory.appendingPathComponent("archive.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5531,7 +5531,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "rollback plan".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let move = try runZeroThree([
+        let move = try runLn1([
             "files",
             "move",
             "--path", source.path,
@@ -5545,7 +5545,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let moveObject = try decodeJSONObject(move.stdout)
         let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "plan",
             "--operation", "rollback",
@@ -5584,7 +5584,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesDuplicateCopiesRegularFileWithAuditAndVerification() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-duplicate-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-duplicate-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("source.txt")
         let destination = directory.appendingPathComponent("copy.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5592,7 +5592,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "copy me".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "duplicate",
             "--path", source.path,
@@ -5619,7 +5619,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "metadata_matched")
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -5645,7 +5645,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesDuplicatePolicyDenialIsAuditedAndDoesNotCopy() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-duplicate-policy-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-duplicate-policy-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("source.txt")
         let destination = directory.appendingPathComponent("copy.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5653,7 +5653,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "do not copy".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "files",
             "duplicate",
             "--path", source.path,
@@ -5665,7 +5665,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNotEqual(rejected.status, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -5696,7 +5696,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesMoveRenamesRegularFileWithAuditAndVerification() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-move-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-move-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("draft.txt")
         let destination = directory.appendingPathComponent("archive.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5704,7 +5704,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "move me".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "move",
             "--path", source.path,
@@ -5732,7 +5732,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "moved_and_metadata_matched")
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -5758,7 +5758,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesMovePolicyDenialIsAuditedAndDoesNotMove() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-move-policy-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-move-policy-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("draft.txt")
         let destination = directory.appendingPathComponent("archive.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5766,7 +5766,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "stay put".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "files",
             "move",
             "--path", source.path,
@@ -5779,7 +5779,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -5810,7 +5810,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesRollbackRestoresAuditedMoveWithVerification() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-rollback-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-rollback-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("draft.txt")
         let destination = directory.appendingPathComponent("archive.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5818,7 +5818,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "restore me".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let move = try runZeroThree([
+        let move = try runLn1([
             "files",
             "move",
             "--path", source.path,
@@ -5832,7 +5832,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let moveObject = try decodeJSONObject(move.stdout)
         let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
 
-        let rollback = try runZeroThree([
+        let rollback = try runLn1([
             "files",
             "rollback",
             "--audit-id", moveAuditID,
@@ -5861,7 +5861,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "move_restored")
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "files.rollback",
@@ -5888,7 +5888,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesRollbackPolicyDenialIsAuditedAndDoesNotRestoreMove() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-rollback-policy-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-rollback-policy-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("draft.txt")
         let destination = directory.appendingPathComponent("archive.txt")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -5896,7 +5896,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "stay archived".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let move = try runZeroThree([
+        let move = try runLn1([
             "files",
             "move",
             "--path", source.path,
@@ -5910,7 +5910,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let moveObject = try decodeJSONObject(move.stdout)
         let moveAuditID = try XCTUnwrap(moveObject["auditID"] as? String)
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "files",
             "rollback",
             "--audit-id", moveAuditID,
@@ -5922,7 +5922,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "files.rollback",
@@ -5948,13 +5948,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesMkdirCreatesDirectoryWithAuditAndVerification() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-mkdir-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-mkdir-\(UUID().uuidString)")
         let created = directory.appendingPathComponent("archive")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "files",
             "mkdir",
             "--path", created.path,
@@ -5980,7 +5980,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "directory_exists")
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -6009,13 +6009,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testFilesMkdirPolicyDenialIsAuditedAndDoesNotCreateDirectory() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-mkdir-policy-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-mkdir-policy-\(UUID().uuidString)")
         let created = directory.appendingPathComponent("archive")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "files",
             "mkdir",
             "--path", created.path,
@@ -6026,7 +6026,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNotEqual(rejected.status, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: created.path))
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -6054,8 +6054,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testAuditCommandReturnsEmptyEntriesForMissingLog() throws {
         let missingLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-missing-\(UUID().uuidString).jsonl")
-        let result = try runZeroThree([
+            .appendingPathComponent("Ln1-missing-\(UUID().uuidString).jsonl")
+        let result = try runLn1([
             "audit",
             "--audit-log", missingLog.path,
             "--limit", "5"
@@ -6069,7 +6069,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testAuditCommandFiltersByCommandAndOutcomeCodeBeforeLimit() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-audit-filter-\(UUID().uuidString)")
+            .appendingPathComponent("Ln1-audit-filter-\(UUID().uuidString)")
         let source = directory.appendingPathComponent("source.txt")
         let created = directory.appendingPathComponent("archive")
         let auditLog = directory.appendingPathComponent("audit.jsonl")
@@ -6077,7 +6077,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         try "copy".write(to: source, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        _ = try runZeroThree([
+        _ = try runLn1([
             "files",
             "duplicate",
             "--path", source.path,
@@ -6085,7 +6085,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "policy duplicate",
             "--audit-log", auditLog.path
         ])
-        _ = try runZeroThree([
+        _ = try runLn1([
             "files",
             "mkdir",
             "--path", created.path,
@@ -6094,7 +6094,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--audit-log", auditLog.path
         ])
 
-        let commandFiltered = try runZeroThree([
+        let commandFiltered = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "files.mkdir",
@@ -6113,7 +6113,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(commandEntry["command"] as? String, "files.mkdir")
         XCTAssertEqual(commandOutcome["code"] as? String, "created_directory")
 
-        let codeFiltered = try runZeroThree([
+        let codeFiltered = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--code", "policy_denied",
@@ -6133,13 +6133,13 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testClipboardStateReturnsMetadataWithoutTextContents() throws {
-        let pasteboardName = "03-test-\(UUID().uuidString)"
+        let pasteboardName = "Ln1-test-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
         pasteboard.clearContents()
         pasteboard.setString("hello clipboard", forType: .string)
         defer { pasteboard.clearContents() }
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "clipboard",
             "state",
             "--pasteboard", pasteboardName
@@ -6161,12 +6161,12 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testClipboardWaitReturnsMetadataWithoutTextContents() throws {
-        let pasteboardName = "03-test-wait-\(UUID().uuidString)"
+        let pasteboardName = "Ln1-test-wait-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
         pasteboard.clearContents()
         pasteboard.setString("old clipboard", forType: .string)
 
-        let before = try runZeroThree([
+        let before = try runLn1([
             "clipboard",
             "state",
             "--pasteboard", pasteboardName
@@ -6175,7 +6175,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let beforeObject = try decodeJSONObject(before.stdout)
         let beforeChangeCount = try XCTUnwrap(beforeObject["changeCount"] as? Int)
 
-        let write = try runZeroThree([
+        let write = try runLn1([
             "clipboard",
             "write-text",
             "--pasteboard", pasteboardName,
@@ -6187,7 +6187,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let writeObject = try decodeJSONObject(write.stdout)
         let writtenDigest = try XCTUnwrap(writeObject["writtenDigest"] as? String)
 
-        let wait = try runZeroThree([
+        let wait = try runLn1([
             "clipboard",
             "wait",
             "--pasteboard", pasteboardName,
@@ -6221,10 +6221,10 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testClipboardReadTextRequiresMediumRiskAndAuditsRead() throws {
-        let pasteboardName = "03-test-\(UUID().uuidString)"
+        let pasteboardName = "Ln1-test-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
         let auditLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-clipboard-\(UUID().uuidString).jsonl")
+            .appendingPathComponent("Ln1-clipboard-\(UUID().uuidString).jsonl")
         pasteboard.clearContents()
         pasteboard.setString("hello clipboard", forType: .string)
         defer {
@@ -6232,7 +6232,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             try? FileManager.default.removeItem(at: auditLog)
         }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "clipboard",
             "read-text",
             "--pasteboard", pasteboardName,
@@ -6242,7 +6242,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "clipboard",
             "read-text",
             "--pasteboard", pasteboardName,
@@ -6262,7 +6262,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(object["truncated"] as? Bool, true)
         XCTAssertEqual(object["maxCharacters"] as? Int, 5)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "clipboard.read-text",
@@ -6291,10 +6291,10 @@ final class ZeroThreeSmokeTests: XCTestCase {
     }
 
     func testClipboardWriteTextRequiresMediumRiskVerifiesAndAuditsWithoutText() throws {
-        let pasteboardName = "03-test-\(UUID().uuidString)"
+        let pasteboardName = "Ln1-test-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
         let auditLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-clipboard-write-\(UUID().uuidString).jsonl")
+            .appendingPathComponent("Ln1-clipboard-write-\(UUID().uuidString).jsonl")
         pasteboard.clearContents()
         pasteboard.setString("old clipboard", forType: .string)
         defer {
@@ -6302,7 +6302,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
             try? FileManager.default.removeItem(at: auditLog)
         }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "clipboard",
             "write-text",
             "--pasteboard", pasteboardName,
@@ -6314,7 +6314,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertNotEqual(rejected.status, 0)
         XCTAssertEqual(pasteboard.string(forType: .string), "old clipboard")
 
-        let deniedAudit = try runZeroThree([
+        let deniedAudit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "clipboard.write-text",
@@ -6336,7 +6336,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(deniedAfter["stringDigest"] as? String, deniedBefore["stringDigest"] as? String)
         XCTAssertEqual(deniedOutcome["code"] as? String, "policy_denied")
 
-        let result = try runZeroThree([
+        let result = try runLn1([
             "clipboard",
             "write-text",
             "--pasteboard", pasteboardName,
@@ -6363,7 +6363,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(verification["code"] as? String, "text_matched")
         XCTAssertNil(object["text"])
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--command", "clipboard.write-text",
@@ -6397,10 +6397,10 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testRejectedPerformWritesAuditRecord() throws {
         let auditLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-audit-\(UUID().uuidString).jsonl")
+            .appendingPathComponent("Ln1-audit-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: auditLog) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "perform",
             "--audit-log", auditLog.path,
             "--reason", "verification"
@@ -6408,7 +6408,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -6430,10 +6430,10 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
     func testPerformPolicyDenialIsAuditedBeforeAccessibilityTrust() throws {
         let auditLog = FileManager.default.temporaryDirectory
-            .appendingPathComponent("03-policy-\(UUID().uuidString).jsonl")
+            .appendingPathComponent("Ln1-policy-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: auditLog) }
 
-        let rejected = try runZeroThree([
+        let rejected = try runLn1([
             "perform",
             "--audit-log", auditLog.path,
             "--element", "w0",
@@ -6444,7 +6444,7 @@ final class ZeroThreeSmokeTests: XCTestCase {
 
         XCTAssertNotEqual(rejected.status, 0)
 
-        let audit = try runZeroThree([
+        let audit = try runLn1([
             "audit",
             "--audit-log", auditLog.path,
             "--limit", "1"
@@ -6469,8 +6469,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }
 
-    private func runZeroThree(_ arguments: [String]) throws -> ProcessResult {
-        let executable = packageRoot.appendingPathComponent(".build/debug/03")
+    private func runLn1(_ arguments: [String]) throws -> ProcessResult {
+        let executable = packageRoot.appendingPathComponent(".build/debug/Ln1")
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: executable.path), "Run swift build before swift test.")
         return try runProcess(executable.path, arguments: arguments)
     }

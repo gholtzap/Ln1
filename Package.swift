@@ -3,23 +3,23 @@
 import PackageDescription
 
 let package = Package(
-    name: "03",
+    name: "Ln1",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "03", targets: ["ZeroThree"])
+        .executable(name: "Ln1", targets: ["Ln1"])
     ],
     targets: [
         .executableTarget(
-            name: "ZeroThree",
+            name: "Ln1",
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit")
             ]
         ),
         .testTarget(
-            name: "ZeroThreeTests"
+            name: "Ln1Tests"
         )
     ]
 )

@@ -1,6 +1,6 @@
-# 03 macOS Prototype
+# Ln1 macOS Prototype
 
-03 is a small native macOS prototype for an AI-readable computer layer. It uses Accessibility APIs to expose the frontmost app as structured JSON, then lets a caller invoke typed actions such as `AXPress` against element IDs from that JSON.
+Ln1, short for Layer negative one, is a small native macOS prototype for an AI-readable computer layer. It uses Accessibility APIs to expose the frontmost app as structured JSON, then lets a caller invoke typed actions such as `AXPress` against element IDs from that JSON.
 
 This is not a new OS. It is the first compatibility layer for the product idea: structured state first, UI automation second, screenshots last.
 
@@ -13,15 +13,15 @@ swift build
 ## Grant Accessibility Access
 
 ```sh
-.build/debug/03 trust
+.build/debug/Ln1 trust
 ```
 
-macOS will prompt for Accessibility access. Grant access to the terminal app that launched 03, then rerun the command.
+macOS will prompt for Accessibility access. Grant access to the terminal app that launched Ln1, then rerun the command.
 
 ## Check Readiness
 
 ```sh
-.build/debug/03 doctor
+.build/debug/Ln1 doctor
 ```
 
 `doctor` checks whether the current shell is ready for computer control. It reports required checks for Accessibility permission, desktop window metadata, audit-log writeability, and clipboard metadata, plus an optional browser DevTools endpoint check. Each check includes `pass`, `warn`, or `fail`, whether it is required, a message, and a remediation command or setup step.
@@ -29,13 +29,13 @@ macOS will prompt for Accessibility access. Grant access to the terminal app tha
 Use a custom audit path or DevTools endpoint when testing a specific setup:
 
 ```sh
-.build/debug/03 doctor --audit-log /tmp/03-audit.jsonl --endpoint http://127.0.0.1:9222 --timeout-ms 1000
+.build/debug/Ln1 doctor --audit-log /tmp/Ln1-audit.jsonl --endpoint http://127.0.0.1:9222 --timeout-ms 1000
 ```
 
 ## Inspect Action Policy
 
 ```sh
-.build/debug/03 policy
+.build/debug/Ln1 policy
 ```
 
 The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
@@ -43,15 +43,15 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 ## Observe The Current Computer State
 
 ```sh
-.build/debug/03 observe --app-limit 20 --window-limit 20
+.build/debug/Ln1 observe --app-limit 20 --window-limit 20
 ```
 
-`observe` is the safest first command before acting. It returns Accessibility trust status, the active app, a bounded running-app list, visible desktop windows with stable identities, current blockers, and suggested next typed commands. It does not require Accessibility permission; when Accessibility is not trusted, the snapshot reports that blocker and suggests `03 trust` instead of trying to inspect or control app UI.
+`observe` is the safest first command before acting. It returns Accessibility trust status, the active app, a bounded running-app list, visible desktop windows with stable identities, current blockers, and suggested next typed commands. It does not require Accessibility permission; when Accessibility is not trusted, the snapshot reports that blocker and suggests `Ln1 trust` instead of trying to inspect or control app UI.
 
 ## Preflight A Workflow
 
 ```sh
-.build/debug/03 workflow preflight --operation inspect-active-app
+.build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
 Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `move-file`, and `wait-file`.
@@ -59,35 +59,35 @@ Workflow preflight turns an intended task into prerequisites, blockers, risk, mu
 Examples:
 
 ```sh
-.build/debug/03 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
-.build/debug/03 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
-.build/debug/03 workflow preflight --operation click-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]'
-.build/debug/03 workflow preflight --operation fill-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query"
-.build/debug/03 workflow preflight --operation select-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'select[name=country]' --value ca
-.build/debug/03 workflow preflight --operation check-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
-.build/debug/03 workflow preflight --operation focus-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]'
-.build/debug/03 workflow preflight --operation press-browser-key --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --key Enter
-.build/debug/03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --expect-url https://example.com/next --match exact
-.build/debug/03 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
-.build/debug/03 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
-.build/debug/03 workflow preflight --operation wait-browser-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least
-.build/debug/03 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
-.build/debug/03 workflow preflight --operation wait-browser-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact
-.build/debug/03 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
-.build/debug/03 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
-.build/debug/03 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
-.build/debug/03 workflow preflight --operation wait-browser-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true
-.build/debug/03 workflow preflight --operation wait-browser-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true
-.build/debug/03 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
-.build/debug/03 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
-.build/debug/03 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
-.build/debug/03 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
+.build/debug/Ln1 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
+.build/debug/Ln1 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
+.build/debug/Ln1 workflow preflight --operation click-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]'
+.build/debug/Ln1 workflow preflight --operation fill-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query"
+.build/debug/Ln1 workflow preflight --operation select-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'select[name=country]' --value ca
+.build/debug/Ln1 workflow preflight --operation check-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
+.build/debug/Ln1 workflow preflight --operation focus-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]'
+.build/debug/Ln1 workflow preflight --operation press-browser-key --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --key Enter
+.build/debug/Ln1 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --expect-url https://example.com/next --match exact
+.build/debug/Ln1 workflow preflight --operation wait-browser-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact
+.build/debug/Ln1 workflow preflight --operation wait-browser-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible
+.build/debug/Ln1 workflow preflight --operation wait-browser-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least
+.build/debug/Ln1 workflow preflight --operation wait-browser-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains
+.build/debug/Ln1 workflow preflight --operation wait-browser-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact
+.build/debug/Ln1 workflow preflight --operation wait-browser-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete
+.build/debug/Ln1 workflow preflight --operation wait-browser-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains
+.build/debug/Ln1 workflow preflight --operation wait-browser-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true
+.build/debug/Ln1 workflow preflight --operation wait-browser-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true
+.build/debug/Ln1 workflow preflight --operation wait-browser-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true
+.build/debug/Ln1 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
+.build/debug/Ln1 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
+.build/debug/Ln1 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
+.build/debug/Ln1 workflow preflight --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000
 ```
 
 When an automation loop needs an executable plan, use `workflow next` with the same operation and options:
 
 ```sh
-.build/debug/03 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
+.build/debug/Ln1 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
 ```
 
 `workflow next` embeds the full preflight result and, when unblocked, returns a structured command with both a display string and an `argv` array. Prefer the `argv` array when launching a follow-up command so paths, selectors, and reason text do not need shell parsing.
@@ -95,7 +95,7 @@ When an automation loop needs an executable plan, use `workflow next` with the s
 For a bounded run decision that still does not execute or mutate anything, use dry-run mode:
 
 ```sh
-.build/debug/03 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run true
+.build/debug/Ln1 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run true
 ```
 
 `workflow run --dry-run true` returns whether the workflow is ready, whether it would execute, the command that would be used, and the embedded preflight evidence. This mode is intentionally non-executing. Browser fill/click/navigation workflows are mutating, so dry-run is the safe way to validate tab IDs, selectors, URLs, policy, and audit-log readiness before running the returned browser command directly.
@@ -103,7 +103,7 @@ For a bounded run decision that still does not execute or mutate anything, use d
 Execution mode runs non-mutating workflows directly:
 
 ```sh
-.build/debug/03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false --run-timeout-ms 10000 --max-output-bytes 1048576
+.build/debug/Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false --run-timeout-ms 10000 --max-output-bytes 1048576
 ```
 
 For non-mutating workflows, `workflow run --dry-run false` executes the next command and captures its exit code, stdout, stderr, byte counts, truncation flags, timeout status, and parsed JSON output when stdout is complete JSON.
@@ -111,7 +111,7 @@ For non-mutating workflows, `workflow run --dry-run false` executes the next com
 Mutating workflow execution is opt-in and still goes through the underlying typed command policy and audit log:
 
 ```sh
-.build/debug/03 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run false --execute-mutating true --reason "Organize completed draft"
+.build/debug/Ln1 workflow run --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --dry-run false --execute-mutating true --reason "Organize completed draft"
 ```
 
 Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct.
@@ -167,7 +167,7 @@ After a successful `wait-browser-attribute` transcript, `workflow resume` sugges
 Each workflow run appends a JSONL transcript record containing the preflight, command, execution result, blockers, and transcript ID. Use `--workflow-log PATH` to choose a log path, or inspect the default log with:
 
 ```sh
-.build/debug/03 workflow log --allow-risk medium --limit 20
+.build/debug/Ln1 workflow log --allow-risk medium --limit 20
 ```
 
 `workflow log` can filter by `--operation`. It requires `--allow-risk medium` because transcript entries may include captured command output.
@@ -175,7 +175,7 @@ Each workflow run appends a JSONL transcript record containing the preflight, co
 To resume after an interruption, ask for a recommendation from the latest transcript entry:
 
 ```sh
-.build/debug/03 workflow resume --allow-risk medium
+.build/debug/Ln1 workflow resume --allow-risk medium
 ```
 
 `workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array. For completed browser tab listings, it can suggest a dry-run DOM inspection for the first tab; for completed DOM inspections, it can suggest fill, select, check, or click commands from the first actionable selector.
@@ -183,19 +183,19 @@ To resume after an interruption, ask for a recommendation from the latest transc
 ## Inspect Running Apps
 
 ```sh
-.build/debug/03 apps
+.build/debug/Ln1 apps
 ```
 
 If you are running from a non-interactive shell and want every process macOS exposes:
 
 ```sh
-.build/debug/03 apps --all
+.build/debug/Ln1 apps --all
 ```
 
 ## Inspect Visible Desktop Windows
 
 ```sh
-.build/debug/03 desktop windows --limit 50
+.build/debug/Ln1 desktop windows --limit 50
 ```
 
 The output is structured JSON from macOS window metadata: availability, window ID, owner app name and PID, bundle identifier when available, active-owner flag, title when macOS exposes it, layer, bounds, onscreen state, alpha, memory usage, and sharing state. This is a low-risk desktop inspection action that does not require screenshots or Accessibility access. If the current process cannot read WindowServer metadata, the command still returns a structured unavailable result instead of falling back to screenshots.
@@ -205,13 +205,13 @@ Each window includes both a transient WindowServer `id` and a semantic `stableId
 By default `desktop windows` reports visible non-desktop, normal-layer windows. Include desktop elements or menu/overlay layers when they are relevant:
 
 ```sh
-.build/debug/03 desktop windows --include-desktop --all-layers
+.build/debug/Ln1 desktop windows --include-desktop --all-layers
 ```
 
 ## Emit Structured State
 
 ```sh
-.build/debug/03 state --depth 4 --max-children 120
+.build/debug/Ln1 state --depth 4 --max-children 120
 ```
 
 The output is JSON with app metadata, windows, elements, frames, values, and available actions.
@@ -221,13 +221,13 @@ Each Accessibility node includes the path-style `id` used by `perform` plus a se
 By default this targets the frontmost app. To walk every running GUI app macOS exposes through Accessibility:
 
 ```sh
-.build/debug/03 state --all --depth 3 --max-children 80
+.build/debug/Ln1 state --all --depth 3 --max-children 80
 ```
 
 To also try background/menu-bar style processes:
 
 ```sh
-.build/debug/03 state --all --include-background --depth 2 --max-children 50
+.build/debug/Ln1 state --all --include-background --depth 2 --max-children 50
 ```
 
 This is still not literally every piece of data on the machine. macOS exposes UI state per app through Accessibility. Files, browser DOM, calendars, mail stores, databases, and notifications need separate adapters.
@@ -237,14 +237,14 @@ This is still not literally every piece of data on the machine. macOS exposes UI
 Use an element ID from `state`:
 
 ```sh
-.build/debug/03 perform --element w0.3.1 --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 perform --element w0.3.1 --action AXPress --reason "Open the details panel"
 ```
 
 `perform` applies a conservative action policy before touching Accessibility APIs. By default, only actions classified as `low` risk are allowed. To explicitly permit broader known or unclassified action categories:
 
 ```sh
-.build/debug/03 perform --element w0.3.1 --action AXConfirm --allow-risk medium --reason "Confirm the selected dialog"
-.build/debug/03 perform --element w0.3.1 --action AXCustomAction --allow-risk unknown --reason "Use app-specific action"
+.build/debug/Ln1 perform --element w0.3.1 --action AXConfirm --allow-risk medium --reason "Confirm the selected dialog"
+.build/debug/Ln1 perform --element w0.3.1 --action AXCustomAction --allow-risk unknown --reason "Use app-specific action"
 ```
 
 Policy denials are written to the audit log with the requested action, classified risk, allowed risk threshold, reason, and denial outcome. They do not require Accessibility access because the policy is checked before app inspection or action execution.
@@ -252,20 +252,20 @@ Policy denials are written to the audit log with the requested action, classifie
 For IDs from `state --all`, pass the app PID from that same app record:
 
 ```sh
-.build/debug/03 perform --pid 456 --element a0.w0.3.1 --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 perform --pid 456 --element a0.w0.3.1 --action AXPress --reason "Open the details panel"
 ```
 
 To target a specific app:
 
 ```sh
-.build/debug/03 state --pid 123
-.build/debug/03 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 state --pid 123
+.build/debug/Ln1 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open the details panel"
 ```
 
 To guard against a stale element path, pass the `stableIdentity.id` from a recent `state` observation and a minimum identity confidence:
 
 ```sh
-.build/debug/03 perform --pid 123 --element w0.3.1 --expect-identity accessibilityElement:abc123 --min-identity-confidence medium --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 perform --pid 123 --element w0.3.1 --expect-identity accessibilityElement:abc123 --min-identity-confidence medium --action AXPress --reason "Open the details panel"
 ```
 
 When identity constraints are present, `perform` recomputes the target element identity after resolving the path and before invoking the Accessibility action. It refuses to act if the identity digest does not match or if the current confidence is below `low`, `medium`, or `high` as requested.
@@ -275,13 +275,13 @@ Every `perform` attempt appends a structured JSONL audit record before returning
 By default the audit log is stored at:
 
 ```text
-~/Library/Application Support/03/audit-log.jsonl
+~/Library/Application Support/Ln1/audit-log.jsonl
 ```
 
 Use `--audit-log` to send records to another file during tests or isolated runs:
 
 ```sh
-.build/debug/03 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open details" --audit-log /tmp/03-audit.jsonl
+.build/debug/Ln1 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open details" --audit-log /tmp/Ln1-audit.jsonl
 ```
 
 The audit entry records typed intent and outcome: timestamp, risk level, target app, element ID, stable identity, available element actions, requested action, optional reason, optional identity verification, and result. It intentionally stores only a small element summary and does not store element values.
@@ -291,19 +291,19 @@ The audit entry records typed intent and outcome: timestamp, risk level, target 
 Read recent audit records:
 
 ```sh
-.build/debug/03 audit --limit 20
+.build/debug/Ln1 audit --limit 20
 ```
 
 Read from a custom audit file:
 
 ```sh
-.build/debug/03 audit --audit-log /tmp/03-audit.jsonl --limit 5
+.build/debug/Ln1 audit --audit-log /tmp/Ln1-audit.jsonl --limit 5
 ```
 
 Filter audit records before applying the limit:
 
 ```sh
-.build/debug/03 audit --command files.move --code moved --limit 10
+.build/debug/Ln1 audit --command files.move --code moved --limit 10
 ```
 
 `--command` matches audit command names such as `perform`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `read_text`, or `read_dom`.
@@ -313,39 +313,39 @@ Filter audit records before applying the limit:
 Start a task-scoped memory journal when a workflow needs resumable context:
 
 ```sh
-.build/debug/03 task start --title "Verify downloaded report" --summary "Wait for report.pdf and compare checksum" --allow-risk medium
+.build/debug/Ln1 task start --title "Verify downloaded report" --summary "Wait for report.pdf and compare checksum" --allow-risk medium
 ```
 
 Task memory is a medium-risk local persistence action because it can store task context. By default it writes JSONL events to:
 
 ```text
-~/Library/Application Support/03/task-memory.jsonl
+~/Library/Application Support/Ln1/task-memory.jsonl
 ```
 
 Use `--memory-log` to isolate tests or a specific workflow:
 
 ```sh
-.build/debug/03 task start --title "Verify downloaded report" --allow-risk medium --memory-log /tmp/03-task-memory.jsonl
+.build/debug/Ln1 task start --title "Verify downloaded report" --allow-risk medium --memory-log /tmp/Ln1-task-memory.jsonl
 ```
 
 Append typed task events as work progresses:
 
 ```sh
-.build/debug/03 task record --task-id TASK_ID --kind observation --summary "report.pdf appeared in Downloads" --allow-risk medium
-.build/debug/03 task record --task-id TASK_ID --kind verification --summary "checksum matched expected digest" --related-audit-id AUDIT_ID --allow-risk medium
+.build/debug/Ln1 task record --task-id TASK_ID --kind observation --summary "report.pdf appeared in Downloads" --allow-risk medium
+.build/debug/Ln1 task record --task-id TASK_ID --kind verification --summary "checksum matched expected digest" --related-audit-id AUDIT_ID --allow-risk medium
 ```
 
 Supported event kinds are `observation`, `decision`, `action`, `verification`, and `note`. Summaries default to `private` sensitivity. When a summary is marked `sensitive`, the event records only its length and SHA-256 digest, not the summary text:
 
 ```sh
-.build/debug/03 task record --task-id TASK_ID --kind observation --summary "copied one-time code 123456" --sensitivity sensitive --allow-risk medium
+.build/debug/Ln1 task record --task-id TASK_ID --kind observation --summary "copied one-time code 123456" --sensitivity sensitive --allow-risk medium
 ```
 
 Finish and inspect the task:
 
 ```sh
-.build/debug/03 task finish --task-id TASK_ID --status completed --summary "Downloaded report was verified." --allow-risk medium
-.build/debug/03 task show --task-id TASK_ID --limit 20 --allow-risk medium
+.build/debug/Ln1 task finish --task-id TASK_ID --status completed --summary "Downloaded report was verified." --allow-risk medium
+.build/debug/Ln1 task show --task-id TASK_ID --limit 20 --allow-risk medium
 ```
 
 `task show` returns the task title, status, start/update timestamps, event count, and recent events. Reading task memory is also medium-risk because it may reveal persisted private workflow context.
@@ -355,19 +355,19 @@ Finish and inspect the task:
 Inspect one file or folder without reading file contents:
 
 ```sh
-.build/debug/03 files stat --path ~/Documents/Plan.md
+.build/debug/Ln1 files stat --path ~/Documents/Plan.md
 ```
 
 List a folder as structured metadata:
 
 ```sh
-.build/debug/03 files list --path ~/Documents --depth 2 --limit 200
+.build/debug/Ln1 files list --path ~/Documents --depth 2 --limit 200
 ```
 
 Hidden files are skipped by default. Include them explicitly when they are relevant:
 
 ```sh
-.build/debug/03 files list --path ~/Documents --include-hidden --depth 1
+.build/debug/Ln1 files list --path ~/Documents --include-hidden --depth 1
 ```
 
 The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
@@ -375,7 +375,7 @@ The filesystem adapter returns stable-ish file identity, absolute path, kind, si
 Search file names and bounded UTF-8 text content without using Finder:
 
 ```sh
-.build/debug/03 files search --path ~/Documents --query invoice --depth 4 --limit 50
+.build/debug/Ln1 files search --path ~/Documents --query invoice --depth 4 --limit 50
 ```
 
 Search is case-insensitive by default, skips hidden files unless `--include-hidden` is passed, and avoids unbounded reads with `--max-file-bytes`, `--max-snippet-characters`, and `--max-matches-per-file`. Results include file metadata, whether the name matched, matching line numbers, short line snippets, scan counts, and skip counts for unreadable, binary, or oversized files.
@@ -383,8 +383,8 @@ Search is case-insensitive by default, skips hidden files unless `--include-hidd
 Wait for a path to appear or disappear with bounded polling:
 
 ```sh
-.build/debug/03 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100
-.build/debug/03 files wait --path ~/Downloads/report.part --exists false --timeout-ms 30000
+.build/debug/Ln1 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100
+.build/debug/Ln1 files wait --path ~/Downloads/report.part --exists false --timeout-ms 30000
 ```
 
 `files wait` returns structured evidence about whether the expected existence state matched before the timeout. When the path exists, the response includes the same file metadata shape used by `files stat`. This is useful for downloads, generated files, and verification loops without relying on Finder state.
@@ -392,7 +392,7 @@ Wait for a path to appear or disappear with bounded polling:
 Watch a file or directory for metadata changes:
 
 ```sh
-.build/debug/03 files watch --path ~/Downloads --depth 1 --timeout-ms 30000 --interval-ms 250
+.build/debug/Ln1 files watch --path ~/Downloads --depth 1 --timeout-ms 30000 --interval-ms 250
 ```
 
 `files watch` is a low-risk read action that snapshots file metadata, waits for the first created, deleted, or modified event under the path, then returns normalized event records with previous/current `FileRecord` metadata. It uses `--depth`, `--limit`, and `--include-hidden` to keep directory watches bounded.
@@ -400,7 +400,7 @@ Watch a file or directory for metadata changes:
 Compute a bounded content digest without returning file contents:
 
 ```sh
-.build/debug/03 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600
+.build/debug/Ln1 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600
 ```
 
 `filesystem.checksum` currently supports SHA-256 for regular files. It is a low-risk read action, but still bounded by `--max-file-bytes` so large files are not read accidentally. The response includes file metadata, the algorithm, and the hex digest.
@@ -408,7 +408,7 @@ Compute a bounded content digest without returning file contents:
 Compare two regular files by size and digest:
 
 ```sh
-.build/debug/03 files compare --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md --algorithm sha256
+.build/debug/Ln1 files compare --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md --algorithm sha256
 ```
 
 `filesystem.compare` is a low-risk read action that computes bounded SHA-256 digests for both files and reports `sameSize`, `sameDigest`, and `matched`. This is useful after copy or generation workflows where the assistant needs evidence that two files are identical without reading contents into the prompt.
@@ -416,10 +416,10 @@ Compare two regular files by size and digest:
 Preview a mutating file operation before executing it:
 
 ```sh
-.build/debug/03 files plan --operation move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium
-.build/debug/03 files plan --operation duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md
-.build/debug/03 files plan --operation mkdir --path ~/Documents/Archive --allow-risk medium
-.build/debug/03 files plan --operation rollback --audit-id AUDIT_ID --allow-risk medium
+.build/debug/Ln1 files plan --operation move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium
+.build/debug/Ln1 files plan --operation duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md
+.build/debug/Ln1 files plan --operation mkdir --path ~/Documents/Archive --allow-risk medium
+.build/debug/Ln1 files plan --operation rollback --audit-id AUDIT_ID --allow-risk medium
 ```
 
 `filesystem.plan` is a low-risk read action that makes no filesystem changes. It returns the underlying typed action, action mutation flag, risk, policy decision, source and destination metadata where available, named preflight checks, `canExecute`, and the `requiredAllowRisk` needed by the matching mutation command. This lets a caller explain exactly what will be affected before copying, moving, creating, or rolling back a file operation.
@@ -427,7 +427,7 @@ Preview a mutating file operation before executing it:
 Duplicate one regular file through an audited typed action:
 
 ```sh
-.build/debug/03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md --allow-risk medium --reason "Keep an original before editing"
+.build/debug/Ln1 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan-copy.md --allow-risk medium --reason "Keep an original before editing"
 ```
 
 `filesystem.duplicate` is a medium-risk mutating file action. It is denied by the default low-risk policy unless `--allow-risk medium` is supplied. The command refuses to overwrite an existing destination, requires the destination parent directory to already exist, verifies that the copied file exists with the same byte size, and appends an audit record for success, policy denial, preflight failure, or verification failure.
@@ -435,7 +435,7 @@ Duplicate one regular file through an audited typed action:
 Move or rename one regular file through the same policy and audit path:
 
 ```sh
-.build/debug/03 files move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium --reason "Archive completed draft"
+.build/debug/Ln1 files move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium --reason "Archive completed draft"
 ```
 
 `filesystem.move` is also a medium-risk mutating file action. It refuses to overwrite an existing destination, requires both source and destination parent directories to be writable, verifies that the original source path is gone and the destination has the same byte size, and records the policy decision plus verification result in the audit log.
@@ -443,7 +443,7 @@ Move or rename one regular file through the same policy and audit path:
 Rollback a successful audited file move:
 
 ```sh
-.build/debug/03 files rollback --audit-id AUDIT_ID --allow-risk medium --reason "Undo mistaken move"
+.build/debug/Ln1 files rollback --audit-id AUDIT_ID --allow-risk medium --reason "Undo mistaken move"
 ```
 
 `filesystem.rollbackMove` is a medium-risk mutating file action. It reads the requested audit record, only supports successful `files.move` records, verifies that the current moved file still matches the recorded destination metadata, refuses to overwrite the original source path, moves the file back, verifies that the original source path is restored and the moved destination is gone, and records the rollback policy decision plus verification result in the audit log.
@@ -451,7 +451,7 @@ Rollback a successful audited file move:
 Create one directory for organization workflows:
 
 ```sh
-.build/debug/03 files mkdir --path ~/Documents/Archive --allow-risk medium --reason "Create archive folder"
+.build/debug/Ln1 files mkdir --path ~/Documents/Archive --allow-risk medium --reason "Create archive folder"
 ```
 
 `filesystem.createDirectory` is a medium-risk mutating file action. It refuses existing paths, requires the parent directory to exist and be writable, verifies that the directory exists after creation, and records the policy decision plus verification result in the audit log.
@@ -461,7 +461,7 @@ Create one directory for organization workflows:
 Inspect clipboard metadata without returning copied text:
 
 ```sh
-.build/debug/03 clipboard state
+.build/debug/Ln1 clipboard state
 ```
 
 `clipboard.state` is a low-risk read action. It returns the pasteboard name, change count, available pasteboard types, whether plain text is available, the text length, and a SHA-256 digest of the text. It intentionally does not return clipboard contents.
@@ -469,7 +469,7 @@ Inspect clipboard metadata without returning copied text:
 Wait for clipboard metadata without returning copied text:
 
 ```sh
-.build/debug/03 clipboard wait --changed-from 42 --has-string true --timeout-ms 5000
+.build/debug/Ln1 clipboard wait --changed-from 42 --has-string true --timeout-ms 5000
 ```
 
 `clipboard.wait` is a low-risk read action. It polls pasteboard metadata until the change count differs from `--changed-from`, the plain-text availability matches `--has-string`, and/or the text digest matches `--string-digest`; it returns only metadata, lengths, and digests.
@@ -477,7 +477,7 @@ Wait for clipboard metadata without returning copied text:
 Read bounded plain text from the clipboard only after explicitly allowing medium-risk clipboard access:
 
 ```sh
-.build/debug/03 clipboard read-text --allow-risk medium --max-characters 4096 --reason "Use copied confirmation code"
+.build/debug/Ln1 clipboard read-text --allow-risk medium --max-characters 4096 --reason "Use copied confirmation code"
 ```
 
 `clipboard.readText` is a medium-risk read action because clipboard text may contain private transient data. The command writes an audit record containing pasteboard metadata, text length, digest, policy decision, reason, and outcome, but the audit record does not store the clipboard text itself. Use `--pasteboard NAME` to target a named pasteboard for tests or isolated workflows.
@@ -485,36 +485,36 @@ Read bounded plain text from the clipboard only after explicitly allowing medium
 Write plain text to the clipboard only after explicitly allowing medium-risk clipboard mutation:
 
 ```sh
-.build/debug/03 clipboard write-text --text "ready to paste" --allow-risk medium --reason "Prepare value for the next app"
+.build/debug/Ln1 clipboard write-text --text "ready to paste" --allow-risk medium --reason "Prepare value for the next app"
 ```
 
 `clipboard.writeText` is a medium-risk mutating action because it replaces the current plain-text pasteboard contents. The command records before/after pasteboard metadata, text lengths, digests, policy decision, verification result, reason, and outcome without storing either the previous or new clipboard text in the audit log. The command verifies the write by checking that the clipboard contains text with the requested length and SHA-256 digest.
 
 ## Inspect Browser Tabs
 
-Start Chrome or another Chromium browser with a DevTools endpoint, then ask 03 for browser-native tab metadata:
+Start Chrome or another Chromium browser with a DevTools endpoint, then ask Ln1 for browser-native tab metadata:
 
 ```sh
 /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-.build/debug/03 browser tabs --endpoint http://127.0.0.1:9222
+.build/debug/Ln1 browser tabs --endpoint http://127.0.0.1:9222
 ```
 
 `browser.listTabs` is a low-risk read action. It reads `/json/list` from the explicit DevTools endpoint and returns structured tab records with target IDs, type, title, URL, DevTools frontend URL, WebSocket debugger URL, favicon URL, attachment state, and available typed browser actions. Non-page DevTools targets such as service workers are hidden by default; include them when relevant:
 
 ```sh
-.build/debug/03 browser tabs --endpoint http://127.0.0.1:9222 --include-non-page
+.build/debug/Ln1 browser tabs --endpoint http://127.0.0.1:9222 --include-non-page
 ```
 
 Inspect one tab from the same structured source:
 
 ```sh
-.build/debug/03 browser tab --endpoint http://127.0.0.1:9222 --id TARGET_ID
+.build/debug/Ln1 browser tab --endpoint http://127.0.0.1:9222 --id TARGET_ID
 ```
 
 Read the visible text from a page through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser text --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-characters 16384 --reason "Extract page text for summarization"
+.build/debug/Ln1 browser text --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-characters 16384 --reason "Extract page text for summarization"
 ```
 
 `browser.readText` is a medium-risk read action because page text can contain private web-app content. The command returns bounded text to the caller, but its audit record stores only the tab ID, type, title, URL, text length, digest, policy decision, reason, and outcome. It does not click in the browser and does not require Accessibility access.
@@ -522,7 +522,7 @@ Read the visible text from a page through the tab's DevTools WebSocket:
 Read bounded structured page state from the DOM:
 
 ```sh
-.build/debug/03 browser dom --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-elements 200 --max-text-characters 120 --reason "Inspect page controls before acting"
+.build/debug/Ln1 browser dom --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-elements 200 --max-text-characters 120 --reason "Inspect page controls before acting"
 ```
 
 `browser.readDOM` is also a medium-risk read action because labels, links, visible text, and form metadata can expose private web-app state. The result includes bounded DOM elements with IDs, parent IDs, depth, actionable CSS selectors, tag names, inferred roles, bounded text snippets, selected safe attributes, ARIA state attributes such as `aria-expanded` and `aria-selected`, links, and form metadata such as input type, checked/disabled state, and value length. It intentionally does not return form values and suppresses value metadata for password and hidden inputs. The audit record stores only tab metadata, DOM element count, DOM digest, policy decision, reason, and outcome; it does not store the DOM payload.
@@ -530,7 +530,7 @@ Read bounded structured page state from the DOM:
 Fill one browser form field through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser fill --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query" --allow-risk medium --reason "Prepare search"
+.build/debug/Ln1 browser fill --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query" --allow-risk medium --reason "Prepare search"
 ```
 
 `browser.fillFormField` is a medium-risk mutating action because it changes page state and may enter private text into a web app. The command targets one CSS selector, refuses disabled, read-only, and unsupported elements, dispatches `input` and `change` events, and verifies that the field contains text with the requested length. The result includes the selector, text length, SHA-256 digest, target metadata, verification, and audit ID. The audit record stores tab metadata, selector, text length, digest, policy decision, reason, verification, and outcome without storing the entered text.
@@ -538,7 +538,7 @@ Fill one browser form field through the tab's DevTools WebSocket:
 Choose one option in a browser select control through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser select --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'select[name=country]' --value ca --allow-risk medium --reason "Choose country"
+.build/debug/Ln1 browser select --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'select[name=country]' --value ca --allow-risk medium --reason "Choose country"
 ```
 
 `browser.selectOption` is a medium-risk mutating action because it changes page state and may affect downstream form behavior. The command targets one `<select>` selector, accepts either `--value` or `--label`, dispatches `input` and `change` events, and verifies the selected option. The result and audit record store selector, option length/digest, target metadata, verification, and outcome without storing option text.
@@ -546,7 +546,7 @@ Choose one option in a browser select control through the tab's DevTools WebSock
 Set one checkbox or radio control through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser check --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true --allow-risk medium --reason "Set subscription preference"
+.build/debug/Ln1 browser check --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true --allow-risk medium --reason "Set subscription preference"
 ```
 
 `browser.setChecked` is a medium-risk mutating action because it changes page state and may affect form submission or web-app preferences. The command targets one checkbox or radio selector, defaults `--checked` to `true`, dispatches `input` and `change` events, and verifies the checked state. The audit record stores tab metadata, selector, requested checked state, policy decision, reason, verification, and outcome.
@@ -554,7 +554,7 @@ Set one checkbox or radio control through the tab's DevTools WebSocket:
 Focus one browser element through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --allow-risk medium --reason "Prepare keyboard input"
+.build/debug/Ln1 browser focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --allow-risk medium --reason "Prepare keyboard input"
 ```
 
 `browser.focusElement` is a medium-risk mutating action because it changes page focus and can affect the next keyboard or form action. The command targets one CSS selector, refuses missing or disabled elements, scrolls it into view, calls `focus`, and verifies that the active element matches the requested selector. The audit record stores tab metadata, selector, target metadata, policy decision, reason, verification, and outcome without storing page text.
@@ -562,7 +562,7 @@ Focus one browser element through the tab's DevTools WebSocket:
 Press one key through the tab's DevTools WebSocket, optionally after focusing a selector:
 
 ```sh
-.build/debug/03 browser press-key --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --key Enter --allow-risk medium --reason "Submit focused form"
+.build/debug/Ln1 browser press-key --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --key Enter --allow-risk medium --reason "Submit focused form"
 ```
 
 `browser.pressKey` is a medium-risk mutating action because keyboard events can submit forms, trigger shortcuts, or change page state. The command supports named keys such as `Enter`, `Escape`, `Tab`, arrows, `Home`, `End`, `PageUp`, `PageDown`, `Backspace`, `Delete`, `Space`, `F1` through `F12`, and one ASCII letter or digit. Use `--modifiers shift,control,alt,meta` for shortcuts. The audit record stores tab metadata, optional focus selector, key name, normalized modifiers, policy decision, reason, verification, and outcome without storing page text or field values.
@@ -570,7 +570,7 @@ Press one key through the tab's DevTools WebSocket, optionally after focusing a 
 Click one browser element through the tab's DevTools WebSocket:
 
 ```sh
-.build/debug/03 browser click --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --expect-url https://example.com/results --match prefix --allow-risk medium --reason "Submit search"
+.build/debug/Ln1 browser click --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --expect-url https://example.com/results --match prefix --allow-risk medium --reason "Submit search"
 ```
 
 `browser.clickElement` is a medium-risk mutating action because it changes page state and may trigger navigation, form submission, or web-app side effects. The command targets one CSS selector, refuses missing or disabled elements, scrolls the element into view, dispatches a DOM click, and records selector/target metadata plus verification in the audit log. When `--expect-url` is supplied, the command also waits for the tab URL to match `--match exact|prefix|contains` and returns URL verification evidence.
@@ -578,7 +578,7 @@ Click one browser element through the tab's DevTools WebSocket:
 Navigate one browser tab through DevTools and verify the resulting URL from structured tab metadata:
 
 ```sh
-.build/debug/03 browser navigate --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --allow-risk medium --reason "Open next page"
+.build/debug/Ln1 browser navigate --endpoint http://127.0.0.1:9222 --id TARGET_ID --url https://example.com/next --allow-risk medium --reason "Open next page"
 ```
 
 `browser.navigate` is a medium-risk mutating action because it changes browser state and may contact an external site. The command only accepts absolute HTTP(S) URLs, sends a typed `Page.navigate` command through the tab's DevTools WebSocket, then verifies the resulting URL through DevTools target metadata. By default verification requires an exact match with `--url`; use `--expect-url` with `--match exact|prefix|contains` for redirect-aware workflows. The audit record stores tab metadata, requested URL, verified current URL, policy decision, reason, verification, and outcome.
@@ -586,7 +586,7 @@ Navigate one browser tab through DevTools and verify the resulting URL from stru
 Wait for one browser tab to reach an expected URL without mutating the page:
 
 ```sh
-.build/debug/03 browser wait-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact --timeout-ms 5000
+.build/debug/Ln1 browser wait-url --endpoint http://127.0.0.1:9222 --id TARGET_ID --expect-url https://example.com/next --match exact --timeout-ms 5000
 ```
 
 `browser.waitURL` is a low-risk read action. It polls structured DevTools tab metadata until the current URL matches the expected value, returning the same URL verification shape used by navigation.
@@ -594,7 +594,7 @@ Wait for one browser tab to reach an expected URL without mutating the page:
 Wait for one selector to become ready, hidden, or detached without mutating the page:
 
 ```sh
-.build/debug/03 browser wait-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible --timeout-ms 5000
+.build/debug/Ln1 browser wait-selector --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --state visible --timeout-ms 5000
 ```
 
 `browser.waitSelector` is a low-risk read action. It polls `document.querySelector` through the tab's DevTools runtime until the selector is attached, visible, hidden, or detached, returning tag, disabled, href, text-length, and current URL metadata when an element is present.
@@ -602,7 +602,7 @@ Wait for one selector to become ready, hidden, or detached without mutating the 
 Wait for a selector count without reading element contents:
 
 ```sh
-.build/debug/03 browser wait-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least --timeout-ms 5000
+.build/debug/Ln1 browser wait-count --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector '.result-row' --count 3 --count-match at-least --timeout-ms 5000
 ```
 
 `browser.waitCount` is a low-risk read action. It polls `document.querySelectorAll` through the tab's DevTools runtime until the count matches with `--count-match exact|at-least|at-most`, returning only count, selector, URL, and match status.
@@ -610,7 +610,7 @@ Wait for a selector count without reading element contents:
 Wait for visible page text without returning page contents:
 
 ```sh
-.build/debug/03 browser wait-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains --timeout-ms 5000
+.build/debug/Ln1 browser wait-text --endpoint http://127.0.0.1:9222 --id TARGET_ID --text "Saved successfully" --match contains --timeout-ms 5000
 ```
 
 `browser.waitText` is a low-risk read action. It polls page inner text until the expected value matches, returning only lengths, digests, URL, and match status.
@@ -618,7 +618,7 @@ Wait for visible page text without returning page contents:
 Wait for one field value without returning value contents:
 
 ```sh
-.build/debug/03 browser wait-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact --timeout-ms 5000
+.build/debug/Ln1 browser wait-value --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "bounded text" --match exact --timeout-ms 5000
 ```
 
 `browser.waitValue` is a low-risk read action. It polls an input, textarea, or select value until the expected text matches, returning only lengths, digests, URL, target metadata, and match status. Password inputs are refused.
@@ -626,7 +626,7 @@ Wait for one field value without returning value contents:
 Wait for one page to reach a document readiness state without mutating the page:
 
 ```sh
-.build/debug/03 browser wait-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete --timeout-ms 5000
+.build/debug/Ln1 browser wait-ready --endpoint http://127.0.0.1:9222 --id TARGET_ID --state complete --timeout-ms 5000
 ```
 
 `browser.waitReady` is a low-risk read action. It polls `document.readyState` and treats `complete` as satisfying `interactive`, returning the current state, URL, and match status.
@@ -634,7 +634,7 @@ Wait for one page to reach a document readiness state without mutating the page:
 Wait for one tab title to match without mutating the page or reading page contents:
 
 ```sh
-.build/debug/03 browser wait-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains --timeout-ms 5000
+.build/debug/Ln1 browser wait-title --endpoint http://127.0.0.1:9222 --id TARGET_ID --title "Checkout" --match contains --timeout-ms 5000
 ```
 
 `browser.waitTitle` is a low-risk read action. It polls structured DevTools tab metadata until the title matches, returning title, URL, and match status.
@@ -642,7 +642,7 @@ Wait for one tab title to match without mutating the page or reading page conten
 Wait for one checkbox or radio input to reach a checked state without mutating the page:
 
 ```sh
-.build/debug/03 browser wait-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true --timeout-ms 5000
+.build/debug/Ln1 browser wait-checked --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=subscribe]' --checked true --timeout-ms 5000
 ```
 
 `browser.waitChecked` is a low-risk read action. It polls a checkbox or radio input through the tab's DevTools runtime until its checked state matches, returning input metadata, current URL, and match status.
@@ -650,7 +650,7 @@ Wait for one checkbox or radio input to reach a checked state without mutating t
 Wait for an element to become enabled or disabled without mutating the page:
 
 ```sh
-.build/debug/03 browser wait-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true --timeout-ms 5000
+.build/debug/Ln1 browser wait-enabled --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]' --enabled true --timeout-ms 5000
 ```
 
 `browser.waitEnabled` is a low-risk read action. It polls one selector through the tab's DevTools runtime until the enabled state matches, returning tag, input type, disabled/read-only metadata, current URL, and match status without clicking the element.
@@ -658,7 +658,7 @@ Wait for an element to become enabled or disabled without mutating the page:
 Wait for an element to become focused or unfocused without mutating the page:
 
 ```sh
-.build/debug/03 browser wait-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true --timeout-ms 5000
+.build/debug/Ln1 browser wait-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true --timeout-ms 5000
 ```
 
 `browser.waitFocus` is a low-risk read action. It polls one selector through the tab's DevTools runtime until the focus state matches, returning target and active-element metadata, current URL, and match status without focusing the element.

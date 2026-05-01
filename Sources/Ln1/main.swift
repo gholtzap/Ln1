@@ -1491,17 +1491,17 @@ private final class DataResponseBox: @unchecked Sendable {
 let args = Array(CommandLine.arguments.dropFirst())
 
 do {
-    let cli = ZeroThreeCLI(arguments: args)
+    let cli = Ln1CLI(arguments: args)
     try cli.run()
 } catch let error as CommandError {
-    fputs("03: \(error.description)\n", stderr)
+    fputs("Ln1: \(error.description)\n", stderr)
     exit(1)
 } catch {
-    fputs("03: \(error)\n", stderr)
+    fputs("Ln1: \(error)\n", stderr)
     exit(1)
 }
 
-final class ZeroThreeCLI {
+final class Ln1CLI {
     private let arguments: [String]
     private let encoder: JSONEncoder
 
@@ -1575,7 +1575,7 @@ final class ZeroThreeCLI {
             trusted: trusted,
             message: trusted
                 ? "Accessibility access is enabled."
-                : "Grant Accessibility access to the terminal app running 03, then retry."
+                : "Grant Accessibility access to the terminal app running Ln1, then retry."
         ))
     }
 
@@ -1617,8 +1617,8 @@ final class ZeroThreeCLI {
             required: true,
             message: trusted
                 ? "Accessibility permission is enabled."
-                : "Accessibility permission is not enabled, so 03 state and 03 perform cannot inspect or operate app UI.",
-            remediation: trusted ? nil : "Run `03 trust`, grant Accessibility access to the terminal app, then rerun `03 doctor`."
+                : "Accessibility permission is not enabled, so Ln1 state and Ln1 perform cannot inspect or operate app UI.",
+            remediation: trusted ? nil : "Run `Ln1 trust`, grant Accessibility access to the terminal app, then rerun `Ln1 doctor`."
         )
     }
 
@@ -1631,7 +1631,7 @@ final class ZeroThreeCLI {
                     status: "fail",
                     required: true,
                     message: desktop.message,
-                    remediation: "Run `03 desktop windows --limit 5` from an interactive macOS user session."
+                    remediation: "Run `Ln1 desktop windows --limit 5` from an interactive macOS user session."
                 )
             }
             if desktop.windows.isEmpty {
@@ -1640,7 +1640,7 @@ final class ZeroThreeCLI {
                     status: "warn",
                     required: true,
                     message: "WindowServer metadata is available, but no visible windows matched the current filters.",
-                    remediation: "Try `03 desktop windows --include-desktop --all-layers --limit 20`."
+                    remediation: "Try `Ln1 desktop windows --include-desktop --all-layers --limit 20`."
                 )
             }
             return DoctorCheck(
@@ -1656,7 +1656,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "Could not inspect desktop window metadata: \(error.localizedDescription)",
-                remediation: "Run `03 desktop windows --limit 5` to inspect the desktop adapter error."
+                remediation: "Run `Ln1 desktop windows --limit 5` to inspect the desktop adapter error."
             )
         }
     }
@@ -1666,7 +1666,7 @@ final class ZeroThreeCLI {
             let auditURL = try auditLogURL()
             let directory = auditURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let probeURL = directory.appendingPathComponent(".03-doctor-\(UUID().uuidString).tmp")
+            let probeURL = directory.appendingPathComponent(".Ln1-doctor-\(UUID().uuidString).tmp")
             try "doctor".write(to: probeURL, atomically: true, encoding: .utf8)
             try FileManager.default.removeItem(at: probeURL)
             return DoctorCheck(
@@ -1706,7 +1706,7 @@ final class ZeroThreeCLI {
                 status: "warn",
                 required: false,
                 message: "Browser DevTools endpoint configuration is invalid.",
-                remediation: "Use `03 doctor --endpoint http://127.0.0.1:9222` or pass a file path containing a DevTools /json/list fixture."
+                remediation: "Use `Ln1 doctor --endpoint http://127.0.0.1:9222` or pass a file path containing a DevTools /json/list fixture."
             )
         }
 
@@ -1728,7 +1728,7 @@ final class ZeroThreeCLI {
                 status: "warn",
                 required: false,
                 message: "Browser DevTools endpoint is not reachable or did not return valid target JSON: \(error.localizedDescription)",
-                remediation: "Start Chromium with `--remote-debugging-port=9222`, then rerun `03 doctor --endpoint http://127.0.0.1:9222`."
+                remediation: "Start Chromium with `--remote-debugging-port=9222`, then rerun `Ln1 doctor --endpoint http://127.0.0.1:9222`."
             )
         }
     }
@@ -1775,7 +1775,7 @@ final class ZeroThreeCLI {
             trusted: trusted,
             message: trusted
                 ? "Accessibility access is enabled."
-                : "Grant Accessibility access to the terminal app running 03 before using state or perform."
+                : "Grant Accessibility access to the terminal app running Ln1 before using state or perform."
         )
         let desktop = try desktopWindows(limitOverride: windowLimit)
         let blockers = observationBlockers(accessibility: accessibility, desktop: desktop)
@@ -2026,7 +2026,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty {
-            var arguments = ["03", "state"]
+            var arguments = ["Ln1", "state"]
             if let activePid {
                 arguments += ["--pid", String(activePid)]
             }
@@ -2063,7 +2063,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No target element was provided for control-active-app.",
-                remediation: "Run `03 state\(activePid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80` and choose an element ID plus stableIdentity."
+                remediation: "Run `Ln1 state\(activePid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80` and choose an element ID plus stableIdentity."
             ))
         }
 
@@ -2081,7 +2081,7 @@ final class ZeroThreeCLI {
         let nextCommand: String?
         let nextArguments: [String]?
         if blockers.isEmpty, let element {
-            var arguments = ["03", "perform"]
+            var arguments = ["Ln1", "perform"]
             if let activePid {
                 arguments += ["--pid", String(activePid)]
             }
@@ -2125,7 +2125,7 @@ final class ZeroThreeCLI {
         let nextCommand: String?
         let nextArguments: [String]?
         if blockers.isEmpty, let id = option("--id") {
-            var arguments = ["03", "browser", "dom"]
+            var arguments = ["Ln1", "browser", "dom"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2139,7 +2139,7 @@ final class ZeroThreeCLI {
             nextArguments = arguments
             nextCommand = workflowDisplayCommand(arguments)
         } else if blockers.isEmpty {
-            let arguments = ["03", "browser", "tabs", "--endpoint", endpoint?.absoluteString ?? "http://127.0.0.1:9222"]
+            let arguments = ["Ln1", "browser", "tabs", "--endpoint", endpoint?.absoluteString ?? "http://127.0.0.1:9222"]
             nextArguments = arguments
             nextCommand = workflowDisplayCommand(arguments)
         } else {
@@ -2191,7 +2191,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for \(kind)-browser.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if kind == "fill" || kind == "select" || kind == "check" || kind == "focus" || kind == "click", selector == nil {
@@ -2200,7 +2200,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No CSS selector was provided for \(kind)-browser.",
-                remediation: "Run `03 workflow run --operation read-browser --id TARGET_ID --dry-run false --allow-risk medium` and choose an element selector."
+                remediation: "Run `Ln1 workflow run --operation read-browser --id TARGET_ID --dry-run false --allow-risk medium` and choose an element selector."
             ))
         }
         if kind == "press-key" {
@@ -2394,7 +2394,7 @@ final class ZeroThreeCLI {
         let operation = kind == "press-key" ? "press-browser-key" : "\(kind)-browser"
         let nextArguments: [String]?
         if blockers.isEmpty, kind == "navigate", let id, let normalizedURL {
-            var arguments = ["03", "browser", "navigate"]
+            var arguments = ["Ln1", "browser", "navigate"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2411,7 +2411,7 @@ final class ZeroThreeCLI {
             arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
             nextArguments = arguments
         } else if blockers.isEmpty, kind == "press-key", let id, let key {
-            var arguments = ["03", "browser", "press-key"]
+            var arguments = ["Ln1", "browser", "press-key"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2428,7 +2428,7 @@ final class ZeroThreeCLI {
             arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
             nextArguments = arguments
         } else if blockers.isEmpty, let id, let selector {
-            var arguments = ["03", "browser", kind]
+            var arguments = ["Ln1", "browser", kind]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2498,7 +2498,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-url.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let expectedURL {
@@ -2539,7 +2539,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let expectedURL {
-            var arguments = ["03", "browser", "wait-url"]
+            var arguments = ["Ln1", "browser", "wait-url"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2588,7 +2588,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-selector.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -2629,7 +2629,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector {
-            var arguments = ["03", "browser", "wait-selector"]
+            var arguments = ["Ln1", "browser", "wait-selector"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2679,7 +2679,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-count.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -2741,7 +2741,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector, let count {
-            var arguments = ["03", "browser", "wait-count"]
+            var arguments = ["Ln1", "browser", "wait-count"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2791,7 +2791,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-text.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let text {
@@ -2832,7 +2832,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let text {
-            var arguments = ["03", "browser", "wait-text"]
+            var arguments = ["Ln1", "browser", "wait-text"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2882,7 +2882,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-value.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -2944,7 +2944,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector, let text {
-            var arguments = ["03", "browser", "wait-value"]
+            var arguments = ["Ln1", "browser", "wait-value"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -2993,7 +2993,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-ready.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let state {
@@ -3013,7 +3013,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id {
-            var arguments = ["03", "browser", "wait-ready"]
+            var arguments = ["Ln1", "browser", "wait-ready"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -3061,7 +3061,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-title.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let title {
@@ -3102,7 +3102,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let title {
-            var arguments = ["03", "browser", "wait-title"]
+            var arguments = ["Ln1", "browser", "wait-title"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -3151,7 +3151,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-checked.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -3192,7 +3192,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector {
-            var arguments = ["03", "browser", "wait-checked"]
+            var arguments = ["Ln1", "browser", "wait-checked"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -3241,7 +3241,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-enabled.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -3282,7 +3282,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector {
-            var arguments = ["03", "browser", "wait-enabled"]
+            var arguments = ["Ln1", "browser", "wait-enabled"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -3331,7 +3331,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-focus.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -3372,7 +3372,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector {
-            var arguments = ["03", "browser", "wait-focus"]
+            var arguments = ["Ln1", "browser", "wait-focus"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -3423,7 +3423,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "No browser tab ID was provided for wait-browser-attribute.",
-                remediation: "Run `03 workflow run --operation read-browser --dry-run false` and choose a tab ID."
+                remediation: "Run `Ln1 workflow run --operation read-browser --dry-run false` and choose a tab ID."
             ))
         }
         if let selector {
@@ -3506,7 +3506,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty, let id, let selector, let attribute, let text {
-            var arguments = ["03", "browser", "wait-attribute"]
+            var arguments = ["Ln1", "browser", "wait-attribute"]
             if let endpoint {
                 arguments += ["--endpoint", endpoint.absoluteString]
             }
@@ -3576,7 +3576,7 @@ final class ZeroThreeCLI {
         let nextArguments: [String]?
         if blockers.isEmpty, let sourcePath, let destinationPath {
             var arguments = [
-                "03", "files", "move",
+                "Ln1", "files", "move",
                 "--path", sourcePath,
                 "--to", destinationPath,
                 "--allow-risk", "medium"
@@ -3589,7 +3589,7 @@ final class ZeroThreeCLI {
             nextCommand = workflowDisplayCommand(arguments)
         } else if sourcePath != nil, destinationPath != nil {
             let arguments = [
-                "03", "files", "plan",
+                "Ln1", "files", "plan",
                 "--operation", "move",
                 "--path", sourcePath!,
                 "--to", destinationPath!,
@@ -3633,7 +3633,7 @@ final class ZeroThreeCLI {
         let nextArguments: [String]?
         if blockers.isEmpty, let path {
             nextArguments = [
-                "03", "files", "wait",
+                "Ln1", "files", "wait",
                 "--path", path,
                 "--exists", String(expectedExists),
                 "--timeout-ms", String(waitTimeoutMilliseconds),
@@ -3697,7 +3697,7 @@ final class ZeroThreeCLI {
                 status: "fail",
                 required: true,
                 message: "Clipboard string digest must be a 64-character SHA-256 hex digest.",
-                remediation: "Pass a digest from `03 clipboard state` with `--string-digest HEX`."
+                remediation: "Pass a digest from `Ln1 clipboard state` with `--string-digest HEX`."
             ))
         }
 
@@ -3706,7 +3706,7 @@ final class ZeroThreeCLI {
         let blockers = workflowBlockers(from: prerequisites)
         let nextArguments: [String]?
         if blockers.isEmpty {
-            var arguments = ["03", "clipboard", "wait"]
+            var arguments = ["Ln1", "clipboard", "wait"]
             if let pasteboard = option("--pasteboard") {
                 arguments += ["--pasteboard", pasteboard]
             }
@@ -3781,7 +3781,7 @@ final class ZeroThreeCLI {
         operation: String?
     ) throws -> WorkflowResumePlan {
         guard let latest else {
-            let nextArguments = ["03", "observe", "--app-limit", "20", "--window-limit", "20"]
+            let nextArguments = ["Ln1", "observe", "--app-limit", "20", "--window-limit", "20"]
             return WorkflowResumePlan(
                 path: workflowURL.path,
                 operation: operation,
@@ -3833,7 +3833,7 @@ final class ZeroThreeCLI {
                 message = recommendation.message
             } else {
                 nextArguments = [
-                    "03", "workflow", "log",
+                    "Ln1", "workflow", "log",
                     "--workflow-log", workflowURL.path,
                     "--allow-risk", "medium",
                     "--limit", "5"
@@ -3996,7 +3996,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4025,7 +4025,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4059,7 +4059,7 @@ final class ZeroThreeCLI {
         if workflowSelectorWaitAcceptsText(verification) {
             return (
                 arguments: [
-                    "03", "browser", "fill",
+                    "Ln1", "browser", "fill",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4074,7 +4074,7 @@ final class ZeroThreeCLI {
         if workflowSelectorWaitAcceptsSelect(verification) {
             return (
                 arguments: [
-                    "03", "browser", "select",
+                    "Ln1", "browser", "select",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4089,7 +4089,7 @@ final class ZeroThreeCLI {
         if workflowSelectorWaitAcceptsCheckedState(verification) {
             return (
                 arguments: [
-                    "03", "browser", "check",
+                    "Ln1", "browser", "check",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4104,7 +4104,7 @@ final class ZeroThreeCLI {
         if workflowSelectorWaitCanClick(verification) {
             return (
                 arguments: [
-                    "03", "browser", "click",
+                    "Ln1", "browser", "click",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4117,7 +4117,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4145,7 +4145,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4173,7 +4173,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4201,7 +4201,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4229,7 +4229,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4257,7 +4257,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4285,7 +4285,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4320,7 +4320,7 @@ final class ZeroThreeCLI {
             if workflowSelectorWaitAcceptsText(verification) {
                 return (
                     arguments: [
-                        "03", "browser", "fill",
+                        "Ln1", "browser", "fill",
                         "--endpoint", endpoint,
                         "--id", tabID,
                         "--selector", selector,
@@ -4335,7 +4335,7 @@ final class ZeroThreeCLI {
             if workflowSelectorWaitAcceptsSelect(verification) {
                 return (
                     arguments: [
-                        "03", "browser", "select",
+                        "Ln1", "browser", "select",
                         "--endpoint", endpoint,
                         "--id", tabID,
                         "--selector", selector,
@@ -4350,7 +4350,7 @@ final class ZeroThreeCLI {
             if workflowSelectorWaitAcceptsCheckedState(verification) {
                 return (
                     arguments: [
-                        "03", "browser", "check",
+                        "Ln1", "browser", "check",
                         "--endpoint", endpoint,
                         "--id", tabID,
                         "--selector", selector,
@@ -4365,7 +4365,7 @@ final class ZeroThreeCLI {
             if workflowSelectorWaitCanClick(verification) {
                 return (
                     arguments: [
-                        "03", "browser", "click",
+                        "Ln1", "browser", "click",
                         "--endpoint", endpoint,
                         "--id", tabID,
                         "--selector", selector,
@@ -4379,7 +4379,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4407,7 +4407,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4435,7 +4435,7 @@ final class ZeroThreeCLI {
 
         return (
             arguments: [
-                "03", "workflow", "run",
+                "Ln1", "workflow", "run",
                 "--operation", "read-browser",
                 "--endpoint", endpoint,
                 "--id", tabID,
@@ -4464,7 +4464,7 @@ final class ZeroThreeCLI {
            let selector = fillTarget["selector"] as? String {
             return (
                 arguments: [
-                    "03", "browser", "fill",
+                    "Ln1", "browser", "fill",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4480,7 +4480,7 @@ final class ZeroThreeCLI {
            let selector = selectTarget["selector"] as? String {
             return (
                 arguments: [
-                    "03", "browser", "select",
+                    "Ln1", "browser", "select",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4496,7 +4496,7 @@ final class ZeroThreeCLI {
            let selector = checkedTarget["selector"] as? String {
             return (
                 arguments: [
-                    "03", "browser", "check",
+                    "Ln1", "browser", "check",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4512,7 +4512,7 @@ final class ZeroThreeCLI {
            let selector = clickTarget["selector"] as? String {
             return (
                 arguments: [
-                    "03", "browser", "click",
+                    "Ln1", "browser", "click",
                     "--endpoint", endpoint,
                     "--id", tabID,
                     "--selector", selector,
@@ -4651,7 +4651,7 @@ final class ZeroThreeCLI {
         guard let operation else {
             return nil
         }
-        return ["03", "workflow", "run", "--operation", operation, "--dry-run", "true"]
+        return ["Ln1", "workflow", "run", "--operation", operation, "--dry-run", "true"]
     }
 
     private func workflowExecutionReason() throws -> String {
@@ -4761,7 +4761,7 @@ final class ZeroThreeCLI {
             return executableURL
         }
 
-        let rawPath = CommandLine.arguments.first ?? "03"
+        let rawPath = CommandLine.arguments.first ?? "Ln1"
         if rawPath.hasPrefix("/") {
             return URL(fileURLWithPath: rawPath)
         }
@@ -4839,35 +4839,35 @@ final class ZeroThreeCLI {
         var actions = [
             ObservationAction(
                 name: "desktop.listWindows",
-                command: "03 desktop windows --limit \(windowLimit)",
+                command: "Ln1 desktop windows --limit \(windowLimit)",
                 risk: desktopActionRisk(for: "desktop.listWindows"),
                 mutates: false,
                 reason: "Refresh visible window metadata and stable desktop identities."
             ),
             ObservationAction(
                 name: "apps.list",
-                command: "03 apps",
+                command: "Ln1 apps",
                 risk: "low",
                 mutates: false,
                 reason: "List running GUI apps and identify the active process."
             ),
             ObservationAction(
                 name: "clipboard.state",
-                command: "03 clipboard state",
+                command: "Ln1 clipboard state",
                 risk: clipboardActionRisk(for: "clipboard.state"),
                 mutates: false,
                 reason: "Inspect clipboard metadata without reading clipboard text."
             ),
             ObservationAction(
                 name: "clipboard.wait",
-                command: "03 clipboard wait --has-string true --timeout-ms 5000",
+                command: "Ln1 clipboard wait --has-string true --timeout-ms 5000",
                 risk: clipboardActionRisk(for: "clipboard.wait"),
                 mutates: false,
                 reason: "Wait for copied text metadata without reading clipboard text."
             ),
             ObservationAction(
                 name: "audit.review",
-                command: "03 audit --limit 20",
+                command: "Ln1 audit --limit 20",
                 risk: "low",
                 mutates: false,
                 reason: "Review recent audited actions and verification outcomes."
@@ -4878,7 +4878,7 @@ final class ZeroThreeCLI {
             let pidArgument = activePid.map { " --pid \($0)" } ?? ""
             actions.append(ObservationAction(
                 name: "accessibility.inspectState",
-                command: "03 state\(pidArgument) --depth 3 --max-children 80",
+                command: "Ln1 state\(pidArgument) --depth 3 --max-children 80",
                 risk: "low",
                 mutates: false,
                 reason: "Inspect the active app's UI tree with stable element identities."
@@ -4886,7 +4886,7 @@ final class ZeroThreeCLI {
         } else {
             actions.append(ObservationAction(
                 name: "accessibility.requestTrust",
-                command: "03 trust",
+                command: "Ln1 trust",
                 risk: "low",
                 mutates: false,
                 reason: "Enable Accessibility inspection before using state or perform."
@@ -4895,7 +4895,7 @@ final class ZeroThreeCLI {
 
         actions.append(ObservationAction(
             name: "browser.listTabs",
-            command: "03 browser tabs --endpoint http://127.0.0.1:9222",
+            command: "Ln1 browser tabs --endpoint http://127.0.0.1:9222",
             risk: browserActionRisk(for: "browser.listTabs"),
             mutates: false,
             reason: "Inspect browser tabs if a Chromium DevTools endpoint is running."
@@ -12088,7 +12088,7 @@ final class ZeroThreeCLI {
             throw CommandError(description: "could not resolve Application Support directory")
         }
 
-        return applicationSupport.appendingPathComponent("03/audit-log.jsonl")
+        return applicationSupport.appendingPathComponent("Ln1/audit-log.jsonl")
     }
 
     private func taskMemoryURL() throws -> URL {
@@ -12103,7 +12103,7 @@ final class ZeroThreeCLI {
             throw CommandError(description: "could not resolve Application Support directory")
         }
 
-        return applicationSupport.appendingPathComponent("03/task-memory.jsonl")
+        return applicationSupport.appendingPathComponent("Ln1/task-memory.jsonl")
     }
 
     private func workflowLogURL() throws -> URL {
@@ -12118,7 +12118,7 @@ final class ZeroThreeCLI {
             throw CommandError(description: "could not resolve Application Support directory")
         }
 
-        return applicationSupport.appendingPathComponent("03/workflow-runs.jsonl")
+        return applicationSupport.appendingPathComponent("Ln1/workflow-runs.jsonl")
     }
 
     private func expandedPath(_ path: String) -> String {
@@ -12328,7 +12328,7 @@ final class ZeroThreeCLI {
         print("""
         {
           "policy": {
-            "command": "03 policy",
+            "command": "Ln1 policy",
             "defaultAllowedRisk": "low",
             "riskLevels": ["low", "medium", "high", "unknown"],
             "actions": [
@@ -12336,7 +12336,7 @@ final class ZeroThreeCLI {
             ]
           },
           "doctor": {
-            "command": "03 doctor --timeout-ms 1000",
+            "command": "Ln1 doctor --timeout-ms 1000",
             "result": {
               "status": "ready|degraded|blocked",
               "ready": true,
@@ -12359,7 +12359,7 @@ final class ZeroThreeCLI {
             }
           },
           "workflowPreflight": {
-            "command": "03 workflow preflight --operation inspect-active-app",
+            "command": "Ln1 workflow preflight --operation inspect-active-app",
             "result": {
               "operation": "inspect-active-app",
               "risk": "low",
@@ -12374,13 +12374,13 @@ final class ZeroThreeCLI {
                 }
               ],
               "blockers": [],
-              "nextCommand": "03 state --pid 123 --depth 3 --max-children 80",
-              "nextArguments": ["03", "state", "--pid", "123", "--depth", "3", "--max-children", "80"],
+              "nextCommand": "Ln1 state --pid 123 --depth 3 --max-children 80",
+              "nextArguments": ["Ln1", "state", "--pid", "123", "--depth", "3", "--max-children", "80"],
               "message": "inspect-active-app can proceed with the suggested command."
             }
           },
           "workflowNext": {
-            "command": "03 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium",
+            "command": "Ln1 workflow next --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium",
             "result": {
               "operation": "move-file",
               "ready": true,
@@ -12388,8 +12388,8 @@ final class ZeroThreeCLI {
               "mutates": true,
               "blockers": [],
               "command": {
-                "display": "03 files move --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --reason 'Describe intent'",
-                "argv": ["03", "files", "move", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/b.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
+                "display": "Ln1 files move --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium --reason 'Describe intent'",
+                "argv": ["Ln1", "files", "move", "--path", "~/Desktop/a.txt", "--to", "~/Desktop/b.txt", "--allow-risk", "medium", "--reason", "Describe intent"],
                 "risk": "medium",
                 "mutates": true,
                 "requiresReason": true
@@ -12397,7 +12397,7 @@ final class ZeroThreeCLI {
             }
           },
           "workflowBrowserAction": {
-            "command": "03 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id page-id --url https://example.com/next --expect-url https://example.com/next --match exact",
+            "command": "Ln1 workflow preflight --operation navigate-browser --endpoint http://127.0.0.1:9222 --id page-id --url https://example.com/next --expect-url https://example.com/next --match exact",
             "result": {
               "operation": "navigate-browser",
               "risk": "medium",
@@ -12418,16 +12418,16 @@ final class ZeroThreeCLI {
                 }
               ],
               "blockers": [],
-              "nextCommand": "03 browser navigate --endpoint http://127.0.0.1:9222 --id page-id --url https://example.com/next --expect-url https://example.com/next --match exact --allow-risk medium --reason 'Describe intent'",
-              "nextArguments": ["03", "browser", "navigate", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--url", "https://example.com/next", "--expect-url", "https://example.com/next", "--match", "exact", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "nextCommand": "Ln1 browser navigate --endpoint http://127.0.0.1:9222 --id page-id --url https://example.com/next --expect-url https://example.com/next --match exact --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["Ln1", "browser", "navigate", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--url", "https://example.com/next", "--expect-url", "https://example.com/next", "--match", "exact", "--allow-risk", "medium", "--reason", "Describe intent"],
               "message": "navigate-browser can proceed with the suggested command."
             }
           },
           "workflowRun": {
-            "command": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false",
+            "command": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --dry-run false",
             "result": {
               "transcriptID": "UUID",
-              "transcriptPath": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "transcriptPath": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "read-browser",
               "mode": "execute",
               "dryRun": false,
@@ -12438,14 +12438,14 @@ final class ZeroThreeCLI {
               "mutates": false,
               "blockers": [],
               "command": {
-                "display": "03 browser tabs --endpoint http://127.0.0.1:9222",
-                "argv": ["03", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
+                "display": "Ln1 browser tabs --endpoint http://127.0.0.1:9222",
+                "argv": ["Ln1", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
                 "risk": "medium",
                 "mutates": false,
                 "requiresReason": false
               },
               "execution": {
-                "argv": ["03", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
+                "argv": ["Ln1", "browser", "tabs", "--endpoint", "http://127.0.0.1:9222"],
                 "exitCode": 0,
                 "timeoutMilliseconds": 10000,
                 "timedOut": false,
@@ -12465,9 +12465,9 @@ final class ZeroThreeCLI {
             }
           },
           "workflowLog": {
-            "command": "03 workflow log --allow-risk medium --limit 20",
+            "command": "Ln1 workflow log --allow-risk medium --limit 20",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": null,
               "limit": 20,
               "count": 1,
@@ -12482,55 +12482,55 @@ final class ZeroThreeCLI {
             }
           },
           "workflowResume": {
-            "command": "03 workflow resume --allow-risk medium",
+            "command": "Ln1 workflow resume --allow-risk medium",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": null,
               "status": "completed|blocked|timed_out|failed|ready|empty",
               "transcriptID": "UUID",
               "latestOperation": "read-browser",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser tab listing completed; dry-run DOM inspection for the first tab."
             }
           },
           "workflowResumeDOM": {
-            "command": "03 workflow resume --allow-risk medium --operation read-browser",
+            "command": "Ln1 workflow resume --allow-risk medium --operation read-browser",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "read-browser",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "read-browser",
               "blockers": [],
-              "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
-              "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "nextCommand": "Ln1 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["Ln1", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
               "message": "Latest browser DOM inspection found an actionable element; click it by selector after confirming intent."
             }
           },
           "workflowResumeWaitURL": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-url",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-url",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-url",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-url",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser URL wait completed; dry-run DOM inspection for the arrived page."
             }
           },
           "workflowWaitFile": {
-            "command": "03 workflow run --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000 --dry-run false --run-timeout-ms 1000",
+            "command": "Ln1 workflow run --operation wait-file --path ~/Downloads/report.pdf --exists true --wait-timeout-ms 5000 --dry-run false --run-timeout-ms 1000",
             "result": {
               "operation": "wait-file",
               "risk": "low",
               "mutates": false,
               "command": {
-                "argv": ["03", "files", "wait", "--path", "~/Downloads/report.pdf", "--exists", "true", "--timeout-ms", "5000", "--interval-ms", "100"]
+                "argv": ["Ln1", "files", "wait", "--path", "~/Downloads/report.pdf", "--exists", "true", "--timeout-ms", "5000", "--interval-ms", "100"]
               },
               "execution": {
                 "timedOut": true,
@@ -12541,7 +12541,7 @@ final class ZeroThreeCLI {
             }
           },
           "observe": {
-            "command": "03 observe --app-limit 20 --window-limit 20",
+            "command": "Ln1 observe --app-limit 20 --window-limit 20",
             "result": {
               "accessibility": {
                 "trusted": true,
@@ -12561,7 +12561,7 @@ final class ZeroThreeCLI {
               "suggestedActions": [
                 {
                   "name": "accessibility.inspectState",
-                  "command": "03 state --pid 123 --depth 3 --max-children 80",
+                  "command": "Ln1 state --pid 123 --depth 3 --max-children 80",
                   "risk": "low",
                   "mutates": false,
                   "reason": "Inspect the active app's UI tree with stable element identities."
@@ -12634,7 +12634,7 @@ final class ZeroThreeCLI {
             ]
           },
           "desktopWindows": {
-            "command": "03 desktop windows --limit 50",
+            "command": "Ln1 desktop windows --limit 50",
             "result": {
               "available": true,
               "message": "Read visible desktop window metadata.",
@@ -12671,7 +12671,7 @@ final class ZeroThreeCLI {
             }
           },
           "perform": {
-            "command": "03 perform --pid 456 --element a0.w0.3.1 --expect-identity accessibilityElement:stable-semantic-digest --min-identity-confidence medium --action AXPress --allow-risk low --reason 'Open details'",
+            "command": "Ln1 perform --pid 456 --element a0.w0.3.1 --expect-identity accessibilityElement:stable-semantic-digest --min-identity-confidence medium --action AXPress --allow-risk low --reason 'Open details'",
             "result": {
               "ok": true,
               "stableIdentity": {
@@ -12688,11 +12688,11 @@ final class ZeroThreeCLI {
                 "actualConfidence": "high"
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "audit": {
-            "command": "03 audit --command files.move --code moved --limit 20",
+            "command": "Ln1 audit --command files.move --code moved --limit 20",
             "entry": {
               "id": "UUID",
               "timestamp": "ISO-8601 timestamp",
@@ -12731,9 +12731,9 @@ final class ZeroThreeCLI {
             }
           },
           "taskMemory": {
-            "command": "03 task record --task-id UUID --kind verification --summary 'download matched expected digest' --allow-risk medium",
+            "command": "Ln1 task record --task-id UUID --kind verification --summary 'download matched expected digest' --allow-risk medium",
             "result": {
-              "path": "~/Library/Application Support/03/task-memory.jsonl",
+              "path": "~/Library/Application Support/Ln1/task-memory.jsonl",
               "taskID": "UUID",
               "status": "active|completed|blocked|cancelled",
               "title": "Verify downloaded report",
@@ -12751,7 +12751,7 @@ final class ZeroThreeCLI {
             }
           },
           "clipboardState": {
-            "command": "03 clipboard state",
+            "command": "Ln1 clipboard state",
             "result": {
               "pasteboard": "Apple CFPasteboard general",
               "changeCount": 12,
@@ -12768,7 +12768,7 @@ final class ZeroThreeCLI {
             }
           },
           "clipboardWait": {
-            "command": "03 clipboard wait --changed-from 12 --has-string true --timeout-ms 5000",
+            "command": "Ln1 clipboard wait --changed-from 12 --has-string true --timeout-ms 5000",
             "result": {
               "pasteboard": "Apple CFPasteboard general",
               "timeoutMilliseconds": 5000,
@@ -12792,7 +12792,7 @@ final class ZeroThreeCLI {
             }
           },
           "clipboardText": {
-            "command": "03 clipboard read-text --allow-risk medium --max-characters 4096 --reason 'Use copied value'",
+            "command": "Ln1 clipboard read-text --allow-risk medium --max-characters 4096 --reason 'Use copied value'",
             "result": {
               "pasteboard": "Apple CFPasteboard general",
               "changeCount": 12,
@@ -12802,11 +12802,11 @@ final class ZeroThreeCLI {
               "stringDigest": "hex encoded SHA-256 digest",
               "truncated": false,
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "clipboardWrite": {
-            "command": "03 clipboard write-text --allow-risk medium --text 'bounded clipboard text' --reason 'Prepare value for paste'",
+            "command": "Ln1 clipboard write-text --allow-risk medium --text 'bounded clipboard text' --reason 'Prepare value for paste'",
             "result": {
               "pasteboard": "Apple CFPasteboard general",
               "previous": {
@@ -12827,11 +12827,11 @@ final class ZeroThreeCLI {
                 "message": "clipboard contains text with the requested length and digest"
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserTabs": {
-            "command": "03 browser tabs --endpoint http://127.0.0.1:9222",
+            "command": "Ln1 browser tabs --endpoint http://127.0.0.1:9222",
             "result": {
               "endpoint": "http://127.0.0.1:9222",
               "includeNonPageTargets": false,
@@ -12871,7 +12871,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserTab": {
-            "command": "03 browser tab --endpoint http://127.0.0.1:9222 --id devtools-target-id",
+            "command": "Ln1 browser tab --endpoint http://127.0.0.1:9222 --id devtools-target-id",
             "result": {
               "tab": {
                 "id": "devtools-target-id",
@@ -12881,7 +12881,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserDOM": {
-            "command": "03 browser dom --endpoint http://127.0.0.1:9222 --id devtools-target-id --allow-risk medium --max-elements 200 --max-text-characters 120",
+            "command": "Ln1 browser dom --endpoint http://127.0.0.1:9222 --id devtools-target-id --allow-risk medium --max-elements 200 --max-text-characters 120",
             "result": {
               "action": "browser.readDOM",
               "risk": "medium",
@@ -12924,7 +12924,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserFill": {
-            "command": "03 browser fill --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --text 'bounded text' --allow-risk medium",
+            "command": "Ln1 browser fill --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --text 'bounded text' --allow-risk medium",
             "result": {
               "action": "browser.fillFormField",
               "risk": "medium",
@@ -12940,11 +12940,11 @@ final class ZeroThreeCLI {
               "targetInputType": "text",
               "resultingValueLength": 12,
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserSelect": {
-            "command": "03 browser select --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'select[name=country]' --value ca --allow-risk medium",
+            "command": "Ln1 browser select --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'select[name=country]' --value ca --allow-risk medium",
             "result": {
               "action": "browser.selectOption",
               "risk": "medium",
@@ -12963,11 +12963,11 @@ final class ZeroThreeCLI {
               "selectedValueLength": 2,
               "selectedLabelLength": 6,
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserCheck": {
-            "command": "03 browser check --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=subscribe]' --checked true --allow-risk medium",
+            "command": "Ln1 browser check --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=subscribe]' --checked true --allow-risk medium",
             "result": {
               "action": "browser.setChecked",
               "risk": "medium",
@@ -12984,11 +12984,11 @@ final class ZeroThreeCLI {
               "targetReadOnly": false,
               "currentChecked": true,
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserFocus": {
-            "command": "03 browser focus --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --allow-risk medium",
+            "command": "Ln1 browser focus --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --allow-risk medium",
             "result": {
               "action": "browser.focusElement",
               "risk": "medium",
@@ -13004,11 +13004,11 @@ final class ZeroThreeCLI {
               "targetReadOnly": false,
               "activeElementMatched": true,
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserPressKey": {
-            "command": "03 browser press-key --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --key Enter --allow-risk medium",
+            "command": "Ln1 browser press-key --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --key Enter --allow-risk medium",
             "result": {
               "action": "browser.pressKey",
               "risk": "medium",
@@ -13029,11 +13029,11 @@ final class ZeroThreeCLI {
                 "keyUpDispatched": true
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserClick": {
-            "command": "03 browser click --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --expect-url https://example.com/next --match exact --allow-risk medium",
+            "command": "Ln1 browser click --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --expect-url https://example.com/next --match exact --allow-risk medium",
             "result": {
               "action": "browser.clickElement",
               "risk": "medium",
@@ -13056,11 +13056,11 @@ final class ZeroThreeCLI {
                 "matched": true
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserNavigate": {
-            "command": "03 browser navigate --endpoint http://127.0.0.1:9222 --id devtools-target-id --url https://example.com/next --allow-risk medium",
+            "command": "Ln1 browser navigate --endpoint http://127.0.0.1:9222 --id devtools-target-id --url https://example.com/next --allow-risk medium",
             "result": {
               "action": "browser.navigate",
               "risk": "medium",
@@ -13075,11 +13075,11 @@ final class ZeroThreeCLI {
                 "matched": true
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "browserWaitURL": {
-            "command": "03 browser wait-url --endpoint http://127.0.0.1:9222 --id devtools-target-id --expect-url https://example.com/next --match exact --timeout-ms 5000",
+            "command": "Ln1 browser wait-url --endpoint http://127.0.0.1:9222 --id devtools-target-id --expect-url https://example.com/next --match exact --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "expectedURL": "https://example.com/next",
@@ -13096,7 +13096,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitSelector": {
-            "command": "03 browser wait-selector --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --state visible --timeout-ms 5000",
+            "command": "Ln1 browser wait-selector --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --state visible --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "selector": "button[type=submit]",
@@ -13114,7 +13114,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitCount": {
-            "command": "03 browser wait-count --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector '.result-row' --count 3 --count-match at-least --timeout-ms 5000",
+            "command": "Ln1 browser wait-count --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector '.result-row' --count 3 --count-match at-least --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "selector": ".result-row",
@@ -13133,7 +13133,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitText": {
-            "command": "03 browser wait-text --endpoint http://127.0.0.1:9222 --id devtools-target-id --text 'Saved successfully' --match contains --timeout-ms 5000",
+            "command": "Ln1 browser wait-text --endpoint http://127.0.0.1:9222 --id devtools-target-id --text 'Saved successfully' --match contains --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "expectedTextLength": 18,
@@ -13153,7 +13153,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitValue": {
-            "command": "03 browser wait-value --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --text 'bounded text' --match exact --timeout-ms 5000",
+            "command": "Ln1 browser wait-value --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --text 'bounded text' --match exact --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "selector": "input[name=q]",
@@ -13176,7 +13176,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitReady": {
-            "command": "03 browser wait-ready --endpoint http://127.0.0.1:9222 --id devtools-target-id --state complete --timeout-ms 5000",
+            "command": "Ln1 browser wait-ready --endpoint http://127.0.0.1:9222 --id devtools-target-id --state complete --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "expectedState": "complete",
@@ -13193,7 +13193,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitTitle": {
-            "command": "03 browser wait-title --endpoint http://127.0.0.1:9222 --id devtools-target-id --title 'Checkout' --match contains --timeout-ms 5000",
+            "command": "Ln1 browser wait-title --endpoint http://127.0.0.1:9222 --id devtools-target-id --title 'Checkout' --match contains --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "expectedTitle": "Checkout",
@@ -13211,7 +13211,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitChecked": {
-            "command": "03 browser wait-checked --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=subscribe]' --checked true --timeout-ms 5000",
+            "command": "Ln1 browser wait-checked --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=subscribe]' --checked true --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "selector": "input[name=subscribe]",
@@ -13231,7 +13231,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitEnabled": {
-            "command": "03 browser wait-enabled --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --enabled true --timeout-ms 5000",
+            "command": "Ln1 browser wait-enabled --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'button[type=submit]' --enabled true --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "selector": "button[type=submit]",
@@ -13251,7 +13251,7 @@ final class ZeroThreeCLI {
             }
           },
           "browserWaitFocus": {
-            "command": "03 browser wait-focus --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --focused true --timeout-ms 5000",
+            "command": "Ln1 browser wait-focus --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --focused true --timeout-ms 5000",
             "result": {
               "tabID": "devtools-target-id",
               "selector": "input[name=q]",
@@ -13273,133 +13273,133 @@ final class ZeroThreeCLI {
             }
           },
           "workflowResumeWaitSelector": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-selector",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-selector",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-selector",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-selector",
               "blockers": [],
-              "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
-              "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "nextCommand": "Ln1 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["Ln1", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
               "message": "Latest browser selector wait found a ready actionable element; click it by selector after confirming intent."
             }
           },
           "workflowResumeWaitCount": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-count",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-count",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-count",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-count",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser count wait completed; dry-run DOM inspection for the matched collection state."
             }
           },
           "workflowResumeWaitEnabled": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-enabled",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-enabled",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-enabled",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-enabled",
               "blockers": [],
-              "nextCommand": "03 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
-              "nextArguments": ["03", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
+              "nextCommand": "Ln1 browser click --endpoint http://127.0.0.1:9222 --id page-id --selector 'button[type=submit]' --allow-risk medium --reason 'Describe intent'",
+              "nextArguments": ["Ln1", "browser", "click", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--selector", "button[type=submit]", "--allow-risk", "medium", "--reason", "Describe intent"],
               "message": "Latest browser enabled-state wait found an enabled actionable element; click it by selector after confirming intent."
             }
           },
           "workflowResumeWaitFocus": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-focus",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-focus",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-focus",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-focus",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser focus wait completed; dry-run DOM inspection for the focused element state."
             }
           },
           "workflowResumeWaitText": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-text",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-text",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-text",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-text",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser text wait completed; dry-run DOM inspection for the matched page state."
             }
           },
           "workflowResumeWaitValue": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-value",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-value",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-value",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-value",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser value wait completed; dry-run DOM inspection for the matched field state."
             }
           },
           "workflowResumeWaitReady": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-ready",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-ready",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-ready",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-ready",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser ready-state wait completed; dry-run DOM inspection for the loaded page state."
             }
           },
           "workflowResumeWaitTitle": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-title",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-title",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-title",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-title",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser title wait completed; dry-run DOM inspection for the matched page."
             }
           },
           "workflowResumeWaitChecked": {
-            "command": "03 workflow resume --allow-risk medium --operation wait-browser-checked",
+            "command": "Ln1 workflow resume --allow-risk medium --operation wait-browser-checked",
             "result": {
-              "path": "~/Library/Application Support/03/workflow-runs.jsonl",
+              "path": "~/Library/Application Support/Ln1/workflow-runs.jsonl",
               "operation": "wait-browser-checked",
               "status": "completed",
               "transcriptID": "UUID",
               "latestOperation": "wait-browser-checked",
               "blockers": [],
-              "nextCommand": "03 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/03/workflow-runs.jsonl'",
-              "nextArguments": ["03", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/03/workflow-runs.jsonl"],
+              "nextCommand": "Ln1 workflow run --operation read-browser --endpoint http://127.0.0.1:9222 --id page-id --dry-run true --workflow-log '~/Library/Application Support/Ln1/workflow-runs.jsonl'",
+              "nextArguments": ["Ln1", "workflow", "run", "--operation", "read-browser", "--endpoint", "http://127.0.0.1:9222", "--id", "page-id", "--dry-run", "true", "--workflow-log", "~/Library/Application Support/Ln1/workflow-runs.jsonl"],
               "message": "Latest browser checked-state wait completed; dry-run DOM inspection for the matched form state."
             }
           },
           "files": {
-            "command": "03 files list --path ~/Documents --depth 2 --limit 200",
+            "command": "Ln1 files list --path ~/Documents --depth 2 --limit 200",
             "entry": {
               "id": "file:stable-resource-identifier",
               "path": "/Users/example/Documents/Plan.md",
@@ -13417,7 +13417,7 @@ final class ZeroThreeCLI {
             }
           },
           "fileSearch": {
-            "command": "03 files search --path ~/Documents --query invoice --depth 4 --limit 50",
+            "command": "Ln1 files search --path ~/Documents --query invoice --depth 4 --limit 50",
             "maxMatchesPerFile": 20,
             "match": {
               "file": {
@@ -13435,7 +13435,7 @@ final class ZeroThreeCLI {
             }
           },
           "fileWait": {
-            "command": "03 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100",
+            "command": "Ln1 files wait --path ~/Downloads/report.pdf --exists true --timeout-ms 5000 --interval-ms 100",
             "result": {
               "path": "/Users/example/Downloads/report.pdf",
               "expectedExists": true,
@@ -13446,7 +13446,7 @@ final class ZeroThreeCLI {
             }
           },
           "fileWatch": {
-            "command": "03 files watch --path ~/Downloads --depth 1 --timeout-ms 30000 --interval-ms 250",
+            "command": "Ln1 files watch --path ~/Downloads --depth 1 --timeout-ms 30000 --interval-ms 250",
             "result": {
               "root": { "path": "/Users/example/Downloads", "kind": "directory" },
               "matched": true,
@@ -13465,7 +13465,7 @@ final class ZeroThreeCLI {
             }
           },
           "fileChecksum": {
-            "command": "03 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600",
+            "command": "Ln1 files checksum --path ~/Documents/Plan.md --algorithm sha256 --max-file-bytes 104857600",
             "result": {
               "file": { "path": "/Users/example/Documents/Plan.md", "kind": "regularFile" },
               "algorithm": "sha256",
@@ -13474,7 +13474,7 @@ final class ZeroThreeCLI {
             }
           },
           "fileCompare": {
-            "command": "03 files compare --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --algorithm sha256 --max-file-bytes 104857600",
+            "command": "Ln1 files compare --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --algorithm sha256 --max-file-bytes 104857600",
             "result": {
               "left": { "path": "/Users/example/Documents/Plan.md", "kind": "regularFile" },
               "right": { "path": "/Users/example/Documents/Plan copy.md", "kind": "regularFile" },
@@ -13485,7 +13485,7 @@ final class ZeroThreeCLI {
             }
           },
           "filePlan": {
-            "command": "03 files plan --operation move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium",
+            "command": "Ln1 files plan --operation move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium",
             "result": {
               "operation": "move",
               "action": "filesystem.move",
@@ -13506,7 +13506,7 @@ final class ZeroThreeCLI {
             }
           },
           "fileDuplicate": {
-            "command": "03 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --allow-risk medium --reason 'Preserve original before editing'",
+            "command": "Ln1 files duplicate --path ~/Documents/Plan.md --to ~/Documents/Plan copy.md --allow-risk medium --reason 'Preserve original before editing'",
             "result": {
               "ok": true,
               "action": "filesystem.duplicate",
@@ -13519,11 +13519,11 @@ final class ZeroThreeCLI {
                 "message": "destination exists and size matches source"
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "fileMove": {
-            "command": "03 files move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium --reason 'Organize completed draft'",
+            "command": "Ln1 files move --path ~/Documents/Draft.md --to ~/Documents/Archive/Draft.md --allow-risk medium --reason 'Organize completed draft'",
             "result": {
               "ok": true,
               "action": "filesystem.move",
@@ -13536,11 +13536,11 @@ final class ZeroThreeCLI {
                 "message": "source path is gone, destination exists, and size matches original source"
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "directoryCreate": {
-            "command": "03 files mkdir --path ~/Documents/Archive --allow-risk medium --reason 'Create archive folder'",
+            "command": "Ln1 files mkdir --path ~/Documents/Archive --allow-risk medium --reason 'Create archive folder'",
             "result": {
               "ok": true,
               "action": "filesystem.createDirectory",
@@ -13552,11 +13552,11 @@ final class ZeroThreeCLI {
                 "message": "directory exists at requested path"
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
           "fileRollback": {
-            "command": "03 files rollback --audit-id UUID --allow-risk medium --reason 'Undo mistaken move'",
+            "command": "Ln1 files rollback --audit-id UUID --allow-risk medium --reason 'Undo mistaken move'",
             "result": {
               "ok": true,
               "action": "filesystem.rollbackMove",
@@ -13570,7 +13570,7 @@ final class ZeroThreeCLI {
                 "message": "original source path is restored and moved destination is gone"
               },
               "auditID": "UUID",
-              "auditLogPath": "~/Library/Application Support/03/audit-log.jsonl"
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           }
         }
@@ -13579,73 +13579,73 @@ final class ZeroThreeCLI {
 
     private func printHelp() {
         print("""
-        03: macOS semantic computer substrate prototype
+        Ln1: macOS semantic computer substrate prototype
 
         Usage:
-          03 trust [--prompt true|false]
-          03 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
-          03 policy
-          03 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          03 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          03 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          03 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
-          03 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
-          03 apps [--all]
-          03 desktop windows [--limit N] [--include-desktop] [--all-layers]
-          03 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
-          03 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
-          03 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
-          03 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
-          03 task record --task-id ID --kind observation|decision|action|verification|note --summary TEXT --allow-risk medium [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
-          03 task finish --task-id ID [--status completed|blocked|cancelled] --allow-risk medium [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
-          03 task show --task-id ID --allow-risk medium [--limit N] [--memory-log PATH]
-          03 files stat --path PATH
-          03 files list --path PATH [--depth N] [--limit N] [--include-hidden]
-          03 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
-          03 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
-          03 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
-          03 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
-          03 files compare --path LEFT --to RIGHT [--algorithm sha256] [--max-file-bytes N]
-          03 files plan --operation duplicate|move --path SOURCE --to DESTINATION [--allow-risk low|medium|high|unknown]
-          03 files plan --operation mkdir --path PATH [--allow-risk low|medium|high|unknown]
-          03 files plan --operation rollback --audit-id AUDIT_ID [--allow-risk low|medium|high|unknown] [--audit-log PATH]
-          03 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
-          03 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
-          03 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
-          03 files rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
-          03 clipboard state [--pasteboard NAME]
-          03 clipboard wait [--changed-from N] [--has-string true|false] [--string-digest HEX] [--timeout-ms N] [--interval-ms N] [--pasteboard NAME]
-          03 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
-          03 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
-          03 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
-          03 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
-          03 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser check --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser focus --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser press-key --id TARGET_ID --key KEY --allow-risk medium [--selector CSS_SELECTOR] [--modifiers shift,control,alt,meta] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
-          03 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible|hidden|detached] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-count --id TARGET_ID --selector CSS_SELECTOR --count N [--endpoint URL_OR_PATH] [--count-match exact|at-least|at-most] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-text --id TARGET_ID --text TEXT [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-value --id TARGET_ID --selector CSS_SELECTOR --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-ready --id TARGET_ID [--endpoint URL_OR_PATH] [--state loading|interactive|complete] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-title --id TARGET_ID --title TITLE [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-checked --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-enabled --id TARGET_ID --selector CSS_SELECTOR [--enabled true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-focus --id TARGET_ID --selector CSS_SELECTOR [--focused true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
-          03 browser wait-attribute --id TARGET_ID --selector CSS_SELECTOR --attribute NAME --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
-          03 schema
+          Ln1 trust [--prompt true|false]
+          Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
+          Ln1 policy
+          Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
+          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--exists true|false] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|move-file --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|move-file|wait-file --dry-run true [--path PATH] [--to PATH] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
+          Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
+          Ln1 apps [--all]
+          Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
+          Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
+          Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
+          Ln1 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
+          Ln1 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
+          Ln1 task record --task-id ID --kind observation|decision|action|verification|note --summary TEXT --allow-risk medium [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
+          Ln1 task finish --task-id ID [--status completed|blocked|cancelled] --allow-risk medium [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
+          Ln1 task show --task-id ID --allow-risk medium [--limit N] [--memory-log PATH]
+          Ln1 files stat --path PATH
+          Ln1 files list --path PATH [--depth N] [--limit N] [--include-hidden]
+          Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
+          Ln1 files wait --path PATH [--exists true|false] [--timeout-ms N] [--interval-ms N]
+          Ln1 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
+          Ln1 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
+          Ln1 files compare --path LEFT --to RIGHT [--algorithm sha256] [--max-file-bytes N]
+          Ln1 files plan --operation duplicate|move --path SOURCE --to DESTINATION [--allow-risk low|medium|high|unknown]
+          Ln1 files plan --operation mkdir --path PATH [--allow-risk low|medium|high|unknown]
+          Ln1 files plan --operation rollback --audit-id AUDIT_ID [--allow-risk low|medium|high|unknown] [--audit-log PATH]
+          Ln1 files duplicate --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 files rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 clipboard state [--pasteboard NAME]
+          Ln1 clipboard wait [--changed-from N] [--has-string true|false] [--string-digest HEX] [--timeout-ms N] [--interval-ms N] [--pasteboard NAME]
+          Ln1 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
+          Ln1 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
+          Ln1 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
+          Ln1 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
+          Ln1 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser check --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser focus --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser press-key --id TARGET_ID --key KEY --allow-risk medium [--selector CSS_SELECTOR] [--modifiers shift,control,alt,meta] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible|hidden|detached] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-count --id TARGET_ID --selector CSS_SELECTOR --count N [--endpoint URL_OR_PATH] [--count-match exact|at-least|at-most] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-text --id TARGET_ID --text TEXT [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-value --id TARGET_ID --selector CSS_SELECTOR --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-ready --id TARGET_ID [--endpoint URL_OR_PATH] [--state loading|interactive|complete] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-title --id TARGET_ID --title TITLE [--endpoint URL_OR_PATH] [--match contains|exact] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-checked --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-enabled --id TARGET_ID --selector CSS_SELECTOR [--enabled true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-focus --id TARGET_ID --selector CSS_SELECTOR [--focused true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--interval-ms N]
+          Ln1 browser wait-attribute --id TARGET_ID --selector CSS_SELECTOR --attribute NAME --text TEXT [--endpoint URL_OR_PATH] [--match exact|contains] [--timeout-ms N] [--interval-ms N]
+          Ln1 schema
 
         Notes:
-          - Run `03 trust` before Accessibility-backed `state` or `perform` commands.
+          - Run `Ln1 trust` before Accessibility-backed `state` or `perform` commands.
           - `policy` describes known action risk levels and mutation behavior.
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `state` emits structured JSON from macOS Accessibility APIs.
@@ -14438,7 +14438,7 @@ final class ZeroThreeCLI {
 
     private func requireTrusted() throws {
         guard AXIsProcessTrusted() else {
-            throw CommandError(description: "Accessibility access is not enabled. Run `03 trust` first.")
+            throw CommandError(description: "Accessibility access is not enabled. Run `Ln1 trust` first.")
         }
     }
 
