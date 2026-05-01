@@ -30,13 +30,13 @@ The system should support task execution as a sequence of observations and actio
 - Bounded workflow execution: `03 workflow run ... --run-timeout-ms N --max-output-bytes N` prevents read-only child commands from hanging the control loop or returning unbounded output.
 - File wait workflow: `03 workflow run --operation wait-file ...` adds a safe wait primitive for file appearance/disappearance with an outer workflow deadline.
 - Workflow transcript: `03 workflow run ...` appends a JSONL record, and `03 workflow log --allow-risk medium` reads recent runs for resume/debug context.
-- Workflow resume: `03 workflow resume --allow-risk medium` summarizes the latest transcript status and returns a conservative next command, including browser tab-list-to-DOM-inspection and DOM-selector-to-browser-action follow-ups.
+- Workflow resume: `03 workflow resume --allow-risk medium` summarizes the latest transcript status and returns a conservative next command, including browser tab-list-to-DOM-inspection and DOM-selector-to-browser-action follow-ups for fill, select, check, and click controls.
 - Browser action preflight: `03 workflow preflight --operation fill-browser|select-browser|check-browser|click-browser|navigate-browser ...` validates DevTools, audit-log readiness, tab IDs, selectors, text, select option values/labels, checked states, URLs, and match modes before returning typed browser action argv arrays.
 - Verified click preflight: `03 workflow preflight --operation click-browser --expect-url ...` carries post-click URL expectations into the typed browser click command.
 - Browser URL wait workflow: `03 workflow run --operation wait-browser-url ... --dry-run false` waits for a tab URL to match expected exact, prefix, or contains criteria and returns typed verification evidence.
 - Browser URL wait resume: after a successful `wait-browser-url` transcript, `03 workflow resume --operation wait-browser-url` suggests a dry-run DOM inspection for the arrived tab.
 - Browser selector wait workflow: `03 workflow run --operation wait-browser-selector ... --dry-run false` waits for dynamic DOM readiness before the next browser action.
-- Browser selector wait resume: after a successful `wait-browser-selector` transcript, `03 workflow resume --operation wait-browser-selector` suggests a direct fill or click command when selector metadata is actionable.
+- Browser selector wait resume: after a successful `wait-browser-selector` transcript, `03 workflow resume --operation wait-browser-selector` suggests a direct fill, select, check, or click command when selector metadata is actionable.
 - Browser text wait workflow: `03 workflow run --operation wait-browser-text ... --dry-run false` waits for success/error text without returning page contents.
 - Browser text wait resume: after a successful `wait-browser-text` transcript, `03 workflow resume --operation wait-browser-text` suggests a dry-run DOM inspection for the matched page state.
 - Browser ready-state wait workflow: `03 workflow run --operation wait-browser-ready ... --dry-run false` waits for document readiness before inspecting or acting.

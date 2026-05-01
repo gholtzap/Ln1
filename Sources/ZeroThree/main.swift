@@ -2914,6 +2914,36 @@ final class ZeroThreeCLI {
             )
         }
 
+        if workflowSelectorWaitAcceptsSelect(verification) {
+            return (
+                arguments: [
+                    "03", "browser", "select",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--value", "Describe value",
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser selector wait found a ready select control; choose an option by value after replacing the value and reason."
+            )
+        }
+
+        if workflowSelectorWaitAcceptsCheckedState(verification) {
+            return (
+                arguments: [
+                    "03", "browser", "check",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--checked", "true",
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser selector wait found a ready checkbox or radio input; set its checked state after confirming intent."
+            )
+        }
+
         if workflowSelectorWaitCanClick(verification) {
             return (
                 arguments: [
@@ -3055,6 +3085,38 @@ final class ZeroThreeCLI {
             )
         }
 
+        if let selectTarget = elements.first(where: workflowDOMElementAcceptsSelect),
+           let selector = selectTarget["selector"] as? String {
+            return (
+                arguments: [
+                    "03", "browser", "select",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--value", "Describe value",
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser DOM inspection found a select control; choose an option by value after replacing the value and reason."
+            )
+        }
+
+        if let checkedTarget = elements.first(where: workflowDOMElementAcceptsCheckedState),
+           let selector = checkedTarget["selector"] as? String {
+            return (
+                arguments: [
+                    "03", "browser", "check",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--selector", selector,
+                    "--checked", "true",
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser DOM inspection found a checkbox or radio input; set its checked state after confirming intent."
+            )
+        }
+
         if let clickTarget = elements.first(where: workflowDOMElementCanClick),
            let selector = clickTarget["selector"] as? String {
             return (
@@ -3087,6 +3149,30 @@ final class ZeroThreeCLI {
             return workflowInputTypeAcceptsText(inputType)
         }
         return tagName == "input" && workflowInputTypeAcceptsText(inputType)
+    }
+
+    private func workflowDOMElementAcceptsSelect(_ element: [String: Any]) -> Bool {
+        guard let selector = element["selector"] as? String, !selector.isEmpty else {
+            return false
+        }
+        if element["disabled"] as? Bool == true {
+            return false
+        }
+        return element["tagName"] as? String == "select"
+    }
+
+    private func workflowDOMElementAcceptsCheckedState(_ element: [String: Any]) -> Bool {
+        guard let selector = element["selector"] as? String, !selector.isEmpty else {
+            return false
+        }
+        if element["disabled"] as? Bool == true {
+            return false
+        }
+        guard element["tagName"] as? String == "input" else {
+            return false
+        }
+        let inputType = element["inputType"] as? String
+        return inputType == "checkbox" || inputType == "radio"
     }
 
     private func workflowInputTypeAcceptsText(_ inputType: String?) -> Bool {
@@ -3128,6 +3214,24 @@ final class ZeroThreeCLI {
             return true
         }
         return tagName == "input" && workflowInputTypeAcceptsText(inputType)
+    }
+
+    private func workflowSelectorWaitAcceptsSelect(_ verification: [String: Any]) -> Bool {
+        if verification["disabled"] as? Bool == true {
+            return false
+        }
+        return verification["tagName"] as? String == "select"
+    }
+
+    private func workflowSelectorWaitAcceptsCheckedState(_ verification: [String: Any]) -> Bool {
+        if verification["disabled"] as? Bool == true || verification["readOnly"] as? Bool == true {
+            return false
+        }
+        guard verification["tagName"] as? String == "input" else {
+            return false
+        }
+        let inputType = verification["inputType"] as? String
+        return inputType == "checkbox" || inputType == "radio"
     }
 
     private func workflowSelectorWaitCanClick(_ verification: [String: Any]) -> Bool {

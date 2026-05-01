@@ -943,6 +943,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("03-workflow-dom-resume-\(UUID().uuidString)")
         let fillWorkflowLog = directory.appendingPathComponent("fill-workflow-runs.jsonl")
+        let selectWorkflowLog = directory.appendingPathComponent("select-workflow-runs.jsonl")
+        let checkWorkflowLog = directory.appendingPathComponent("check-workflow-runs.jsonl")
         let clickWorkflowLog = directory.appendingPathComponent("click-workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1005,6 +1007,100 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
         XCTAssertTrue((fillObject["message"] as? String)?.contains("text field") == true)
+
+        let selectTranscript: [String: Any] = [
+            "transcriptID": "select-transcript",
+            "operation": "read-browser",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": baseExecution.merging([
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tab": ["id": "page-1"],
+                    "elements": [
+                        [
+                            "id": "dom.1",
+                            "selector": "select[name=\"country\"]",
+                            "tagName": "select",
+                            "role": "combobox",
+                            "disabled": false
+                        ]
+                    ]
+                ]
+            ]) { _, new in new }
+        ]
+        try writeJSONObjectLine(selectTranscript, to: selectWorkflowLog)
+
+        let selectResume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", selectWorkflowLog.path,
+            "--operation", "read-browser",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(selectResume.status, 0, selectResume.stderr)
+        let selectObject = try decodeJSONObject(selectResume.stdout)
+        XCTAssertEqual(selectObject["status"] as? String, "completed")
+        XCTAssertEqual(selectObject["nextArguments"] as? [String], [
+            "03", "browser", "select",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "select[name=\"country\"]",
+            "--value", "Describe value",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((selectObject["message"] as? String)?.contains("select control") == true)
+
+        let checkTranscript: [String: Any] = [
+            "transcriptID": "check-transcript",
+            "operation": "read-browser",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": baseExecution.merging([
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tab": ["id": "page-1"],
+                    "elements": [
+                        [
+                            "id": "dom.1",
+                            "selector": "input[name=\"subscribe\"]",
+                            "tagName": "input",
+                            "role": "checkbox",
+                            "inputType": "checkbox",
+                            "checked": false,
+                            "disabled": false
+                        ]
+                    ]
+                ]
+            ]) { _, new in new }
+        ]
+        try writeJSONObjectLine(checkTranscript, to: checkWorkflowLog)
+
+        let checkResume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", checkWorkflowLog.path,
+            "--operation", "read-browser",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(checkResume.status, 0, checkResume.stderr)
+        let checkObject = try decodeJSONObject(checkResume.stdout)
+        XCTAssertEqual(checkObject["status"] as? String, "completed")
+        XCTAssertEqual(checkObject["nextArguments"] as? [String], [
+            "03", "browser", "check",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "input[name=\"subscribe\"]",
+            "--checked", "true",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((checkObject["message"] as? String)?.contains("checkbox or radio") == true)
 
         let clickTranscript: [String: Any] = [
             "transcriptID": "click-transcript",
@@ -1116,6 +1212,8 @@ final class ZeroThreeSmokeTests: XCTestCase {
             .appendingPathComponent("03-workflow-selector-wait-resume-\(UUID().uuidString)")
         let clickWorkflowLog = directory.appendingPathComponent("click-workflow-runs.jsonl")
         let fillWorkflowLog = directory.appendingPathComponent("fill-workflow-runs.jsonl")
+        let selectWorkflowLog = directory.appendingPathComponent("select-workflow-runs.jsonl")
+        let checkWorkflowLog = directory.appendingPathComponent("check-workflow-runs.jsonl")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -1223,6 +1321,100 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
         XCTAssertTrue((fillObject["message"] as? String)?.contains("text field") == true)
+
+        let selectTranscript: [String: Any] = [
+            "transcriptID": "selector-select-transcript",
+            "operation": "wait-browser-selector",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": baseExecution.merging([
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": "select[name=\"country\"]",
+                    "verification": [
+                        "ok": true,
+                        "code": "selector_matched",
+                        "selector": "select[name=\"country\"]",
+                        "state": "visible",
+                        "tagName": "select",
+                        "disabled": false
+                    ]
+                ]
+            ]) { _, new in new }
+        ]
+        try writeJSONObjectLine(selectTranscript, to: selectWorkflowLog)
+
+        let selectResume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", selectWorkflowLog.path,
+            "--operation", "wait-browser-selector",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(selectResume.status, 0, selectResume.stderr)
+        let selectObject = try decodeJSONObject(selectResume.stdout)
+        XCTAssertEqual(selectObject["status"] as? String, "completed")
+        XCTAssertEqual(selectObject["nextArguments"] as? [String], [
+            "03", "browser", "select",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "select[name=\"country\"]",
+            "--value", "Describe value",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((selectObject["message"] as? String)?.contains("select control") == true)
+
+        let checkTranscript: [String: Any] = [
+            "transcriptID": "selector-check-transcript",
+            "operation": "wait-browser-selector",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": baseExecution.merging([
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tabID": "page-1",
+                    "selector": "input[name=\"subscribe\"]",
+                    "verification": [
+                        "ok": true,
+                        "code": "selector_matched",
+                        "selector": "input[name=\"subscribe\"]",
+                        "state": "visible",
+                        "tagName": "input",
+                        "inputType": "checkbox",
+                        "disabled": false,
+                        "readOnly": false
+                    ]
+                ]
+            ]) { _, new in new }
+        ]
+        try writeJSONObjectLine(checkTranscript, to: checkWorkflowLog)
+
+        let checkResume = try runZeroThree([
+            "workflow",
+            "resume",
+            "--workflow-log", checkWorkflowLog.path,
+            "--operation", "wait-browser-selector",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(checkResume.status, 0, checkResume.stderr)
+        let checkObject = try decodeJSONObject(checkResume.stdout)
+        XCTAssertEqual(checkObject["status"] as? String, "completed")
+        XCTAssertEqual(checkObject["nextArguments"] as? [String], [
+            "03", "browser", "check",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--selector", "input[name=\"subscribe\"]",
+            "--checked", "true",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((checkObject["message"] as? String)?.contains("checkbox or radio") == true)
     }
 
     func testWorkflowResumeSuggestsDOMInspectionAfterBrowserTextWait() throws {
