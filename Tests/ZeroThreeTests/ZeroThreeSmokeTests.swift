@@ -57,6 +57,9 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.fillFormField"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.fillFormField"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.fillFormField"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["browser.selectOption"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.selectOption"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.selectOption"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["browser.clickElement"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.clickElement"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.clickElement"]?["mutates"] as? Bool, true)
@@ -320,6 +323,34 @@ final class ZeroThreeSmokeTests: XCTestCase {
             "--id", "page-1",
             "--selector", "input[name=\"q\"]",
             "--text", "search text",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
+        let select = try runZeroThree([
+            "workflow",
+            "preflight",
+            "--operation", "select-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "select[name=\"country\"]",
+            "--value", "ca",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(select.status, 0, select.stderr)
+        let selectObject = try decodeJSONObject(select.stdout)
+        let selectBlockers = try XCTUnwrap(selectObject["blockers"] as? [String])
+        XCTAssertEqual(selectObject["operation"] as? String, "select-browser")
+        XCTAssertEqual(selectObject["risk"] as? String, "medium")
+        XCTAssertEqual(selectObject["mutates"] as? Bool, true)
+        XCTAssertTrue(selectBlockers.isEmpty)
+        XCTAssertEqual(selectObject["nextArguments"] as? [String], [
+            "03", "browser", "select",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "select[name=\"country\"]",
+            "--value", "ca",
             "--allow-risk", "medium",
             "--reason", "Describe intent"
         ])
@@ -1595,6 +1626,11 @@ final class ZeroThreeSmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.selectOption"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.clickElement"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -2105,6 +2141,159 @@ final class ZeroThreeSmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "value_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "filled")
+    }
+
+    func testBrowserSelectSetsOptionWithPolicyVerificationAndRedactedAudit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("03-browser-select-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let selectPayload: [String: Any] = [
+            "ok": true,
+            "code": "selected",
+            "message": "The requested select option was selected.",
+            "selector": "select[name='country']",
+            "tagName": "select",
+            "disabled": false,
+            "optionCount": 3,
+            "selectedIndex": 2,
+            "selectedValueLength": 2,
+            "selectedLabelLength": 6,
+            "matched": true
+        ]
+        let selectData = try JSONSerialization.data(withJSONObject: selectPayload, options: [.sortedKeys])
+        let selectJSONString = String(decoding: selectData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": selectJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Profile Page",
+            "url": "https://example.com/profile",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runZeroThree([
+            "browser",
+            "select",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "select[name='country']",
+            "--value", "ca",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runZeroThree([
+            "browser",
+            "select",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "select[name='country']",
+            "--value", "ca",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "choose country"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.selectOption")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["selector"] as? String, "select[name='country']")
+        XCTAssertEqual(object["requestedValueLength"] as? Int, 2)
+        XCTAssertEqual(object["requestedValueDigest"] as? String, "6959097001d10501ac7d54c0bdb8db61420f658f2922cc26e46d536119a31126")
+        XCTAssertNil(object["requestedLabelLength"])
+        XCTAssertEqual(object["targetTagName"] as? String, "select")
+        XCTAssertEqual(object["targetDisabled"] as? Bool, false)
+        XCTAssertEqual(object["optionCount"] as? Int, 3)
+        XCTAssertEqual(object["selectedIndex"] as? Int, 2)
+        XCTAssertEqual(object["selectedValueLength"] as? Int, 2)
+        XCTAssertEqual(object["selectedLabelLength"] as? Int, 6)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "option_selected")
+        XCTAssertNil(object["value"])
+        XCTAssertNil(object["label"])
+
+        let deniedAudit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.select",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.selectOption")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["formSelector"] as? String, "select[name='country']")
+        XCTAssertEqual(deniedBrowserTab["formTextLength"] as? Int, 2)
+        XCTAssertEqual(deniedBrowserTab["formTextDigest"] as? String, "6959097001d10501ac7d54c0bdb8db61420f658f2922cc26e46d536119a31126")
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runZeroThree([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.select",
+            "--code", "selected",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.select")
+        XCTAssertEqual(entry["action"] as? String, "browser.selectOption")
+        XCTAssertEqual(entry["reason"] as? String, "choose country")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Profile Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/profile")
+        XCTAssertEqual(browserTab["formSelector"] as? String, "select[name='country']")
+        XCTAssertEqual(browserTab["formTextLength"] as? Int, 2)
+        XCTAssertEqual(browserTab["formTextDigest"] as? String, "6959097001d10501ac7d54c0bdb8db61420f658f2922cc26e46d536119a31126")
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "option_selected")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "selected")
     }
 
     func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {
