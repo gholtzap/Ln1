@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -87,6 +87,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation tail-file --path ~/Desktop/a.txt --max-characters 4096
 .build/debug/Ln1 workflow preflight --operation read-file-lines --path ~/Desktop/a.txt --start-line 40 --line-count 20 --max-line-characters 240
 .build/debug/Ln1 workflow preflight --operation read-file-json --path ~/Desktop/config.json --pointer /services/0 --max-depth 3 --max-items 20
+.build/debug/Ln1 workflow preflight --operation read-file-plist --path ~/Library/Preferences/com.example.app.plist --pointer /RecentItems/0 --max-depth 3 --max-items 20
 .build/debug/Ln1 workflow preflight --operation write-file --path ~/Desktop/a.txt --text "bounded text" --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation append-file --path ~/Desktop/a.txt --text "\nnext note" --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation list-files --path ~/Desktop --depth 1 --limit 50
@@ -150,6 +151,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 `read-file-lines` is a medium-risk non-mutating workflow operation for bounded, numbered UTF-8 file line ranges. It validates a readable regular file within `--max-file-bytes`, runs `files read-lines` with explicit medium-risk approval and `--start-line`, `--line-count`, and `--max-line-characters` bounds, and `workflow resume` suggests a checksum dry-run so subsequent steps can verify the file has not changed.
 
 `read-file-json` is a medium-risk non-mutating workflow operation for bounded typed JSON reads. It validates a readable regular file within `--max-file-bytes`, runs `files read-json` with explicit medium-risk approval and optional `--pointer`, `--max-depth`, `--max-items`, and `--max-string-characters` bounds, and `workflow resume` suggests a checksum dry-run so subsequent steps can verify the file has not changed.
+
+`read-file-plist` is a medium-risk non-mutating workflow operation for bounded typed property list reads. It validates a readable regular file within `--max-file-bytes`, runs `files read-plist` with explicit medium-risk approval and optional `--pointer`, `--max-depth`, `--max-items`, and `--max-string-characters` bounds, and `workflow resume` suggests a checksum dry-run so subsequent steps can verify the file has not changed.
 
 `write-file` is a medium-risk mutating workflow operation for UTF-8 file text writes. It validates the destination parent directory, requires `--text`, refuses to replace existing files unless `--overwrite` is passed, runs `files write-text` with explicit medium-risk approval and a non-placeholder reason, and `workflow resume` suggests inspecting the written file metadata after verification.
 
