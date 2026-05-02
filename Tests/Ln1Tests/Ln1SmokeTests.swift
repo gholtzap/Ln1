@@ -487,6 +487,49 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightSearchFilesForwardsBoundedSearchOptions() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-search-preflight-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "search-files",
+            "--path", directory.path,
+            "--query", "Needle",
+            "--depth", "3",
+            "--limit", "25",
+            "--max-file-bytes", "1000",
+            "--max-snippet-characters", "80",
+            "--max-matches-per-file", "2",
+            "--include-hidden",
+            "--case-sensitive"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "search-files")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "search",
+            "--path", directory.path,
+            "--query", "Needle",
+            "--depth", "3",
+            "--limit", "25",
+            "--max-file-bytes", "1000",
+            "--max-snippet-characters", "80",
+            "--max-matches-per-file", "2",
+            "--include-hidden",
+            "--case-sensitive"
+        ])
+    }
+
     func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-browser-action-\(UUID().uuidString)")
@@ -1487,6 +1530,45 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(preflight["canProceed"] as? Bool, true)
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutSearchingFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next search \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "search-files",
+            "--path", directory.path,
+            "--query", "needle",
+            "--depth", "2",
+            "--limit", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "search-files")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "search",
+            "--path", directory.path,
+            "--query", "needle",
+            "--depth", "2",
+            "--limit", "10",
+            "--max-file-bytes", "1048576",
+            "--max-snippet-characters", "240",
+            "--max-matches-per-file", "20"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, false)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1867,6 +1949,55 @@ final class Ln1SmokeTests: XCTestCase {
         ])
         XCTAssertEqual(execution["exitCode"] as? Int, 0)
         XCTAssertTrue((entries.first?["path"] as? String)?.hasSuffix("/hello.txt") == true)
+    }
+
+    func testWorkflowRunExecutesNonMutatingFileSearchAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-search-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("alpha.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "first\nneedle here\nlast".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "search-files",
+            "--path", directory.path,
+            "--query", "needle",
+            "--depth", "1",
+            "--limit", "10",
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let matches = try XCTUnwrap(outputJSON["matches"] as? [[String: Any]])
+        let firstFile = try XCTUnwrap(matches.first?["file"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "search-files")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "search",
+            "--path", directory.path,
+            "--query", "needle",
+            "--depth", "1",
+            "--limit", "10",
+            "--max-file-bytes", "1048576",
+            "--max-snippet-characters", "240",
+            "--max-matches-per-file", "20"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["query"] as? String, "needle")
+        XCTAssertEqual(firstFile["name"] as? String, "alpha.txt")
     }
 
     func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
@@ -2863,6 +2994,78 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("file listing completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsInspectAfterSearchFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-search-files-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("alpha.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "search-files-transcript",
+            "operation": "search-files",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "search",
+                    "--path", directory.path,
+                    "--query", "needle",
+                    "--depth", "2",
+                    "--limit", "10"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "root": [
+                        "path": directory.path,
+                        "kind": "directory"
+                    ],
+                    "matches": [
+                        [
+                            "file": [
+                                "path": fileURL.path,
+                                "kind": "regularFile",
+                                "name": "alpha.txt"
+                            ],
+                            "matchedName": false,
+                            "contentMatches": [
+                                [
+                                    "lineNumber": 2,
+                                    "text": "needle"
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "search-files",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "search-files")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-file",
+            "--path", fileURL.path,
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file search completed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
