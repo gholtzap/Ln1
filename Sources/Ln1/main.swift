@@ -1433,6 +1433,24 @@ struct FileOperationResult: Codable {
     let auditLogPath: String
 }
 
+struct FileTextWriteResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let path: String
+    let created: Bool
+    let overwritten: Bool
+    let previous: FileAuditTarget
+    let current: FileRecord
+    let writtenLength: Int
+    let writtenBytes: Int
+    let writtenDigest: String
+    let verification: FileOperationVerification
+    let message: String
+    let auditID: String
+    let auditLogPath: String
+}
+
 struct DirectoryOperationResult: Codable {
     let ok: Bool
     let action: String
@@ -6925,6 +6943,15 @@ final class Ln1CLI {
                 maxFileBytes: maxFileBytes
             )
             try writeJSON(result)
+        case "write-text":
+            let text = try requiredOption("--text")
+            let overwrite = flag("--overwrite")
+            let result = try writeFileText(
+                text,
+                to: requestedFileURL(),
+                overwrite: overwrite
+            )
+            try writeJSON(result)
         case "wait":
             let expectedExists = option("--exists").map(parseBool) ?? true
             let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
@@ -7733,6 +7760,177 @@ final class Ln1CLI {
             ok: true,
             code: "metadata_matched",
             message: "destination exists and size matches source"
+        )
+    }
+
+    private func writeFileText(
+        _ text: String,
+        to url: URL,
+        overwrite: Bool
+    ) throws -> FileTextWriteResult {
+        let action = "filesystem.writeText"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let previousRecord = try? fileRecord(for: url)
+        var previousTarget = previousRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: url)
+        var currentTarget = previousTarget
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.write-text",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: previousTarget,
+                fileDestination: currentTarget,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let previousRecord {
+                previousTarget = fileAuditTarget(record: previousRecord, exists: true)
+                currentTarget = previousTarget
+
+                guard overwrite else {
+                    let message = "destination already exists at \(url.path); pass --overwrite to replace it"
+                    try writeAudit(ok: false, code: "destination_exists", message: message)
+                    throw CommandError(description: message)
+                }
+
+                guard previousRecord.kind == "regularFile" else {
+                    let message = "filesystem.writeText currently supports regular files only"
+                    try writeAudit(ok: false, code: "unsupported_destination_kind", message: message)
+                    throw CommandError(description: message)
+                }
+
+                guard previousRecord.writable else {
+                    let message = "destination file is not writable at \(url.path)"
+                    try writeAudit(ok: false, code: "destination_unwritable", message: message)
+                    throw CommandError(description: message)
+                }
+            }
+
+            let parentURL = url.deletingLastPathComponent()
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                let message = "destination parent directory does not exist at \(parentURL.path)"
+                try writeAudit(ok: false, code: "destination_parent_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard FileManager.default.isWritableFile(atPath: parentURL.path) else {
+                let message = "destination parent directory is not writable at \(parentURL.path)"
+                try writeAudit(ok: false, code: "destination_parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            try text.write(to: url, atomically: true, encoding: .utf8)
+
+            let currentRecord = try fileRecord(for: url)
+            currentTarget = fileAuditTarget(record: currentRecord, exists: true)
+            let writtenDigest = sha256Digest(text)
+            let writtenBytes = Data(text.utf8).count
+            verification = try verifyWrittenTextFile(
+                at: url,
+                expectedByteLength: writtenBytes,
+                expectedDigest: writtenDigest
+            )
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "file text write verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let created = previousRecord == nil
+            let message = created
+                ? "Wrote text to new file \(url.path)."
+                : "Overwrote text in \(url.path)."
+            try writeAudit(ok: true, code: created ? "created_text_file" : "overwrote_text_file", message: message)
+
+            return FileTextWriteResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                path: url.path,
+                created: created,
+                overwritten: !created,
+                previous: previousTarget,
+                current: currentRecord,
+                writtenLength: text.count,
+                writtenBytes: writtenBytes,
+                writtenDigest: writtenDigest,
+                verification: verification!,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func verifyWrittenTextFile(
+        at url: URL,
+        expectedByteLength: Int,
+        expectedDigest: String
+    ) throws -> FileOperationVerification {
+        let data = try Data(contentsOf: url)
+        guard data.count == expectedByteLength else {
+            return FileOperationVerification(
+                ok: false,
+                code: "size_mismatch",
+                message: "written file byte length does not match requested text byte length"
+            )
+        }
+
+        guard let string = String(data: data, encoding: .utf8) else {
+            return FileOperationVerification(
+                ok: false,
+                code: "encoding_mismatch",
+                message: "written file is not valid UTF-8"
+            )
+        }
+
+        guard sha256Digest(string) == expectedDigest else {
+            return FileOperationVerification(
+                ok: false,
+                code: "digest_mismatch",
+                message: "written file text digest does not match requested text digest"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "text_matched",
+            message: "written file contains text with the requested byte length and digest"
         )
     }
 
@@ -14299,7 +14497,7 @@ final class Ln1CLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
-        case "filesystem.readText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
+        case "filesystem.readText", "filesystem.writeText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
         default:
             return "unknown"
@@ -14386,6 +14584,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "filesystem.compare", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.plan", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.readText", domain: "filesystem", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "filesystem.writeText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
@@ -15803,6 +16002,7 @@ final class Ln1CLI {
           Ln1 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N]
           Ln1 files read-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
+          Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
           Ln1 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
           Ln1 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
@@ -15856,6 +16056,7 @@ final class Ln1CLI {
           - `task` stores and reads task-scoped memory as medium-risk local persistence with sensitive-summary redaction.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files read-text` returns bounded UTF-8 text from one regular file only after medium-risk approval and audits metadata without storing text.
+          - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs.
           - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
           - `files watch` waits for created, deleted, or modified file metadata events under a path and returns normalized event records.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
@@ -16304,6 +16505,7 @@ final class Ln1CLI {
 
         if kind == "directory", writable {
             actions.append(FileAction(name: "filesystem.createDirectory", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.writeText", risk: "medium", mutates: true))
         }
 
         if kind == "regularFile", readable {
@@ -16315,6 +16517,10 @@ final class Ln1CLI {
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.rollbackMove", risk: "medium", mutates: true))
+        }
+
+        if kind == "regularFile", writable {
+            actions.append(FileAction(name: "filesystem.writeText", risk: "medium", mutates: true))
         }
 
         return actions

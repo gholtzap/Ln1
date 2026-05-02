@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files read-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files read-text`, `files write-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -402,7 +402,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/Ln1 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.readText`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.readText`, `filesystem.writeText`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -419,6 +419,14 @@ Read bounded UTF-8 text from one known regular file:
 ```
 
 `filesystem.readText` is a medium-risk non-mutating read because file contents may be private. It requires explicit policy approval, refuses directories and files above `--max-file-bytes`, returns at most `--max-characters` of UTF-8 text, and writes an audit record containing only file metadata and outcome details, not the text itself.
+
+Create one UTF-8 text file through policy, audit, and verification:
+
+```sh
+.build/debug/Ln1 files write-text --path ~/Documents/agent-note.txt --text "Prepared by Ln1" --allow-risk medium --reason "Create a structured note"
+```
+
+`filesystem.writeText` is a medium-risk mutating action. It creates missing files by default, refuses to replace existing files unless `--overwrite` is passed, requires a writable parent directory, verifies the written file by byte length and SHA-256 digest, and audits only file metadata, policy, and verification details.
 
 Wait for a path to appear or disappear with bounded polling:
 
