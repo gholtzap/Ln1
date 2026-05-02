@@ -40,6 +40,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.readJSON"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.readJSON"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.readJSON"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.readPropertyList"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.readPropertyList"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.readPropertyList"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.writeText"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["mutates"] as? Bool, true)
@@ -8250,6 +8253,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.tailText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readLines" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readJSON" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readPropertyList" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.writeText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.appendText" })
     }
@@ -8703,6 +8707,124 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "read_json")
+    }
+
+    func testFilesReadPlistReturnsBoundedTypedTreeAndAuditsMetadataOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-read-plist-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("config.plist")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let plist: [String: Any] = [
+            "enabled": true,
+            "nested": [
+                "target": [
+                    ["name": "skip"],
+                    [
+                        "blob": Data([1, 2, 3]),
+                        "secret": "abcdef",
+                        "visible": true
+                    ]
+                ]
+            ]
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .binary,
+            options: 0
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: file)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "files",
+            "read-plist",
+            "--path", file.path,
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "files",
+            "read-plist",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--pointer", "/nested/target/1",
+            "--max-depth", "2",
+            "--max-items", "5",
+            "--max-string-characters", "4",
+            "--max-file-bytes", "500",
+            "--audit-log", auditLog.path,
+            "--reason", "plist config test"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let resultFile = try XCTUnwrap(object["file"] as? [String: Any])
+        let value = try XCTUnwrap(object["value"] as? [String: Any])
+        let entries = try XCTUnwrap(value["entries"] as? [[String: Any]])
+        let blobEntry = try XCTUnwrap(entries.first { $0["key"] as? String == "blob" })
+        let blobValue = try XCTUnwrap(blobEntry["value"] as? [String: Any])
+        let secretEntry = try XCTUnwrap(entries.first { $0["key"] as? String == "secret" })
+        let secretValue = try XCTUnwrap(secretEntry["value"] as? [String: Any])
+        let visibleEntry = try XCTUnwrap(entries.first { $0["key"] as? String == "visible" })
+        let visibleValue = try XCTUnwrap(visibleEntry["value"] as? [String: Any])
+
+        XCTAssertEqual(resultFile["path"] as? String, file.path)
+        XCTAssertEqual(resultFile["kind"] as? String, "regularFile")
+        XCTAssertEqual(object["pointer"] as? String, "/nested/target/1")
+        XCTAssertEqual(object["found"] as? Bool, true)
+        XCTAssertEqual(object["valueType"] as? String, "dictionary")
+        XCTAssertEqual(object["format"] as? String, "binary")
+        XCTAssertEqual(object["truncated"] as? Bool, true)
+        XCTAssertEqual(object["maxDepth"] as? Int, 2)
+        XCTAssertEqual(object["maxItems"] as? Int, 5)
+        XCTAssertEqual(object["maxStringCharacters"] as? Int, 4)
+        XCTAssertEqual(object["byteLength"] as? Int, data.count)
+        XCTAssertEqual((object["digest"] as? String)?.count, 64)
+        XCTAssertEqual(value["type"] as? String, "dictionary")
+        XCTAssertEqual(value["count"] as? Int, 3)
+        XCTAssertEqual(blobValue["type"] as? String, "data")
+        XCTAssertEqual(blobValue["count"] as? Int, 3)
+        XCTAssertEqual((blobValue["dataDigest"] as? String)?.count, 64)
+        XCTAssertEqual(secretValue["type"] as? String, "string")
+        XCTAssertEqual(secretValue["value"] as? String, "abcd")
+        XCTAssertEqual(secretValue["count"] as? Int, 6)
+        XCTAssertEqual(secretValue["truncated"] as? Bool, true)
+        XCTAssertEqual(visibleValue["type"] as? String, "boolean")
+        XCTAssertEqual(visibleValue["value"] as? Bool, true)
+        XCTAssertNil(object["text"])
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.read-plist",
+            "--code", "read_plist",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let auditEntries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(auditEntries.first)
+        let fileSource = try XCTUnwrap(entry["fileSource"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.read-plist")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.readPropertyList")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "plist config test")
+        XCTAssertEqual(fileSource["path"] as? String, file.path)
+        XCTAssertEqual(fileSource["kind"] as? String, "regularFile")
+        XCTAssertEqual(fileSource["sizeBytes"] as? Int, data.count)
+        XCTAssertNil(entry["text"])
+        XCTAssertNil(entry["value"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_plist")
     }
 
     func testFilesWriteTextCreatesFileWithPolicyAuditAndVerification() throws {

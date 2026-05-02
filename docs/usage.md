@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -353,7 +353,7 @@ Filter audit records before applying the limit:
 .build/debug/Ln1 audit --command files.move --code moved --limit 10
 ```
 
-`--command` matches audit command names such as `perform`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_dom`.
+`--command` matches audit command names such as `perform`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_dom`.
 
 ## Track Task Memory
 
@@ -417,7 +417,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/Ln1 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.readText`, `filesystem.tailText`, `filesystem.readLines`, `filesystem.readJSON`, `filesystem.writeText`, `filesystem.appendText`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.readText`, `filesystem.tailText`, `filesystem.readLines`, `filesystem.readJSON`, `filesystem.readPropertyList`, `filesystem.writeText`, `filesystem.appendText`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -458,6 +458,14 @@ Read a bounded typed tree from a JSON file, optionally at a JSON Pointer:
 ```
 
 `filesystem.readJSON` is a medium-risk non-mutating read for structured JSON files. It refuses directories and files above `--max-file-bytes`, parses UTF-8 JSON, returns typed object/array/scalar nodes capped by `--max-depth`, `--max-items`, and `--max-string-characters`, and writes an audit record containing only file metadata and outcome details, not JSON values.
+
+Read a bounded typed tree from a macOS property list:
+
+```sh
+.build/debug/Ln1 files read-plist --path ~/Library/Preferences/com.example.app.plist --pointer /RecentItems/0 --max-depth 3 --max-items 20 --allow-risk medium --reason "Inspect selected preference value"
+```
+
+`filesystem.readPropertyList` is a medium-risk non-mutating read for XML, binary, or OpenStep property lists. It refuses directories and files above `--max-file-bytes`, returns typed dictionary/array/scalar nodes capped by `--max-depth`, `--max-items`, and `--max-string-characters`, reports data blobs by byte count and digest, and writes an audit record containing only file metadata and outcome details, not property list values.
 
 Create one UTF-8 text file through policy, audit, and verification:
 
