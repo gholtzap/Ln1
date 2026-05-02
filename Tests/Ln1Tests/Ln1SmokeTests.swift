@@ -271,6 +271,33 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(object["nextCommand"] as? String)
     }
 
+    func testWorkflowPreflightInspectClipboardReturnsMetadataCommand() throws {
+        let pasteboardName = "Ln1-workflow-inspect-clipboard-preflight-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        pasteboard.clearContents()
+        defer { pasteboard.clearContents() }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-clipboard",
+            "--pasteboard", pasteboardName
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-clipboard")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "clipboard", "state",
+            "--pasteboard", pasteboardName
+        ])
+    }
+
     func testWorkflowPreflightMoveFileUsesFilesystemPlanChecks() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-\(UUID().uuidString)")
@@ -1569,6 +1596,36 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(preflight["canProceed"] as? Bool, true)
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutInspectingClipboard() throws {
+        let pasteboardName = "Ln1-workflow-inspect-clipboard-next-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        pasteboard.clearContents()
+        defer { pasteboard.clearContents() }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "inspect-clipboard",
+            "--pasteboard", pasteboardName
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-clipboard")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "clipboard", "state",
+            "--pasteboard", pasteboardName
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, false)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1724,6 +1781,45 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["pasteboard"] as? String, pasteboardName)
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["changedFrom"] as? Int, changedFrom)
+        XCTAssertNil(outputJSON["text"])
+    }
+
+    func testWorkflowRunExecutesNonMutatingClipboardInspectAndCapturesJSON() throws {
+        let pasteboardName = "Ln1-workflow-inspect-clipboard-run-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        pasteboard.clearContents()
+        pasteboard.setString("clipboard metadata", forType: .string)
+        defer { pasteboard.clearContents() }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-clipboard",
+            "--pasteboard", pasteboardName,
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-clipboard")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "clipboard", "state",
+            "--pasteboard", pasteboardName
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["pasteboard"] as? String, pasteboardName)
+        XCTAssertEqual(outputJSON["hasString"] as? Bool, true)
+        XCTAssertEqual(outputJSON["stringLength"] as? Int, 18)
         XCTAssertNil(outputJSON["text"])
     }
 
@@ -3184,6 +3280,60 @@ final class Ln1SmokeTests: XCTestCase {
             "--pasteboard", "Ln1-test-pasteboard"
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("plain text metadata") == true)
+    }
+
+    func testWorkflowResumeSuggestsClipboardReadAfterClipboardInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-clipboard-inspect-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let pasteboardName = "Ln1-test-pasteboard-inspect"
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-clipboard-transcript",
+            "operation": "inspect-clipboard",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "clipboard", "state",
+                    "--pasteboard", pasteboardName
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "pasteboard": pasteboardName,
+                    "changeCount": 7,
+                    "hasString": true,
+                    "stringLength": 9,
+                    "stringDigest": String(repeating: "b", count: 64)
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-clipboard",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-clipboard")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "clipboard", "read-text",
+            "--allow-risk", "medium",
+            "--max-characters", "4096",
+            "--reason", "Describe intent",
+            "--pasteboard", pasteboardName
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("clipboard inspection found plain text") == true)
     }
 
     func testWorkflowResumeSuggestsBrowserActionsAfterSelectorWait() throws {
