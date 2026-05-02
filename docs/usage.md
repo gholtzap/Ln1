@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -83,6 +83,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
 .build/debug/Ln1 workflow preflight --operation inspect-clipboard
 .build/debug/Ln1 workflow preflight --operation inspect-file --path ~/Desktop/a.txt
+.build/debug/Ln1 workflow preflight --operation read-file --path ~/Desktop/a.txt --max-characters 4096
 .build/debug/Ln1 workflow preflight --operation list-files --path ~/Desktop --depth 1 --limit 50
 .build/debug/Ln1 workflow preflight --operation search-files --path ~/Documents --query invoice --depth 4 --limit 50
 .build/debug/Ln1 workflow preflight --operation create-directory --path ~/Desktop/Archive --allow-risk medium
@@ -136,6 +137,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 `compare-files` is a non-mutating workflow operation for bounded file equivalence checks. It validates both paths as readable regular files within `--max-file-bytes`, then runs `files compare` to report size and digest equality without exposing file contents. After a completed compare, `workflow resume` suggests a metadata inspection of the right-side file.
 
 `inspect-file` is a non-mutating workflow operation for current filesystem metadata. It wraps `files stat` in workflow preflight/run logging, then `workflow resume` suggests either listing a directory or dry-running a checksum workflow for a readable regular file.
+
+`read-file` is a medium-risk non-mutating workflow operation for bounded UTF-8 file text. It validates a readable regular file within `--max-file-bytes`, runs `files read-text` with explicit medium-risk approval, and `workflow resume` suggests a checksum dry-run so subsequent steps can verify the file has not changed.
 
 `list-files` is a non-mutating workflow operation for bounded directory inventories. It validates that the path is a readable directory, forwards `--depth`, `--limit`, and `--include-hidden`, and `workflow resume` suggests a dry-run `inspect-file` workflow for the first listed path or the empty directory itself.
 

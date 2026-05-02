@@ -484,6 +484,44 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightReadFileValidatesBoundedTextRead() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-read-preflight-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello file".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "read-file",
+            "--path", file.path,
+            "--max-characters", "5",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "read-file")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "read-text",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--max-characters", "5",
+            "--max-file-bytes", "100",
+            "--reason", "Inspect file text",
+            "--audit-log", auditLog.path
+        ])
+    }
+
     func testWorkflowPreflightListFilesValidatesReadableDirectory() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-list-preflight-\(UUID().uuidString)")
@@ -1826,6 +1864,57 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNil(outputJSON["text"])
     }
 
+    func testWorkflowRunExecutesNonMutatingFileReadAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-read-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("source.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "workflow file text".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "read-file",
+            "--path", file.path,
+            "--max-characters", "8",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path,
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let outputFile = try XCTUnwrap(outputJSON["file"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "read-file")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "read-text",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--max-characters", "8",
+            "--max-file-bytes", "100",
+            "--reason", "Inspect file text",
+            "--audit-log", auditLog.path
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputFile["path"] as? String, file.path)
+        XCTAssertEqual(outputJSON["text"] as? String, "workflow")
+        XCTAssertEqual(outputJSON["textLength"] as? Int, 18)
+        XCTAssertEqual(outputJSON["truncated"] as? Bool, true)
+    }
+
     func testWorkflowRunExecutesNonMutatingFileWatchAndCapturesJSON() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-run-watch-\(UUID().uuidString)")
@@ -3032,6 +3121,66 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("file inspection found") == true)
+    }
+
+    func testWorkflowResumeSuggestsChecksumAfterReadFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-read-file-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "read-file-transcript",
+            "operation": "read-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "read-text",
+                    "--path", fileURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "Inspect file text"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "file": [
+                        "path": fileURL.path,
+                        "kind": "regularFile",
+                        "readable": true
+                    ],
+                    "text": "hello",
+                    "textLength": 5,
+                    "textDigest": String(repeating: "c", count: 64),
+                    "truncated": false
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "read-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "read-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "checksum-file",
+            "--path", fileURL.path,
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file text read completed") == true)
     }
 
     func testWorkflowResumeSuggestsInspectAfterListFiles() throws {

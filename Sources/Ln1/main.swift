@@ -2079,6 +2079,8 @@ final class Ln1CLI {
             return workflowPreflightInspectClipboard()
         case "inspect-file":
             return workflowPreflightInspectFile()
+        case "read-file":
+            return workflowPreflightReadFile()
         case "list-files":
             return workflowPreflightListFiles()
         case "search-files":
@@ -2100,7 +2102,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, inspect-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, inspect-file, read-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
         }
     }
 
@@ -3938,6 +3940,122 @@ final class Ln1CLI {
         )
     }
 
+    private func workflowPreflightReadFile() -> WorkflowPreflight {
+        var prerequisites: [DoctorCheck] = []
+        let path = option("--path")
+        var maxCharacters = 16_384
+        var maxFileBytes = 1_048_576
+        var parsedMaxFileBytes = true
+
+        if let rawMaxCharacters = option("--max-characters") {
+            if let parsed = Int(rawMaxCharacters) {
+                maxCharacters = max(0, parsed)
+            } else {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.fileMaxCharacters",
+                    status: "fail",
+                    required: true,
+                    message: "--max-characters must be an integer.",
+                    remediation: "Pass a non-negative integer with `--max-characters N`."
+                ))
+            }
+        }
+
+        if let rawMaxFileBytes = option("--max-file-bytes") {
+            do {
+                maxFileBytes = try fileMaxBytes(rawMaxFileBytes, optionName: "--max-file-bytes")
+            } catch {
+                parsedMaxFileBytes = false
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.fileMaxBytes",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass a non-negative integer with `--max-file-bytes N`."
+                ))
+            }
+        }
+
+        if let path {
+            let expandedURL = URL(fileURLWithPath: expandedPath(path)).standardizedFileURL
+            do {
+                let record = try fileRecord(for: expandedURL)
+                if record.kind != "regularFile" {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.readRegularFile",
+                        status: "fail",
+                        required: true,
+                        message: "read-file supports regular files only; \(expandedURL.path) is \(record.kind).",
+                        remediation: "Pass a regular UTF-8 file with `--path PATH`."
+                    ))
+                }
+                if !record.readable {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.readReadable",
+                        status: "fail",
+                        required: true,
+                        message: "File is not readable at \(expandedURL.path).",
+                        remediation: "Choose a readable file or adjust filesystem permissions."
+                    ))
+                }
+                if parsedMaxFileBytes, let size = record.sizeBytes, size > maxFileBytes {
+                    prerequisites.append(DoctorCheck(
+                        name: "workflow.readMaxBytes",
+                        status: "fail",
+                        required: true,
+                        message: "File size \(size) exceeds --max-file-bytes \(maxFileBytes).",
+                        remediation: "Raise `--max-file-bytes` intentionally or choose a smaller file."
+                    ))
+                }
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.readPath",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Pass an existing regular UTF-8 file with `--path PATH`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.path",
+                status: "fail",
+                required: true,
+                message: "No path was provided for read-file.",
+                remediation: "Pass `--path PATH`."
+            ))
+        }
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let path {
+            var arguments = [
+                "Ln1", "files", "read-text",
+                "--path", path,
+                "--allow-risk", "medium",
+                "--max-characters", String(maxCharacters),
+                "--max-file-bytes", String(maxFileBytes),
+                "--reason", "Inspect file text"
+            ]
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "read-file",
+            risk: "medium",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
     private func workflowPreflightListFiles() -> WorkflowPreflight {
         var prerequisites: [DoctorCheck] = []
         let path = option("--path")
@@ -4994,6 +5112,13 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "read-file" {
+            return workflowFileReadRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                workflowURL: workflowURL
+            )
+        }
         if latestOperation == "list-files" {
             return workflowFileListRecommendation(
                 outputJSON: outputJSON,
@@ -5146,6 +5271,29 @@ final class Ln1CLI {
                 "--workflow-log", workflowURL.path
             ],
             message: message
+        )
+    }
+
+    private func workflowFileReadRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        let file = outputJSON["file"] as? [String: Any]
+        guard let path = file?["path"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--path") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "Ln1", "workflow", "run",
+                "--operation", "checksum-file",
+                "--path", path,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest file text read completed; dry-run a checksum workflow before depending on unchanged contents."
         )
     }
 
@@ -15635,11 +15783,11 @@ final class Ln1CLI {
           Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           Ln1 policy
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow preflight --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation inspect-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow run --operation control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation inspect-active-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
@@ -15653,7 +15801,7 @@ final class Ln1CLI {
           Ln1 task show --task-id ID --allow-risk medium [--limit N] [--memory-log PATH]
           Ln1 files stat --path PATH
           Ln1 files list --path PATH [--depth N] [--limit N] [--include-hidden]
-          Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-snippet-characters N] [--max-matches-per-file N]
+          Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N]
           Ln1 files read-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
           Ln1 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
