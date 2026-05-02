@@ -28,6 +28,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.watch"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.plan"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.plan"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.readText"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.readText"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.readText"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.move"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.move"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.createDirectory"]?["domain"] as? String, "filesystem")
@@ -7207,6 +7210,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual((object["entries"] as? [Any])?.count, 0)
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.stat" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.checksum" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readText" })
     }
 
     func testFilesListReturnsDirectoryEntriesWithoutHiddenFilesByDefault() throws {
@@ -7328,6 +7332,79 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(lines.count, 2)
         XCTAssertEqual(lines.first?["lineNumber"] as? Int, 1)
         XCTAssertEqual(lines.last?["lineNumber"] as? Int, 2)
+    }
+
+    func testFilesReadTextRequiresMediumRiskAndAuditsMetadataOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-read-text-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello file contents".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "files",
+            "read-text",
+            "--path", file.path,
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "files",
+            "read-text",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--max-characters", "5",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path,
+            "--reason", "read test file"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let resultFile = try XCTUnwrap(object["file"] as? [String: Any])
+
+        XCTAssertEqual(resultFile["path"] as? String, file.path)
+        XCTAssertEqual(resultFile["kind"] as? String, "regularFile")
+        XCTAssertEqual(object["text"] as? String, "hello")
+        XCTAssertEqual(object["textLength"] as? Int, 19)
+        XCTAssertEqual(object["byteLength"] as? Int, 19)
+        XCTAssertEqual(object["textDigest"] as? String, "cff9e957c7cca67a965799dcca968319fae2fe717f6e83b4519911df53c7331c")
+        XCTAssertEqual(object["truncated"] as? Bool, true)
+        XCTAssertEqual(object["maxCharacters"] as? Int, 5)
+        XCTAssertEqual(object["maxFileBytes"] as? Int, 100)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.read-text",
+            "--code", "read_text",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let fileSource = try XCTUnwrap(entry["fileSource"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.read-text")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.readText")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "read test file")
+        XCTAssertEqual(fileSource["path"] as? String, file.path)
+        XCTAssertEqual(fileSource["kind"] as? String, "regularFile")
+        XCTAssertEqual(fileSource["sizeBytes"] as? Int, 19)
+        XCTAssertNil(entry["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_text")
     }
 
     func testFilesWaitReturnsMatchedExistingFileMetadata() throws {
