@@ -388,6 +388,43 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightCompareFilesValidatesBoundedRegularFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-compare-preflight-\(UUID().uuidString)")
+        let left = directory.appendingPathComponent("left.txt")
+        let right = directory.appendingPathComponent("right.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: left, atomically: true, encoding: .utf8)
+        try "hello".write(to: right, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "compare-files",
+            "--path", left.path,
+            "--to", right.path,
+            "--algorithm", "SHA256",
+            "--max-file-bytes", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "compare-files")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "compare",
+            "--path", left.path,
+            "--to", right.path,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "10"
+        ])
+    }
+
     func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-browser-action-\(UUID().uuidString)")
@@ -1283,6 +1320,45 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(preflight["canProceed"] as? Bool, true)
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutComparingFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next compare \(UUID().uuidString)")
+        let left = directory.appendingPathComponent("left file.txt")
+        let right = directory.appendingPathComponent("right file.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "compare".write(to: left, atomically: true, encoding: .utf8)
+        try "compare".write(to: right, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "compare-files",
+            "--path", left.path,
+            "--to", right.path,
+            "--max-file-bytes", "20"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "compare-files")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "compare",
+            "--path", left.path,
+            "--to", right.path,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "20"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, false)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1533,6 +1609,54 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(execution["exitCode"] as? Int, 0)
         XCTAssertEqual(fileObject["path"] as? String, file.path)
         XCTAssertEqual(outputJSON["digest"] as? String, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+        XCTAssertNil(outputJSON["contents"])
+    }
+
+    func testWorkflowRunExecutesNonMutatingFileCompareAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-compare-\(UUID().uuidString)")
+        let left = directory.appendingPathComponent("left.txt")
+        let right = directory.appendingPathComponent("right.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: left, atomically: true, encoding: .utf8)
+        try "hello".write(to: right, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "compare-files",
+            "--path", left.path,
+            "--to", right.path,
+            "--max-file-bytes", "10",
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let rightObject = try XCTUnwrap(outputJSON["right"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "compare-files")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "compare",
+            "--path", left.path,
+            "--to", right.path,
+            "--algorithm", "sha256",
+            "--max-file-bytes", "10"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(rightObject["path"] as? String, right.path)
+        XCTAssertEqual(outputJSON["matched"] as? Bool, true)
+        XCTAssertEqual(outputJSON["sameDigest"] as? Bool, true)
         XCTAssertNil(outputJSON["contents"])
     }
 
@@ -2348,6 +2472,72 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("file checksum completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsRightStatAfterCompareFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-compare-files-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let leftURL = directory.appendingPathComponent("left.txt")
+        let rightURL = directory.appendingPathComponent("right.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let digest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        let transcript: [String: Any] = [
+            "transcriptID": "compare-files-transcript",
+            "operation": "compare-files",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "compare",
+                    "--path", leftURL.path,
+                    "--to", rightURL.path,
+                    "--algorithm", "sha256",
+                    "--max-file-bytes", "10"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "left": [
+                        "path": leftURL.path,
+                        "kind": "regularFile"
+                    ],
+                    "right": [
+                        "path": rightURL.path,
+                        "kind": "regularFile"
+                    ],
+                    "algorithm": "sha256",
+                    "leftDigest": digest,
+                    "rightDigest": digest,
+                    "sameSize": true,
+                    "sameDigest": true,
+                    "matched": true,
+                    "maxFileBytes": 10
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "compare-files",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "compare-files")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "stat",
+            "--path", rightURL.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file compare matched") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
