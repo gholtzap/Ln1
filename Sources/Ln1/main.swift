@@ -1370,6 +1370,40 @@ struct FilesystemLinesResult: Codable {
     let message: String
 }
 
+struct BoundedJSONProperty: Encodable {
+    let key: String
+    let value: BoundedJSONNode
+}
+
+struct BoundedJSONNode: Encodable {
+    let type: String
+    let value: JSONValue?
+    let entries: [BoundedJSONProperty]?
+    let items: [BoundedJSONNode]?
+    let count: Int?
+    let truncated: Bool
+}
+
+struct FilesystemJSONResult: Encodable {
+    let generatedAt: String
+    let platform: String
+    let file: FileRecord
+    let pointer: String?
+    let found: Bool
+    let valueType: String?
+    let value: BoundedJSONNode?
+    let truncated: Bool
+    let maxDepth: Int
+    let maxItems: Int
+    let maxStringCharacters: Int
+    let maxFileBytes: Int
+    let textDigest: String
+    let byteLength: Int
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct FilesystemWaitResult: Codable {
     let generatedAt: String
     let platform: String
@@ -7455,6 +7489,21 @@ final class Ln1CLI {
                 startLine: startLine,
                 lineCount: lineCount,
                 maxLineCharacters: maxLineCharacters,
+                maxFileBytes: maxFileBytes
+            )
+            try writeJSON(result)
+        case "read-json":
+            let pointer = option("--pointer")
+            let maxDepth = max(0, option("--max-depth").flatMap(Int.init) ?? 4)
+            let maxItems = max(0, option("--max-items").flatMap(Int.init) ?? 50)
+            let maxStringCharacters = max(0, option("--max-string-characters").flatMap(Int.init) ?? 1_024)
+            let maxFileBytes = try fileMaxBytes(option("--max-file-bytes") ?? "1048576", optionName: "--max-file-bytes")
+            let result = try fileJSON(
+                for: requestedFileURL(),
+                pointer: pointer,
+                maxDepth: maxDepth,
+                maxItems: maxItems,
+                maxStringCharacters: maxStringCharacters,
                 maxFileBytes: maxFileBytes
             )
             try writeJSON(result)
@@ -14638,6 +14687,320 @@ final class Ln1CLI {
         }
     }
 
+    private func fileJSON(
+        for url: URL,
+        pointer: String?,
+        maxDepth: Int,
+        maxItems: Int,
+        maxStringCharacters: Int,
+        maxFileBytes: Int
+    ) throws -> FilesystemJSONResult {
+        let action = "filesystem.readJSON"
+        let command = "files.read-json"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var sourceTarget = FileAuditTarget(
+            path: url.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: url.path)
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: command,
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: sourceTarget,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let record = try fileRecord(for: url)
+            sourceTarget = fileAuditTarget(record: record, exists: true)
+
+            guard record.kind == "regularFile" else {
+                let message = "\(action) currently supports regular files only"
+                try writeAudit(ok: false, code: "unsupported_source_kind", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard record.readable else {
+                let message = "source file is not readable at \(url.path)"
+                try writeAudit(ok: false, code: "source_unreadable", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let size = record.sizeBytes, size > maxFileBytes {
+                let message = "file size \(size) exceeds --max-file-bytes \(maxFileBytes)"
+                try writeAudit(ok: false, code: "file_too_large", message: message)
+                throw CommandError(description: message)
+            }
+
+            let data = try Data(contentsOf: url)
+            guard let string = String(data: data, encoding: .utf8) else {
+                let message = "file is not valid UTF-8 text at \(url.path)"
+                try writeAudit(ok: false, code: "unsupported_encoding", message: message)
+                throw CommandError(description: message)
+            }
+
+            let parsed: Any
+            do {
+                parsed = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+            } catch {
+                let message = "file is not valid JSON at \(url.path): \(error.localizedDescription)"
+                try writeAudit(ok: false, code: "invalid_json", message: message)
+                throw CommandError(description: message)
+            }
+
+            let selected = try jsonValue(at: pointer ?? "", in: parsed)
+            var value: BoundedJSONNode?
+            var valueType: String?
+            var truncated = false
+            if selected.found, let selectedValue = selected.value {
+                value = try boundedJSONNode(
+                    from: selectedValue,
+                    depth: 0,
+                    maxDepth: maxDepth,
+                    maxItems: maxItems,
+                    maxStringCharacters: maxStringCharacters,
+                    truncated: &truncated
+                )
+                valueType = value?.type
+            }
+
+            let message: String
+            if selected.found {
+                message = truncated
+                    ? "Read truncated JSON value from \(url.path)."
+                    : "Read JSON value from \(url.path)."
+            } else {
+                message = "JSON pointer was not found in \(url.path)."
+            }
+            try writeAudit(ok: true, code: selected.found ? "read_json" : "json_pointer_missing", message: message)
+
+            return FilesystemJSONResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                file: record,
+                pointer: pointer,
+                found: selected.found,
+                valueType: valueType,
+                value: value,
+                truncated: truncated,
+                maxDepth: maxDepth,
+                maxItems: maxItems,
+                maxStringCharacters: maxStringCharacters,
+                maxFileBytes: maxFileBytes,
+                textDigest: sha256Digest(string),
+                byteLength: data.count,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func jsonValue(at pointer: String, in root: Any) throws -> (found: Bool, value: Any?) {
+        guard !pointer.isEmpty else {
+            return (true, root)
+        }
+        guard pointer.hasPrefix("/") else {
+            throw CommandError(description: "--pointer must be an empty string or a JSON Pointer starting with '/'")
+        }
+
+        let tokens = pointer
+            .dropFirst()
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { token in
+                token.replacingOccurrences(of: "~1", with: "/")
+                    .replacingOccurrences(of: "~0", with: "~")
+            }
+        var current = root
+
+        for token in tokens {
+            if let object = current as? [String: Any] {
+                guard let next = object[token] else {
+                    return (false, nil)
+                }
+                current = next
+                continue
+            }
+
+            if let array = current as? [Any] {
+                guard let index = Int(token), index >= 0, index < array.count else {
+                    return (false, nil)
+                }
+                current = array[index]
+                continue
+            }
+
+            return (false, nil)
+        }
+
+        return (true, current)
+    }
+
+    private func boundedJSONNode(
+        from value: Any,
+        depth: Int,
+        maxDepth: Int,
+        maxItems: Int,
+        maxStringCharacters: Int,
+        truncated: inout Bool
+    ) throws -> BoundedJSONNode {
+        switch value {
+        case let object as [String: Any]:
+            let keys = object.keys.sorted()
+            guard depth < maxDepth else {
+                let nodeTruncated = !keys.isEmpty
+                truncated = truncated || nodeTruncated
+                return BoundedJSONNode(
+                    type: "object",
+                    value: nil,
+                    entries: nil,
+                    items: nil,
+                    count: keys.count,
+                    truncated: nodeTruncated
+                )
+            }
+
+            let limitedKeys = Array(keys.prefix(maxItems))
+            let nodeTruncated = limitedKeys.count < keys.count
+            truncated = truncated || nodeTruncated
+            let entries = try limitedKeys.map { key -> BoundedJSONProperty in
+                guard let child = object[key] else {
+                    throw CommandError(description: "JSON object changed during bounded encoding")
+                }
+                return BoundedJSONProperty(
+                    key: key,
+                    value: try boundedJSONNode(
+                        from: child,
+                        depth: depth + 1,
+                        maxDepth: maxDepth,
+                        maxItems: maxItems,
+                        maxStringCharacters: maxStringCharacters,
+                        truncated: &truncated
+                    )
+                )
+            }
+            return BoundedJSONNode(
+                type: "object",
+                value: nil,
+                entries: entries,
+                items: nil,
+                count: keys.count,
+                truncated: nodeTruncated
+            )
+        case let array as [Any]:
+            guard depth < maxDepth else {
+                let nodeTruncated = !array.isEmpty
+                truncated = truncated || nodeTruncated
+                return BoundedJSONNode(
+                    type: "array",
+                    value: nil,
+                    entries: nil,
+                    items: nil,
+                    count: array.count,
+                    truncated: nodeTruncated
+                )
+            }
+
+            let limitedItems = Array(array.prefix(maxItems))
+            let nodeTruncated = limitedItems.count < array.count
+            truncated = truncated || nodeTruncated
+            let items = try limitedItems.map {
+                try boundedJSONNode(
+                    from: $0,
+                    depth: depth + 1,
+                    maxDepth: maxDepth,
+                    maxItems: maxItems,
+                    maxStringCharacters: maxStringCharacters,
+                    truncated: &truncated
+                )
+            }
+            return BoundedJSONNode(
+                type: "array",
+                value: nil,
+                entries: nil,
+                items: items,
+                count: array.count,
+                truncated: nodeTruncated
+            )
+        case let string as String:
+            let nodeTruncated = string.count > maxStringCharacters
+            truncated = truncated || nodeTruncated
+            return BoundedJSONNode(
+                type: "string",
+                value: .string(String(string.prefix(maxStringCharacters))),
+                entries: nil,
+                items: nil,
+                count: string.count,
+                truncated: nodeTruncated
+            )
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                return BoundedJSONNode(
+                    type: "boolean",
+                    value: .bool(number.boolValue),
+                    entries: nil,
+                    items: nil,
+                    count: nil,
+                    truncated: false
+                )
+            }
+            return BoundedJSONNode(
+                type: "number",
+                value: .number(number.doubleValue),
+                entries: nil,
+                items: nil,
+                count: nil,
+                truncated: false
+            )
+        case _ as NSNull:
+            return BoundedJSONNode(
+                type: "null",
+                value: .null,
+                entries: nil,
+                items: nil,
+                count: nil,
+                truncated: false
+            )
+        default:
+            throw CommandError(description: "unsupported JSON value while encoding bounded JSON")
+        }
+    }
+
     private func compareFiles(
         leftURL: URL,
         rightURL: URL,
@@ -15370,7 +15733,7 @@ final class Ln1CLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
-        case "filesystem.readText", "filesystem.tailText", "filesystem.readLines", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
+        case "filesystem.readText", "filesystem.tailText", "filesystem.readLines", "filesystem.readJSON", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
         default:
             return "unknown"
@@ -15459,6 +15822,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "filesystem.readText", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.tailText", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.readLines", domain: "filesystem", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "filesystem.readJSON", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.writeText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.appendText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
@@ -16880,6 +17244,7 @@ final class Ln1CLI {
           Ln1 files read-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files tail-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files read-lines --path PATH --allow-risk medium [--start-line N] [--line-count N] [--max-line-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
+          Ln1 files read-json --path PATH --allow-risk medium [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH]
           Ln1 files append-text --path PATH --text TEXT --allow-risk medium [--create] [--reason TEXT] [--audit-log PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
@@ -16937,6 +17302,7 @@ final class Ln1CLI {
           - `files read-text` returns bounded UTF-8 text from the start of one regular file only after medium-risk approval and audits metadata without storing text.
           - `files tail-text` returns bounded UTF-8 text from the end of one regular file only after medium-risk approval and audits metadata without storing text.
           - `files read-lines` returns bounded, numbered UTF-8 lines from one regular file only after medium-risk approval and audits metadata without storing text.
+          - `files read-json` returns a bounded typed JSON tree, optionally at a JSON Pointer, from one regular file only after medium-risk approval and audits metadata without storing JSON values.
           - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs.
           - `files append-text` appends UTF-8 text to one regular file, or creates it with `--create`, after medium-risk approval and verifies by size/tail bytes without storing text in audit logs.
           - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
@@ -17413,6 +17779,7 @@ final class Ln1CLI {
             actions.append(FileAction(name: "filesystem.readText", risk: "medium", mutates: false))
             actions.append(FileAction(name: "filesystem.tailText", risk: "medium", mutates: false))
             actions.append(FileAction(name: "filesystem.readLines", risk: "medium", mutates: false))
+            actions.append(FileAction(name: "filesystem.readJSON", risk: "medium", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.rollbackMove", risk: "medium", mutates: true))
