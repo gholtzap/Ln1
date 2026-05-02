@@ -572,6 +572,48 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightReadFileLinesBuildsBoundedLineRead() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-lines-preflight-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "one\ntwo\nthree".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "read-file-lines",
+            "--path", file.path,
+            "--start-line", "2",
+            "--line-count", "1",
+            "--max-line-characters", "12",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "read-file-lines")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "read-lines",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--start-line", "2",
+            "--line-count", "1",
+            "--max-line-characters", "12",
+            "--max-file-bytes", "100",
+            "--reason", "Inspect file line range",
+            "--audit-log", auditLog.path
+        ])
+    }
+
     func testWorkflowPreflightWriteFileBuildsVerifiedWriteCommand() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-write-preflight-\(UUID().uuidString)")
@@ -2181,6 +2223,64 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["truncated"] as? Bool, true)
     }
 
+    func testWorkflowRunExecutesNonMutatingFileLineReadAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-lines-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("source.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "line one\nline two\nline three".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "read-file-lines",
+            "--path", file.path,
+            "--start-line", "2",
+            "--line-count", "1",
+            "--max-line-characters", "8",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path,
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let outputFile = try XCTUnwrap(outputJSON["file"] as? [String: Any])
+        let lines = try XCTUnwrap(outputJSON["lines"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "read-file-lines")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "read-lines",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--start-line", "2",
+            "--line-count", "1",
+            "--max-line-characters", "8",
+            "--max-file-bytes", "100",
+            "--reason", "Inspect file line range",
+            "--audit-log", auditLog.path
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputFile["path"] as? String, file.path)
+        XCTAssertEqual(outputJSON["startLine"] as? Int, 2)
+        XCTAssertEqual(outputJSON["returnedLineCount"] as? Int, 1)
+        XCTAssertEqual(lines.first?["lineNumber"] as? Int, 2)
+        XCTAssertEqual(lines.first?["text"] as? String, "line two")
+        XCTAssertEqual(outputJSON["truncated"] as? Bool, true)
+    }
+
     func testWorkflowRunExecutesMutatingFileWriteWithExplicitApprovalAndReason() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-run-write-\(UUID().uuidString)")
@@ -3620,6 +3720,66 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("file tail text read completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsChecksumAfterReadFileLines() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-read-file-lines-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "read-file-lines-transcript",
+            "operation": "read-file-lines",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "read-lines",
+                    "--path", fileURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "Inspect file line range"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "file": [
+                        "path": fileURL.path,
+                        "kind": "regularFile",
+                        "readable": true
+                    ],
+                    "startLine": 2,
+                    "returnedLineCount": 1,
+                    "textDigest": String(repeating: "e", count: 64),
+                    "truncated": false
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "read-file-lines",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "read-file-lines")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "checksum-file",
+            "--path", fileURL.path,
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file line range read completed") == true)
     }
 
     func testWorkflowResumeSuggestsStatAfterWriteFile() throws {
