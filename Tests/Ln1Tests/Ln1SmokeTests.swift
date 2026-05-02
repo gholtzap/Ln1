@@ -34,6 +34,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.writeText"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["filesystem.appendText"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.appendText"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.appendText"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.move"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.move"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.createDirectory"]?["domain"] as? String, "filesystem")
@@ -7560,6 +7563,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.checksum" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.writeText" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.appendText" })
     }
 
     func testFilesListReturnsDirectoryEntriesWithoutHiddenFilesByDefault() throws {
@@ -7916,6 +7920,165 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(entry["action"] as? String, "filesystem.writeText")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "overwrote_text_file")
+        XCTAssertNil(entry["text"])
+    }
+
+    func testFilesAppendTextAppendsWithPolicyAuditAndVerification() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-append-text-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "first".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "files",
+            "append-text",
+            "--path", file.path,
+            "--text", "\nblocked",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "first")
+
+        let result = try runLn1([
+            "files",
+            "append-text",
+            "--path", file.path,
+            "--text", "\nsecond",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "append test file"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "first\nsecond")
+
+        let object = try decodeJSONObject(result.stdout)
+        let previous = try XCTUnwrap(object["previous"] as? [String: Any])
+        let current = try XCTUnwrap(object["current"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "filesystem.appendText")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["path"] as? String, file.path)
+        XCTAssertEqual(object["created"] as? Bool, false)
+        XCTAssertEqual(object["appendedLength"] as? Int, 7)
+        XCTAssertEqual(object["appendedBytes"] as? Int, 7)
+        XCTAssertEqual((object["appendedDigest"] as? String)?.count, 64)
+        XCTAssertEqual(object["finalBytes"] as? Int, 12)
+        XCTAssertEqual(previous["path"] as? String, file.path)
+        XCTAssertEqual(previous["exists"] as? Bool, true)
+        XCTAssertEqual(previous["sizeBytes"] as? Int, 5)
+        XCTAssertEqual(current["path"] as? String, file.path)
+        XCTAssertEqual(current["sizeBytes"] as? Int, 12)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "text_appended")
+        XCTAssertNil(object["text"])
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.append-text",
+            "--code", "appended_text_file",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let fileSource = try XCTUnwrap(entry["fileSource"] as? [String: Any])
+        let fileDestination = try XCTUnwrap(entry["fileDestination"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.append-text")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.appendText")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "append test file")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(fileSource["path"] as? String, file.path)
+        XCTAssertEqual(fileSource["sizeBytes"] as? Int, 5)
+        XCTAssertEqual(fileDestination["path"] as? String, file.path)
+        XCTAssertEqual(fileDestination["sizeBytes"] as? Int, 12)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "appended_text_file")
+        XCTAssertNil(entry["text"])
+    }
+
+    func testFilesAppendTextRequiresCreateForMissingFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-append-create-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let refused = try runLn1([
+            "files",
+            "append-text",
+            "--path", file.path,
+            "--text", "created",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "missing create"
+        ])
+
+        XCTAssertNotEqual(refused.status, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+
+        let result = try runLn1([
+            "files",
+            "append-text",
+            "--path", file.path,
+            "--text", "created",
+            "--create",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "create append file"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "created")
+
+        let object = try decodeJSONObject(result.stdout)
+        let previous = try XCTUnwrap(object["previous"] as? [String: Any])
+        let current = try XCTUnwrap(object["current"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["created"] as? Bool, true)
+        XCTAssertEqual(object["appendedLength"] as? Int, 7)
+        XCTAssertEqual(object["appendedBytes"] as? Int, 7)
+        XCTAssertEqual(object["finalBytes"] as? Int, 7)
+        XCTAssertEqual(previous["exists"] as? Bool, false)
+        XCTAssertEqual(current["path"] as? String, file.path)
+        XCTAssertEqual(current["sizeBytes"] as? Int, 7)
+        XCTAssertEqual(verification["code"] as? String, "text_appended")
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.append-text",
+            "--code", "created_appended_text_file",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["action"] as? String, "filesystem.appendText")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "created_appended_text_file")
         XCTAssertNil(entry["text"])
     }
 

@@ -1451,6 +1451,24 @@ struct FileTextWriteResult: Codable {
     let auditLogPath: String
 }
 
+struct FileTextAppendResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let path: String
+    let created: Bool
+    let previous: FileAuditTarget
+    let current: FileRecord
+    let appendedLength: Int
+    let appendedBytes: Int
+    let appendedDigest: String
+    let finalBytes: Int
+    let verification: FileOperationVerification
+    let message: String
+    let auditID: String
+    let auditLogPath: String
+}
+
 struct DirectoryOperationResult: Codable {
     let ok: Bool
     let action: String
@@ -7092,6 +7110,15 @@ final class Ln1CLI {
                 overwrite: overwrite
             )
             try writeJSON(result)
+        case "append-text":
+            let text = try requiredOption("--text")
+            let create = flag("--create")
+            let result = try appendFileText(
+                text,
+                to: requestedFileURL(),
+                create: create
+            )
+            try writeJSON(result)
         case "wait":
             let expectedExists = option("--exists").map(parseBool) ?? true
             let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
@@ -8095,6 +8122,191 @@ final class Ln1CLI {
             ok: true,
             code: "text_matched",
             message: "written file contains text with the requested byte length and digest"
+        )
+    }
+
+    private func appendFileText(
+        _ text: String,
+        to url: URL,
+        create: Bool
+    ) throws -> FileTextAppendResult {
+        let action = "filesystem.appendText"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let previousRecord = try? fileRecord(for: url)
+        var previousTarget = previousRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: url)
+        var currentTarget = previousTarget
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.append-text",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: previousTarget,
+                fileDestination: currentTarget,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let appendedData = Data(text.utf8)
+            let previousSize: Int
+
+            if let previousRecord {
+                previousTarget = fileAuditTarget(record: previousRecord, exists: true)
+                currentTarget = previousTarget
+
+                guard previousRecord.kind == "regularFile" else {
+                    let message = "filesystem.appendText currently supports regular files only"
+                    try writeAudit(ok: false, code: "unsupported_destination_kind", message: message)
+                    throw CommandError(description: message)
+                }
+
+                guard previousRecord.writable else {
+                    let message = "destination file is not writable at \(url.path)"
+                    try writeAudit(ok: false, code: "destination_unwritable", message: message)
+                    throw CommandError(description: message)
+                }
+
+                previousSize = try fileByteSize(at: url)
+                let handle = try FileHandle(forWritingTo: url)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: appendedData)
+            } else {
+                guard create else {
+                    let message = "destination does not exist at \(url.path); pass --create to create it before appending"
+                    try writeAudit(ok: false, code: "destination_missing", message: message)
+                    throw CommandError(description: message)
+                }
+
+                let parentURL = url.deletingLastPathComponent()
+                var isDirectory = ObjCBool(false)
+                guard FileManager.default.fileExists(atPath: parentURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                    let message = "destination parent directory does not exist at \(parentURL.path)"
+                    try writeAudit(ok: false, code: "destination_parent_missing", message: message)
+                    throw CommandError(description: message)
+                }
+
+                guard FileManager.default.isWritableFile(atPath: parentURL.path) else {
+                    let message = "destination parent directory is not writable at \(parentURL.path)"
+                    try writeAudit(ok: false, code: "destination_parent_unwritable", message: message)
+                    throw CommandError(description: message)
+                }
+
+                previousSize = 0
+                try appendedData.write(to: url, options: .atomic)
+            }
+
+            let currentRecord = try refreshedFileRecord(for: url)
+            currentTarget = fileAuditTarget(record: currentRecord, exists: true)
+            verification = try verifyAppendedTextFile(
+                at: url,
+                expectedFinalByteLength: previousSize + appendedData.count,
+                appendedData: appendedData
+            )
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "file text append verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let created = previousRecord == nil
+            let message = created
+                ? "Created \(url.path) and appended text."
+                : "Appended text to \(url.path)."
+            try writeAudit(ok: true, code: created ? "created_appended_text_file" : "appended_text_file", message: message)
+
+            return FileTextAppendResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                path: url.path,
+                created: created,
+                previous: previousTarget,
+                current: currentRecord,
+                appendedLength: text.count,
+                appendedBytes: appendedData.count,
+                appendedDigest: sha256Digest(text),
+                finalBytes: currentRecord.sizeBytes ?? previousSize + appendedData.count,
+                verification: verification!,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func verifyAppendedTextFile(
+        at url: URL,
+        expectedFinalByteLength: Int,
+        appendedData: Data
+    ) throws -> FileOperationVerification {
+        let byteLength = try fileByteSize(at: url)
+        guard byteLength == expectedFinalByteLength else {
+            return FileOperationVerification(
+                ok: false,
+                code: "size_mismatch",
+                message: "appended file byte length does not match previous byte length plus appended text"
+            )
+        }
+
+        guard !appendedData.isEmpty else {
+            return FileOperationVerification(
+                ok: true,
+                code: "text_appended",
+                message: "file byte length matched after appending empty text"
+            )
+        }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let tailOffset = UInt64(max(0, expectedFinalByteLength - appendedData.count))
+        try handle.seek(toOffset: tailOffset)
+        let tailData = try handle.readToEnd() ?? Data()
+
+        guard tailData == appendedData else {
+            return FileOperationVerification(
+                ok: false,
+                code: "tail_mismatch",
+                message: "appended file tail bytes do not match requested text"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "text_appended",
+            message: "file grew by the requested byte length and ends with the requested text bytes"
         )
     }
 
@@ -14661,7 +14873,7 @@ final class Ln1CLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
-        case "filesystem.readText", "filesystem.writeText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
+        case "filesystem.readText", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
         default:
             return "unknown"
@@ -14749,6 +14961,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "filesystem.plan", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.readText", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.writeText", domain: "filesystem", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "filesystem.appendText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
@@ -16167,6 +16380,7 @@ final class Ln1CLI {
           Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N]
           Ln1 files read-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH]
+          Ln1 files append-text --path PATH --text TEXT --allow-risk medium [--create] [--reason TEXT] [--audit-log PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
           Ln1 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
           Ln1 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
@@ -16221,6 +16435,7 @@ final class Ln1CLI {
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files read-text` returns bounded UTF-8 text from one regular file only after medium-risk approval and audits metadata without storing text.
           - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs.
+          - `files append-text` appends UTF-8 text to one regular file, or creates it with `--create`, after medium-risk approval and verifies by size/tail bytes without storing text in audit logs.
           - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
           - `files watch` waits for created, deleted, or modified file metadata events under a path and returns normalized event records.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
@@ -16611,6 +16826,20 @@ final class Ln1CLI {
         )
     }
 
+    private func refreshedFileRecord(for url: URL) throws -> FileRecord {
+        var refreshedURL = url
+        refreshedURL.removeAllCachedResourceValues()
+        return try fileRecord(for: refreshedURL)
+    }
+
+    private func fileByteSize(at url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        if let size = attributes[.size] as? NSNumber {
+            return size.intValue
+        }
+        throw CommandError(description: "file size is unavailable at \(url.path)")
+    }
+
     private func fileResourceKeys() -> Set<URLResourceKey> {
         [
             .nameKey,
@@ -16670,6 +16899,7 @@ final class Ln1CLI {
         if kind == "directory", writable {
             actions.append(FileAction(name: "filesystem.createDirectory", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.writeText", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.appendText", risk: "medium", mutates: true))
         }
 
         if kind == "regularFile", readable {
@@ -16685,6 +16915,7 @@ final class Ln1CLI {
 
         if kind == "regularFile", writable {
             actions.append(FileAction(name: "filesystem.writeText", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.appendText", risk: "medium", mutates: true))
         }
 
         return actions
