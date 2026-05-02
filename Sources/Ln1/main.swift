@@ -1351,6 +1351,25 @@ struct FilesystemTextResult: Codable {
     let message: String
 }
 
+struct FilesystemLinesResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let file: FileRecord
+    let startLine: Int
+    let requestedLineCount: Int
+    let returnedLineCount: Int
+    let totalLineCount: Int
+    let lines: [FileLineMatch]
+    let truncated: Bool
+    let maxLineCharacters: Int
+    let maxFileBytes: Int
+    let textDigest: String
+    let byteLength: Int
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct FilesystemWaitResult: Codable {
     let generatedAt: String
     let platform: String
@@ -7266,6 +7285,19 @@ final class Ln1CLI {
                 maxCharacters: maxCharacters,
                 maxFileBytes: maxFileBytes,
                 selection: "suffix"
+            )
+            try writeJSON(result)
+        case "read-lines":
+            let startLine = max(1, option("--start-line").flatMap(Int.init) ?? 1)
+            let lineCount = max(0, option("--line-count").flatMap(Int.init) ?? 80)
+            let maxLineCharacters = max(0, option("--max-line-characters").flatMap(Int.init) ?? 240)
+            let maxFileBytes = try fileMaxBytes(option("--max-file-bytes") ?? "1048576", optionName: "--max-file-bytes")
+            let result = try fileLines(
+                for: requestedFileURL(),
+                startLine: startLine,
+                lineCount: lineCount,
+                maxLineCharacters: maxLineCharacters,
+                maxFileBytes: maxFileBytes
             )
             try writeJSON(result)
         case "write-text":
@@ -14321,6 +14353,133 @@ final class Ln1CLI {
         }
     }
 
+    private func fileLines(
+        for url: URL,
+        startLine: Int,
+        lineCount: Int,
+        maxLineCharacters: Int,
+        maxFileBytes: Int
+    ) throws -> FilesystemLinesResult {
+        let action = "filesystem.readLines"
+        let command = "files.read-lines"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var sourceTarget = FileAuditTarget(
+            path: url.path,
+            id: nil,
+            kind: nil,
+            sizeBytes: nil,
+            exists: FileManager.default.fileExists(atPath: url.path)
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: command,
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: sourceTarget,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let record = try fileRecord(for: url)
+            sourceTarget = fileAuditTarget(record: record, exists: true)
+
+            guard record.kind == "regularFile" else {
+                let message = "\(action) currently supports regular files only"
+                try writeAudit(ok: false, code: "unsupported_source_kind", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard record.readable else {
+                let message = "source file is not readable at \(url.path)"
+                try writeAudit(ok: false, code: "source_unreadable", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let size = record.sizeBytes, size > maxFileBytes {
+                let message = "file size \(size) exceeds --max-file-bytes \(maxFileBytes)"
+                try writeAudit(ok: false, code: "file_too_large", message: message)
+                throw CommandError(description: message)
+            }
+
+            let data = try Data(contentsOf: url)
+            guard let string = String(data: data, encoding: .utf8) else {
+                let message = "file is not valid UTF-8 text at \(url.path)"
+                try writeAudit(ok: false, code: "unsupported_encoding", message: message)
+                throw CommandError(description: message)
+            }
+
+            let allLines = string.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            let zeroBasedStart = max(0, startLine - 1)
+            let selected = allLines.dropFirst(zeroBasedStart).prefix(lineCount)
+            var lineTextTruncated = false
+            let lines = selected.enumerated().map { offset, line -> FileLineMatch in
+                if line.count > maxLineCharacters {
+                    lineTextTruncated = true
+                }
+                return FileLineMatch(
+                    lineNumber: startLine + offset,
+                    text: String(line.prefix(maxLineCharacters))
+                )
+            }
+            let rangeHasMore = lineCount > 0 && zeroBasedStart + lineCount < allLines.count
+            let truncated = lineTextTruncated || rangeHasMore
+            let message = truncated
+                ? "Read truncated line range from \(url.path)."
+                : "Read line range from \(url.path)."
+            try writeAudit(ok: true, code: "read_lines", message: message)
+
+            return FilesystemLinesResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                file: record,
+                startLine: startLine,
+                requestedLineCount: lineCount,
+                returnedLineCount: lines.count,
+                totalLineCount: allLines.count,
+                lines: lines,
+                truncated: truncated,
+                maxLineCharacters: maxLineCharacters,
+                maxFileBytes: maxFileBytes,
+                textDigest: sha256Digest(string),
+                byteLength: data.count,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
     private func compareFiles(
         leftURL: URL,
         rightURL: URL,
@@ -15053,7 +15212,7 @@ final class Ln1CLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
-        case "filesystem.readText", "filesystem.tailText", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
+        case "filesystem.readText", "filesystem.tailText", "filesystem.readLines", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
         default:
             return "unknown"
@@ -15141,6 +15300,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "filesystem.plan", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.readText", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.tailText", domain: "filesystem", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "filesystem.readLines", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.writeText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.appendText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
@@ -16561,6 +16721,7 @@ final class Ln1CLI {
           Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N]
           Ln1 files read-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files tail-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
+          Ln1 files read-lines --path PATH --allow-risk medium [--start-line N] [--line-count N] [--max-line-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH]
           Ln1 files append-text --path PATH --text TEXT --allow-risk medium [--create] [--reason TEXT] [--audit-log PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
@@ -16617,6 +16778,7 @@ final class Ln1CLI {
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
           - `files read-text` returns bounded UTF-8 text from the start of one regular file only after medium-risk approval and audits metadata without storing text.
           - `files tail-text` returns bounded UTF-8 text from the end of one regular file only after medium-risk approval and audits metadata without storing text.
+          - `files read-lines` returns bounded, numbered UTF-8 lines from one regular file only after medium-risk approval and audits metadata without storing text.
           - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs.
           - `files append-text` appends UTF-8 text to one regular file, or creates it with `--create`, after medium-risk approval and verifies by size/tail bytes without storing text in audit logs.
           - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
@@ -17092,6 +17254,7 @@ final class Ln1CLI {
             actions.append(FileAction(name: "filesystem.compare", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.readText", risk: "medium", mutates: false))
             actions.append(FileAction(name: "filesystem.tailText", risk: "medium", mutates: false))
+            actions.append(FileAction(name: "filesystem.readLines", risk: "medium", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.rollbackMove", risk: "medium", mutates: true))

@@ -34,6 +34,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.tailText"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.tailText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.tailText"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.readLines"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.readLines"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.readLines"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.writeText"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["mutates"] as? Bool, true)
@@ -7915,6 +7918,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.checksum" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.tailText" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readLines" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.writeText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.appendText" })
     }
@@ -8186,6 +8190,92 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "tail_text")
+    }
+
+    func testFilesReadLinesReturnsNumberedRangeAndAuditsMetadataOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-read-lines-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let contents = "alpha\nbeta line\ncharlie line\nlonger delta line"
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try contents.write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "files",
+            "read-lines",
+            "--path", file.path,
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "files",
+            "read-lines",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--start-line", "2",
+            "--line-count", "2",
+            "--max-line-characters", "6",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path,
+            "--reason", "line range test"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let resultFile = try XCTUnwrap(object["file"] as? [String: Any])
+        let lines = try XCTUnwrap(object["lines"] as? [[String: Any]])
+
+        XCTAssertEqual(resultFile["path"] as? String, file.path)
+        XCTAssertEqual(resultFile["kind"] as? String, "regularFile")
+        XCTAssertEqual(object["startLine"] as? Int, 2)
+        XCTAssertEqual(object["requestedLineCount"] as? Int, 2)
+        XCTAssertEqual(object["returnedLineCount"] as? Int, 2)
+        XCTAssertEqual(object["totalLineCount"] as? Int, 4)
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertEqual(lines[0]["lineNumber"] as? Int, 2)
+        XCTAssertEqual(lines[0]["text"] as? String, "beta l")
+        XCTAssertEqual(lines[1]["lineNumber"] as? Int, 3)
+        XCTAssertEqual(lines[1]["text"] as? String, "charli")
+        XCTAssertEqual(object["byteLength"] as? Int, contents.utf8.count)
+        XCTAssertEqual((object["textDigest"] as? String)?.count, 64)
+        XCTAssertEqual(object["truncated"] as? Bool, true)
+        XCTAssertEqual(object["maxLineCharacters"] as? Int, 6)
+        XCTAssertEqual(object["maxFileBytes"] as? Int, 100)
+        XCTAssertNil(object["text"])
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.read-lines",
+            "--code", "read_lines",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let fileSource = try XCTUnwrap(entry["fileSource"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.read-lines")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.readLines")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "line range test")
+        XCTAssertEqual(fileSource["path"] as? String, file.path)
+        XCTAssertEqual(fileSource["kind"] as? String, "regularFile")
+        XCTAssertEqual(fileSource["sizeBytes"] as? Int, contents.utf8.count)
+        XCTAssertNil(entry["text"])
+        XCTAssertNil(entry["lines"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_lines")
     }
 
     func testFilesWriteTextCreatesFileWithPolicyAuditAndVerification() throws {
