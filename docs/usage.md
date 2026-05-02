@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `write-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -85,6 +85,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation inspect-file --path ~/Desktop/a.txt
 .build/debug/Ln1 workflow preflight --operation read-file --path ~/Desktop/a.txt --max-characters 4096
 .build/debug/Ln1 workflow preflight --operation write-file --path ~/Desktop/a.txt --text "bounded text" --allow-risk medium
+.build/debug/Ln1 workflow preflight --operation append-file --path ~/Desktop/a.txt --text "\nnext note" --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation list-files --path ~/Desktop --depth 1 --limit 50
 .build/debug/Ln1 workflow preflight --operation search-files --path ~/Documents --query invoice --depth 4 --limit 50
 .build/debug/Ln1 workflow preflight --operation create-directory --path ~/Desktop/Archive --allow-risk medium
@@ -127,7 +128,7 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 .build/debug/Ln1 workflow run --operation create-directory --path ~/Desktop/Archive --allow-risk medium --dry-run false --execute-mutating true --reason "Prepare archive folder"
 ```
 
-Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. After a successful verified `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
+Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline. Pass `--size-bytes N` and/or `--digest SHA256` when the file must exist with specific metadata before the workflow should continue.
 
@@ -142,6 +143,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 `read-file` is a medium-risk non-mutating workflow operation for bounded UTF-8 file text. It validates a readable regular file within `--max-file-bytes`, runs `files read-text` with explicit medium-risk approval, and `workflow resume` suggests a checksum dry-run so subsequent steps can verify the file has not changed.
 
 `write-file` is a medium-risk mutating workflow operation for UTF-8 file text writes. It validates the destination parent directory, requires `--text`, refuses to replace existing files unless `--overwrite` is passed, runs `files write-text` with explicit medium-risk approval and a non-placeholder reason, and `workflow resume` suggests inspecting the written file metadata after verification.
+
+`append-file` is a medium-risk mutating workflow operation for UTF-8 file text appends. It validates the existing writable regular file, requires `--text`, refuses missing paths unless `--create` is passed, runs `files append-text` with explicit medium-risk approval and a non-placeholder reason, and `workflow resume` suggests inspecting the appended file metadata after verification.
 
 `list-files` is a non-mutating workflow operation for bounded directory inventories. It validates that the path is a readable directory, forwards `--depth`, `--limit`, and `--include-hidden`, and `workflow resume` suggests a dry-run `inspect-file` workflow for the first listed path or the empty directory itself.
 
