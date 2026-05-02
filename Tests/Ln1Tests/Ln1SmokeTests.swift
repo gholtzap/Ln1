@@ -31,6 +31,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.readText"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.readText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.readText"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["filesystem.tailText"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.tailText"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.tailText"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.writeText"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.writeText"]?["mutates"] as? Bool, true)
@@ -7760,6 +7763,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.stat" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.checksum" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.readText" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.tailText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.writeText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "filesystem.appendText" })
     }
@@ -7922,6 +7926,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(resultFile["path"] as? String, file.path)
         XCTAssertEqual(resultFile["kind"] as? String, "regularFile")
         XCTAssertEqual(object["text"] as? String, "hello")
+        XCTAssertEqual(object["selection"] as? String, "prefix")
         XCTAssertEqual(object["textLength"] as? Int, 19)
         XCTAssertEqual(object["byteLength"] as? Int, 19)
         XCTAssertEqual(object["textDigest"] as? String, "cff9e957c7cca67a965799dcca968319fae2fe717f6e83b4519911df53c7331c")
@@ -7956,6 +7961,80 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "read_text")
+    }
+
+    func testFilesTailTextRequiresMediumRiskAndAuditsMetadataOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-tail-text-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "alpha\nbeta\ngamma".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "files",
+            "tail-text",
+            "--path", file.path,
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "files",
+            "tail-text",
+            "--path", file.path,
+            "--allow-risk", "medium",
+            "--max-characters", "5",
+            "--max-file-bytes", "100",
+            "--audit-log", auditLog.path,
+            "--reason", "tail test file"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let resultFile = try XCTUnwrap(object["file"] as? [String: Any])
+
+        XCTAssertEqual(resultFile["path"] as? String, file.path)
+        XCTAssertEqual(resultFile["kind"] as? String, "regularFile")
+        XCTAssertEqual(object["text"] as? String, "gamma")
+        XCTAssertEqual(object["selection"] as? String, "suffix")
+        XCTAssertEqual(object["textLength"] as? Int, 16)
+        XCTAssertEqual(object["byteLength"] as? Int, 16)
+        XCTAssertEqual((object["textDigest"] as? String)?.count, 64)
+        XCTAssertEqual(object["truncated"] as? Bool, true)
+        XCTAssertEqual(object["maxCharacters"] as? Int, 5)
+        XCTAssertEqual(object["maxFileBytes"] as? Int, 100)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.tail-text",
+            "--code", "tail_text",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let fileSource = try XCTUnwrap(entry["fileSource"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.tail-text")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.tailText")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "tail test file")
+        XCTAssertEqual(fileSource["path"] as? String, file.path)
+        XCTAssertEqual(fileSource["kind"] as? String, "regularFile")
+        XCTAssertEqual(fileSource["sizeBytes"] as? Int, 16)
+        XCTAssertNil(entry["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "tail_text")
     }
 
     func testFilesWriteTextCreatesFileWithPolicyAuditAndVerification() throws {

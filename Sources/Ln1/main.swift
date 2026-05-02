@@ -1339,6 +1339,7 @@ struct FilesystemTextResult: Codable {
     let platform: String
     let file: FileRecord
     let text: String
+    let selection: String
     let textLength: Int
     let textDigest: String
     let byteLength: Int
@@ -7215,7 +7216,18 @@ final class Ln1CLI {
             let result = try fileText(
                 for: requestedFileURL(),
                 maxCharacters: maxCharacters,
-                maxFileBytes: maxFileBytes
+                maxFileBytes: maxFileBytes,
+                selection: "prefix"
+            )
+            try writeJSON(result)
+        case "tail-text":
+            let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 16_384)
+            let maxFileBytes = try fileMaxBytes(option("--max-file-bytes") ?? "1048576", optionName: "--max-file-bytes")
+            let result = try fileText(
+                for: requestedFileURL(),
+                maxCharacters: maxCharacters,
+                maxFileBytes: maxFileBytes,
+                selection: "suffix"
             )
             try writeJSON(result)
         case "write-text":
@@ -14145,9 +14157,12 @@ final class Ln1CLI {
     private func fileText(
         for url: URL,
         maxCharacters: Int,
-        maxFileBytes: Int
+        maxFileBytes: Int,
+        selection: String
     ) throws -> FilesystemTextResult {
-        let action = "filesystem.readText"
+        let suffix = selection == "suffix"
+        let action = suffix ? "filesystem.tailText" : "filesystem.readText"
+        let command = suffix ? "files.tail-text" : "files.read-text"
         let auditID = UUID().uuidString
         let auditURL = try auditLogURL()
         let risk = fileActionRisk(for: action)
@@ -14165,7 +14180,7 @@ final class Ln1CLI {
             try appendAuditRecord(ActionAuditRecord(
                 id: auditID,
                 timestamp: ISO8601DateFormatter().string(from: Date()),
-                command: "files.read-text",
+                command: command,
                 risk: risk,
                 reason: option("--reason"),
                 app: nil,
@@ -14190,7 +14205,7 @@ final class Ln1CLI {
             sourceTarget = fileAuditTarget(record: record, exists: true)
 
             guard record.kind == "regularFile" else {
-                let message = "filesystem.readText currently supports regular files only"
+                let message = "\(action) currently supports regular files only"
                 try writeAudit(ok: false, code: "unsupported_source_kind", message: message)
                 throw CommandError(description: message)
             }
@@ -14217,23 +14232,33 @@ final class Ln1CLI {
             let text: String
             let truncated: Bool
             if string.count > maxCharacters {
-                text = String(string.prefix(maxCharacters))
+                text = suffix
+                    ? String(string.suffix(maxCharacters))
+                    : String(string.prefix(maxCharacters))
                 truncated = true
             } else {
                 text = string
                 truncated = false
             }
 
-            let message = truncated
-                ? "Read truncated text from \(url.path)."
-                : "Read text from \(url.path)."
-            try writeAudit(ok: true, code: "read_text", message: message)
+            let message: String
+            if suffix {
+                message = truncated
+                    ? "Read truncated tail text from \(url.path)."
+                    : "Read tail text from \(url.path)."
+            } else {
+                message = truncated
+                    ? "Read truncated text from \(url.path)."
+                    : "Read text from \(url.path)."
+            }
+            try writeAudit(ok: true, code: suffix ? "tail_text" : "read_text", message: message)
 
             return FilesystemTextResult(
                 generatedAt: ISO8601DateFormatter().string(from: Date()),
                 platform: "macOS",
                 file: record,
                 text: text,
+                selection: selection,
                 textLength: string.count,
                 textDigest: sha256Digest(string),
                 byteLength: data.count,
@@ -14990,7 +15015,7 @@ final class Ln1CLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
-        case "filesystem.readText", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
+        case "filesystem.readText", "filesystem.tailText", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
             return "medium"
         default:
             return "unknown"
@@ -15077,6 +15102,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "filesystem.compare", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.plan", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.readText", domain: "filesystem", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "filesystem.tailText", domain: "filesystem", risk: "medium", mutates: false),
             PolicyActionRecord(name: "filesystem.writeText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.appendText", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.duplicate", domain: "filesystem", risk: "medium", mutates: true),
@@ -16496,6 +16522,7 @@ final class Ln1CLI {
           Ln1 files list --path PATH [--depth N] [--limit N] [--include-hidden]
           Ln1 files search --path PATH --query TEXT [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--max-file-bytes N] [--max-characters N] [--max-snippet-characters N] [--max-matches-per-file N]
           Ln1 files read-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
+          Ln1 files tail-text --path PATH --allow-risk medium [--max-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH]
           Ln1 files append-text --path PATH --text TEXT --allow-risk medium [--create] [--reason TEXT] [--audit-log PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
@@ -16550,7 +16577,8 @@ final class Ln1CLI {
           - `audit` can filter records by command name and outcome code before applying the limit.
           - `task` stores and reads task-scoped memory as medium-risk local persistence with sensitive-summary redaction.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.
-          - `files read-text` returns bounded UTF-8 text from one regular file only after medium-risk approval and audits metadata without storing text.
+          - `files read-text` returns bounded UTF-8 text from the start of one regular file only after medium-risk approval and audits metadata without storing text.
+          - `files tail-text` returns bounded UTF-8 text from the end of one regular file only after medium-risk approval and audits metadata without storing text.
           - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs.
           - `files append-text` appends UTF-8 text to one regular file, or creates it with `--create`, after medium-risk approval and verifies by size/tail bytes without storing text in audit logs.
           - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
@@ -17025,6 +17053,7 @@ final class Ln1CLI {
             actions.append(FileAction(name: "filesystem.checksum", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.compare", risk: "low", mutates: false))
             actions.append(FileAction(name: "filesystem.readText", risk: "medium", mutates: false))
+            actions.append(FileAction(name: "filesystem.tailText", risk: "medium", mutates: false))
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.rollbackMove", risk: "medium", mutates: true))
