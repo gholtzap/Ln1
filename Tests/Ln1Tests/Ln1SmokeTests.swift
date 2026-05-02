@@ -454,6 +454,39 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightListFilesValidatesReadableDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-list-preflight-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "list-files",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "50",
+            "--include-hidden"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "list-files")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "list",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "50",
+            "--include-hidden"
+        ])
+    }
+
     func testWorkflowPreflightBrowserActionsReturnTypedCommands() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-browser-action-\(UUID().uuidString)")
@@ -1420,6 +1453,40 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(preflight["canProceed"] as? Bool, true)
     }
 
+    func testWorkflowNextReturnsStructuredArgvWithoutListingFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1 workflow next list \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "next",
+            "--operation", "list-files",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let preflight = try XCTUnwrap(object["preflight"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "list-files")
+        XCTAssertEqual(object["ready"] as? Bool, true)
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "list",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "50"
+        ])
+        XCTAssertEqual(command["requiresReason"] as? Bool, false)
+        XCTAssertEqual(preflight["canProceed"] as? Bool, true)
+    }
+
     func testWorkflowRunDryRunReportsWouldExecuteWithoutExecutingMove() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1 workflow run \(UUID().uuidString)")
@@ -1758,6 +1825,48 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(execution["exitCode"] as? Int, 0)
         XCTAssertEqual(root["path"] as? String, file.path)
         XCTAssertEqual(root["kind"] as? String, "regularFile")
+    }
+
+    func testWorkflowRunExecutesNonMutatingFileListAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-run-list-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "hello".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "list-files",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "50",
+            "--dry-run", "false",
+            "--run-timeout-ms", "5000",
+            "--max-output-bytes", "50000"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let entries = try XCTUnwrap(outputJSON["entries"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "list-files")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["dryRun"] as? Bool, false)
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "files", "list",
+            "--path", directory.path,
+            "--depth", "1",
+            "--limit", "50"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertTrue((entries.first?["path"] as? String)?.hasSuffix("/hello.txt") == true)
     }
 
     func testWorkflowRunCapsExecutionOutputAndSkipsTruncatedJSONParsing() throws {
@@ -2693,6 +2802,67 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("file inspection found") == true)
+    }
+
+    func testWorkflowResumeSuggestsInspectAfterListFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-list-files-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("hello.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "list-files-transcript",
+            "operation": "list-files",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "list",
+                    "--path", directory.path,
+                    "--depth", "1",
+                    "--limit", "50"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "root": [
+                        "path": directory.path,
+                        "kind": "directory"
+                    ],
+                    "entries": [
+                        [
+                            "path": fileURL.path,
+                            "kind": "regularFile"
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "list-files",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "list-files")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-file",
+            "--path", fileURL.path,
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("file listing completed") == true)
     }
 
     func testWorkflowResumeSuggestsFileStatAfterFileWait() throws {
