@@ -54,7 +54,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-file`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -81,6 +81,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-browser-focus --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --focused true
 .build/debug/Ln1 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
 .build/debug/Ln1 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
+.build/debug/Ln1 workflow preflight --operation inspect-file --path ~/Desktop/a.txt
 .build/debug/Ln1 workflow preflight --operation create-directory --path ~/Desktop/Archive --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation duplicate-file --path ~/Desktop/a.txt --to ~/Desktop/a-copy.txt --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation move-file --path ~/Desktop/a.txt --to ~/Desktop/b.txt --allow-risk medium
@@ -130,6 +131,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 `checksum-file` is a non-mutating workflow operation for bounded SHA-256 file verification. It validates that the target is a readable regular file within `--max-file-bytes`, then runs `files checksum` without exposing file contents. After a successful checksum, `workflow resume` suggests a digest-based `wait-file` dry-run so the next step can verify the file has not changed.
 
 `compare-files` is a non-mutating workflow operation for bounded file equivalence checks. It validates both paths as readable regular files within `--max-file-bytes`, then runs `files compare` to report size and digest equality without exposing file contents. After a completed compare, `workflow resume` suggests a metadata inspection of the right-side file.
+
+`inspect-file` is a non-mutating workflow operation for current filesystem metadata. It wraps `files stat` in workflow preflight/run logging, then `workflow resume` suggests either listing a directory or dry-running a checksum workflow for a readable regular file.
 
 `wait-clipboard` is a non-mutating workflow operation for bounded clipboard metadata waiting. It can wait for the pasteboard change count to differ from `--changed-from N`, for plain-text availability with `--has-string true|false`, or for a specific text digest with `--string-digest HEX`, without returning clipboard text.
 
