@@ -42,6 +42,17 @@ struct ComputerState: Codable {
     let windows: [ElementNode]
 }
 
+struct AccessibilityElementInspectResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let app: AppRecord
+    let element: ElementNode
+    let identityVerification: IdentityVerification?
+    let depth: Int
+    let maxChildren: Int
+    let message: String
+}
+
 struct AccessibilityElementWaitTarget: Codable {
     let element: String
     let expectedIdentity: String?
@@ -9261,6 +9272,44 @@ final class Ln1CLI {
         )
     }
 
+    private func stateElementInspectState() throws -> AccessibilityElementInspectResult {
+        let elementID = try requiredOption("--element")
+        let depth = max(0, option("--depth").flatMap(Int.init) ?? 1)
+        let maxChildren = max(0, option("--max-children").flatMap(Int.init) ?? 20)
+
+        try requireTrusted()
+        let app = try targetApp()
+        let appRecord = AppRecord(
+            name: app.localizedName,
+            bundleIdentifier: app.bundleIdentifier,
+            pid: app.processIdentifier
+        )
+        let normalizedID = try normalizedElementID(elementID)
+        let element = try resolveElement(id: normalizedID, in: app.processIdentifier)
+        let node = buildNode(
+            element,
+            id: normalizedID,
+            ownerName: app.localizedName,
+            ownerBundleIdentifier: app.bundleIdentifier,
+            depth: depth,
+            maxChildren: maxChildren
+        )
+        let identityVerification = try verifyElementIdentity(node.stableIdentity)
+
+        return AccessibilityElementInspectResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            app: appRecord,
+            element: node,
+            identityVerification: identityVerification,
+            depth: depth,
+            maxChildren: maxChildren,
+            message: identityVerification?.ok == false
+                ? identityVerification!.message
+                : "Accessibility element state inspected."
+        )
+    }
+
     private func accessibilityElementWaitTarget() throws -> AccessibilityElementWaitTarget {
         let element = try requiredOption("--element")
         let match = option("--match") ?? "contains"
@@ -9403,6 +9452,11 @@ final class Ln1CLI {
     }
 
     private func state() throws {
+        if arguments.dropFirst().first == "element" {
+            try writeJSON(stateElementInspectState())
+            return
+        }
+
         if arguments.dropFirst().first == "wait-element" {
             try writeJSON(stateElementWaitState())
             return
@@ -18534,6 +18588,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: kAXShowMenuAction as String, domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: kAXConfirmAction as String, domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: kAXPickAction as String, domain: "accessibility", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "accessibility.inspectElement", domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: "accessibility.waitElement", domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
@@ -19977,6 +20032,7 @@ final class Ln1CLI {
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
+          Ln1 state element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--depth N] [--max-children N]
           Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           Ln1 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
@@ -20046,6 +20102,7 @@ final class Ln1CLI {
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
           - `state` emits structured JSON from macOS Accessibility APIs.
+          - `state element` inspects one Accessibility element path with optional stable identity verification.
           - `state wait-element` waits for an Accessibility element path and optional identity, text, or enabled-state criteria.
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.

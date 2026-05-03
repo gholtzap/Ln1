@@ -20,6 +20,9 @@ final class Ln1SmokeTests: XCTestCase {
 
         XCTAssertEqual(object["defaultAllowedRisk"] as? String, "low")
         XCTAssertEqual(riskLevels, ["low", "medium", "high", "unknown"])
+        XCTAssertEqual(actionByName["accessibility.inspectElement"]?["domain"] as? String, "accessibility")
+        XCTAssertEqual(actionByName["accessibility.inspectElement"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["accessibility.inspectElement"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["domain"] as? String, "accessibility")
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["mutates"] as? Bool, false)
@@ -531,6 +534,61 @@ final class Ln1SmokeTests: XCTestCase {
 
         XCTAssertNotEqual(result.status, 0)
         XCTAssertTrue(result.stderr.contains("missing required option --element"), result.stderr)
+    }
+
+    func testStateElementRequiresElementBeforeAccessibilityTrust() throws {
+        let result = try runLn1([
+            "state",
+            "element",
+            "--depth", "0"
+        ])
+
+        XCTAssertNotEqual(result.status, 0)
+        XCTAssertTrue(result.stderr.contains("missing required option --element"), result.stderr)
+    }
+
+    func testStateElementReturnsBoundedStructuredElement() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        guard let firstWindow = windows.first,
+              let elementID = firstWindow["id"] as? String,
+              let stableIdentity = firstWindow["stableIdentity"] as? [String: Any],
+              let stableIdentityID = stableIdentity["id"] as? String else {
+            throw XCTSkip("No Accessibility window was available for the frontmost app.")
+        }
+
+        let result = try runLn1([
+            "state",
+            "element",
+            "--element", elementID,
+            "--expect-identity", stableIdentityID,
+            "--min-identity-confidence", "low",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let element = try XCTUnwrap(object["element"] as? [String: Any])
+        let identityVerification = try XCTUnwrap(object["identityVerification"] as? [String: Any])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["depth"] as? Int, 0)
+        XCTAssertEqual(object["maxChildren"] as? Int, 0)
+        XCTAssertEqual(element["id"] as? String, elementID)
+        XCTAssertEqual(identityVerification["ok"] as? Bool, true)
+        XCTAssertEqual(identityVerification["expectedID"] as? String, stableIdentityID)
+        XCTAssertEqual(identityVerification["actualID"] as? String, stableIdentityID)
     }
 
     func testStateWaitElementReturnsStructuredVerificationForCurrentWindow() throws {
