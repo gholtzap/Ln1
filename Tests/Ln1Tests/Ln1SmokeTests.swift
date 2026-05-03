@@ -98,6 +98,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["desktop.minimizeActiveWindow"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.minimizeActiveWindow"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["desktop.minimizeActiveWindow"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["desktop.restoreWindow"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.restoreWindow"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["desktop.restoreWindow"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.watch"]?["risk"] as? String, "low")
@@ -1106,6 +1109,43 @@ final class Ln1SmokeTests: XCTestCase {
 
         XCTAssertEqual(entry["command"] as? String, "desktop.minimize-active-window")
         XCTAssertEqual(entry["action"] as? String, "desktop.minimizeActiveWindow")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
+    func testDesktopRestoreWindowPolicyDenialIsAuditedWithoutRestoring() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-desktop-restore-denied-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "desktop",
+            "restore-window",
+            "--element", "w0",
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(result.status, 0)
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "desktop.restore-window")
+        XCTAssertEqual(entry["action"] as? String, "desktop.restoreWindow")
         XCTAssertEqual(entry["risk"] as? String, "medium")
         XCTAssertEqual(policy["allowedRisk"] as? String, "low")
         XCTAssertEqual(policy["actionRisk"] as? String, "medium")
@@ -2230,6 +2270,70 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightRestoreWindowBuildsAuditedDesktopCommand() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility permission is required to preflight window restoration.")
+        }
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        guard let firstWindow = windows.first,
+              let elementID = firstWindow["id"] as? String else {
+            throw XCTSkip("No Accessibility window was available for restore preflight.")
+        }
+        let settableAttributes = firstWindow["settableAttributes"] as? [String] ?? []
+        guard settableAttributes.contains(kAXMinimizedAttribute as String) else {
+            throw XCTSkip("The current Accessibility window does not expose settable AXMinimized.")
+        }
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-desktop-restore-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "restore-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--wait-timeout-ms", "1500",
+            "--interval-ms", "75",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "restore-window")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "desktop", "restore-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--timeout-ms", "1500",
+            "--interval-ms", "75",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "accessibility" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowElement" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowRole" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowMinimizedSettable" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowPreflightQuitAppBuildsAuditedQuitCommand() throws {
         let apps = try runLn1(["apps"])
 
@@ -2601,6 +2705,73 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(command["requiresReason"] as? Bool, true)
         XCTAssertEqual(command["argv"] as? [String], [
             "Ln1", "desktop", "minimize-active-window",
+            "--timeout-ms", "2000",
+            "--interval-ms", "100",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: auditLog.path))
+    }
+
+    func testWorkflowRunDryRunRestoreWindowReturnsStructuredCommandWithoutRestoring() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility permission is required to preflight window restoration.")
+        }
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        guard let firstWindow = windows.first,
+              let elementID = firstWindow["id"] as? String else {
+            throw XCTSkip("No Accessibility window was available for restore dry-run.")
+        }
+        let settableAttributes = firstWindow["settableAttributes"] as? [String] ?? []
+        guard settableAttributes.contains(kAXMinimizedAttribute as String) else {
+            throw XCTSkip("The current Accessibility window does not expose settable AXMinimized.")
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-desktop-restore-dry-run-\(UUID().uuidString)")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "restore-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "true"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "restore-window")
+        XCTAssertEqual(object["mode"] as? String, "dry-run")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["executed"] as? Bool, false)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "desktop", "restore-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
             "--timeout-ms", "2000",
             "--interval-ms", "100",
             "--allow-risk", "medium",
@@ -3069,6 +3240,85 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("window minimize completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsDesktopWindowInspectionAfterRestoreWindow() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-desktop-restore-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "restore-window-transcript",
+            "transcriptPath": workflowLog.path,
+            "generatedAt": "2026-05-03T00:00:00Z",
+            "platform": "macOS",
+            "operation": "restore-window",
+            "mode": "execute",
+            "dryRun": false,
+            "ready": true,
+            "wouldExecute": true,
+            "executed": true,
+            "risk": "medium",
+            "mutates": true,
+            "blockers": [],
+            "command": [
+                "argv": [
+                    "Ln1", "desktop", "restore-window",
+                    "--pid", "123",
+                    "--element", "w0",
+                    "--allow-risk", "medium",
+                    "--reason", "Restore window"
+                ]
+            ],
+            "execution": [
+                "argv": [
+                    "Ln1", "desktop", "restore-window",
+                    "--pid", "123",
+                    "--element", "w0",
+                    "--allow-risk", "medium",
+                    "--reason", "Restore window"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "desktop.restoreWindow",
+                    "minimizedAfter": false,
+                    "verification": [
+                        "ok": true,
+                        "code": "window_restored"
+                    ]
+                ]
+            ],
+            "preflight": [
+                "operation": "restore-window",
+                "nextArguments": []
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "restore-window",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "restore-window")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-windows",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("window restore completed") == true)
     }
 
     func testWorkflowResumeSuggestsRunningAppsInspectionAfterQuitApp() throws {
