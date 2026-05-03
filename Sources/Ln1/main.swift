@@ -819,6 +819,22 @@ struct DesktopActiveWindowWaitResult: Codable {
     let message: String
 }
 
+struct DesktopMinimizeWindowResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let app: AppRecord
+    let elementID: String
+    let window: AuditElementSummary
+    let minimizedBefore: Bool?
+    let minimizedAfter: Bool?
+    let verification: FileOperationVerification
+    let identityVerification: IdentityVerification?
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct DesktopDisplayRecord: Codable {
     let id: String
     let displayID: UInt32
@@ -2321,6 +2337,8 @@ final class Ln1CLI {
             try writeJSON(desktopDisplays())
         case "active-window":
             try writeJSON(desktopActiveWindow())
+        case "minimize-active-window":
+            try writeJSON(desktopMinimizeActiveWindow())
         case "wait-active-window":
             try writeJSON(desktopActiveWindowWaitState())
         case "wait-window":
@@ -3579,6 +3597,8 @@ final class Ln1CLI {
             return workflowPreflightWaitElement()
         case "wait-active-app":
             return workflowPreflightWaitActiveApp()
+        case "minimize-active-window":
+            return workflowPreflightMinimizeActiveWindow()
         case "activate-app":
             return try workflowPreflightActivateApp()
         case "launch-app":
@@ -3682,7 +3702,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-frontmost-app, inspect-apps, inspect-installed-apps, inspect-menu, inspect-system, inspect-displays, inspect-active-window, inspect-windows, inspect-processes, start-task, record-task, finish-task, show-task, inspect-process, find-element, inspect-element, wait-process, wait-active-window, wait-window, wait-element, wait-active-app, activate-app, launch-app, hide-app, unhide-app, quit-app, open-file, open-url, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-frontmost-app, inspect-apps, inspect-installed-apps, inspect-menu, inspect-system, inspect-displays, inspect-active-window, inspect-windows, inspect-processes, start-task, record-task, finish-task, show-task, inspect-process, find-element, inspect-element, wait-process, wait-active-window, wait-window, wait-element, wait-active-app, minimize-active-window, activate-app, launch-app, hide-app, unhide-app, quit-app, open-file, open-url, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
         }
     }
 
@@ -5001,6 +5021,75 @@ final class Ln1CLI {
             operation: "wait-active-app",
             risk: "low",
             mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightMinimizeActiveWindow() -> WorkflowPreflight {
+        let action = "desktop.minimizeActiveWindow"
+        let risk = desktopActionRisk(for: action)
+        let timeoutMilliseconds = max(0, option("--wait-timeout-ms").flatMap(Int.init) ?? 2_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        var prerequisites = [
+            doctorAccessibilityCheck(),
+            doctorAuditLogCheck()
+        ]
+
+        do {
+            let state = try desktopActiveWindow()
+            prerequisites.append(DoctorCheck(
+                name: "workflow.activeWindow",
+                status: state.found ? "pass" : "fail",
+                required: true,
+                message: state.found
+                    ? "A frontmost visible desktop window is available for minimize-active-window."
+                    : state.message,
+                remediation: state.found ? nil : "Bring a regular app window to the front, then retry."
+            ))
+        } catch {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.activeWindow",
+                status: "fail",
+                required: true,
+                message: (error as? CommandError)?.description ?? error.localizedDescription,
+                remediation: "Run `Ln1 desktop active-window` and bring a regular app window to the front."
+            ))
+        }
+
+        let policy = policyDecision(actionRisk: risk)
+        prerequisites.append(DoctorCheck(
+            name: "workflow.policy",
+            status: policy.allowed ? "pass" : "fail",
+            required: true,
+            message: policy.message,
+            remediation: policy.allowed ? nil : "Pass `--allow-risk medium` after reviewing the active window target."
+        ))
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty {
+            var arguments = [
+                "Ln1", "desktop", "minimize-active-window",
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds),
+                "--allow-risk", risk
+            ]
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            arguments += ["--reason", "Describe intent"]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "minimize-active-window",
+            risk: risk,
+            mutates: true,
             prerequisites: prerequisites,
             blockers: blockers,
             nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
@@ -9664,6 +9753,18 @@ final class Ln1CLI {
             return (
                 arguments,
                 "Latest workspace open completed; inspect the active desktop window before choosing the next action."
+            )
+        }
+        if latestOperation == "minimize-active-window" {
+            let arguments = [
+                "Ln1", "workflow", "run",
+                "--operation", "inspect-windows",
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ]
+            return (
+                arguments,
+                "Latest active window minimize completed and verified; dry-run desktop window inventory before choosing the next action."
             )
         }
         if latestOperation == "inspect-clipboard" {
@@ -22733,6 +22834,8 @@ final class Ln1CLI {
         switch action {
         case "desktop.activeWindow", "desktop.listDisplays", "desktop.listWindows", "desktop.waitActiveWindow", "desktop.waitWindow":
             return "low"
+        case "desktop.minimizeActiveWindow":
+            return "medium"
         default:
             return "unknown"
         }
@@ -22842,6 +22945,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "desktop.waitActiveWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.waitActiveWindow"), mutates: false),
             PolicyActionRecord(name: "desktop.waitWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.waitWindow"), mutates: false),
+            PolicyActionRecord(name: "desktop.minimizeActiveWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.minimizeActiveWindow"), mutates: true),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
@@ -24412,11 +24516,11 @@ final class Ln1CLI {
           Ln1 policy
           Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|minimize-active-window|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|minimize-active-window|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--memory-log PATH] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation start-task|record-task|finish-task|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation start-task|record-task|finish-task|minimize-active-window|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|minimize-active-window|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
@@ -24436,6 +24540,7 @@ final class Ln1CLI {
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop displays
           Ln1 desktop active-window
+          Ln1 desktop minimize-active-window --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 desktop wait-active-window [--id ID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--title TEXT] [--match exact|prefix|contains] [--changed-from WINDOW_ID_OR_STABLE_ID] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop windows [--limit N] [--id ID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--title TEXT] [--match exact|prefix|contains] [--include-desktop] [--all-layers]
           Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
@@ -24519,6 +24624,7 @@ final class Ln1CLI {
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.
           - `desktop active-window` returns the frontmost visible window with stable identity metadata without screenshots.
+          - `desktop minimize-active-window` minimizes the frontmost Accessibility window after medium-risk approval and verifies AXMinimized.
           - `desktop wait-active-window` waits for the frontmost visible window to match target metadata or change identity.
           - `desktop windows` lists or filters visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
@@ -25044,6 +25150,201 @@ final class Ln1CLI {
         }
 
         return actions
+    }
+
+    private func desktopMinimizeActiveWindow() throws -> DesktopMinimizeWindowResult {
+        let commandName = "desktop.minimize-active-window"
+        let actionName = "desktop.minimizeActiveWindow"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = desktopActionRisk(for: actionName)
+        let policy = policyDecision(actionRisk: risk)
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 2_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        var appRecord: AppRecord?
+        var elementID: String?
+        var elementSummary: AuditElementSummary?
+        var identityVerification: IdentityVerification?
+        var verification: FileOperationVerification?
+        var minimizedBefore: Bool?
+        var minimizedAfter: Bool?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: commandName,
+                risk: risk,
+                reason: option("--reason"),
+                app: appRecord,
+                elementID: elementID,
+                element: elementSummary,
+                action: actionName,
+                policy: policy,
+                verification: verification,
+                identityVerification: identityVerification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            try requireTrusted()
+            guard let app = NSWorkspace.shared.frontmostApplication else {
+                let message = "no frontmost app is available for desktop minimize-active-window"
+                try writeAudit(ok: false, code: "frontmost_app_missing", message: message)
+                throw CommandError(description: message)
+            }
+            appRecord = self.appRecord(for: app)
+
+            let activeWindow = try activeAccessibilityWindow(for: app)
+            elementID = activeWindow.elementID
+            elementSummary = auditSummary(
+                activeWindow.element,
+                pathID: activeWindow.elementID,
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier
+            )
+
+            identityVerification = try verifyElementIdentity(elementSummary?.stableIdentity)
+            guard identityVerification?.ok != false else {
+                let message = identityVerification?.message ?? "window identity verification failed"
+                try writeAudit(ok: false, code: identityVerification?.code ?? "identity_rejected", message: message)
+                throw CommandError(description: message)
+            }
+
+            let writableAttributes = elementSummary?.settableAttributes ?? settableAttributes(activeWindow.element)
+            guard writableAttributes.contains(kAXMinimizedAttribute as String) else {
+                let message = "active window does not expose settable AXMinimized"
+                try writeAudit(ok: false, code: "minimized_not_settable", message: message)
+                throw CommandError(description: message)
+            }
+
+            minimizedBefore = boolAttribute(activeWindow.element, kAXMinimizedAttribute)
+            let requested: Bool
+            if minimizedBefore == true {
+                requested = true
+            } else {
+                let result = AXUIElementSetAttributeValue(
+                    activeWindow.element,
+                    kAXMinimizedAttribute as CFString,
+                    kCFBooleanTrue
+                )
+                requested = result == .success
+                if !requested {
+                    let message = "AXUIElementSetAttributeValue AXMinimized failed with \(result)"
+                    verification = FileOperationVerification(
+                        ok: false,
+                        code: "minimize_request_failed",
+                        message: message
+                    )
+                    try writeAudit(ok: false, code: "minimize_request_failed", message: message)
+                    throw CommandError(description: message)
+                }
+            }
+
+            verification = verifyAccessibilityWindowMinimized(
+                activeWindow.element,
+                requested: requested,
+                timeoutMilliseconds: timeoutMilliseconds,
+                intervalMilliseconds: intervalMilliseconds
+            )
+            minimizedAfter = boolAttribute(activeWindow.element, kAXMinimizedAttribute)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "active window minimize verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Minimized the active window for \(appDisplayName(appRecord!))."
+            try writeAudit(ok: true, code: "minimized", message: message)
+
+            return DesktopMinimizeWindowResult(
+                ok: true,
+                action: actionName,
+                risk: risk,
+                app: appRecord!,
+                elementID: elementID!,
+                window: elementSummary!,
+                minimizedBefore: minimizedBefore,
+                minimizedAfter: minimizedAfter,
+                verification: verification!,
+                identityVerification: identityVerification,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func activeAccessibilityWindow(for app: NSRunningApplication) throws -> (element: AXUIElement, elementID: String) {
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        let windows = accessibilityArray(axApp, kAXWindowsAttribute)
+        if let focusedWindow = accessibilityElement(axApp, kAXFocusedWindowAttribute) {
+            if let index = windows.firstIndex(where: { CFEqual($0, focusedWindow) }) {
+                return (focusedWindow, "w\(index)")
+            }
+            return (focusedWindow, "focused-window")
+        }
+
+        guard let firstWindow = windows.first else {
+            throw CommandError(description: "frontmost app has no Accessibility windows")
+        }
+        return (firstWindow, "w0")
+    }
+
+    private func verifyAccessibilityWindowMinimized(
+        _ window: AXUIElement,
+        requested: Bool,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) -> FileOperationVerification {
+        guard requested else {
+            return FileOperationVerification(
+                ok: false,
+                code: "minimize_request_failed",
+                message: "macOS did not accept the active window minimize request"
+            )
+        }
+
+        let deadline = Date().addingTimeInterval(Double(timeoutMilliseconds) / 1000.0)
+        repeat {
+            if boolAttribute(window, kAXMinimizedAttribute) == true {
+                return FileOperationVerification(
+                    ok: true,
+                    code: "window_minimized",
+                    message: "active window AXMinimized attribute is true"
+                )
+            }
+            if timeoutMilliseconds == 0 {
+                break
+            }
+            Thread.sleep(forTimeInterval: Double(intervalMilliseconds) / 1000.0)
+        } while Date() < deadline
+
+        return FileOperationVerification(
+            ok: false,
+            code: "window_not_minimized",
+            message: "active window was not minimized after the timeout"
+        )
     }
 
     private func desktopDisplays() -> DesktopDisplaysState {
