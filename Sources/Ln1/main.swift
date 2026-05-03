@@ -117,6 +117,24 @@ struct AppActivationResult: Codable {
     let message: String
 }
 
+struct AppActiveWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let target: AppRecord
+    let current: AppRecord?
+    let matched: Bool
+}
+
+struct AppActiveWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: AppActiveWaitVerification
+    let message: String
+}
+
 struct ProcessRecord: Codable {
     let pid: Int32
     let name: String?
@@ -2144,6 +2162,34 @@ final class Ln1CLI {
             ok: true,
             code: "active_app_matched",
             message: "frontmost app matches the requested app"
+        )
+    }
+
+    private func waitForActiveApp(
+        target: AppRecord,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) -> AppActiveWaitVerification {
+        let deadline = Date().addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var current = activeAppRecord()
+
+        while current?.pid != target.pid, Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            current = activeAppRecord()
+        }
+
+        let matched = current?.pid == target.pid
+        return AppActiveWaitVerification(
+            ok: matched,
+            code: matched ? "active_app_matched" : "active_app_timeout",
+            message: matched
+                ? "frontmost app matched the expected target"
+                : "frontmost app did not match the expected target before timeout",
+            target: target,
+            current: current,
+            matched: matched
         )
     }
 
@@ -8256,6 +8302,8 @@ final class Ln1CLI {
             try writeJSON(appActivationPlan())
         case "activate":
             try writeJSON(activateApp())
+        case "wait-active":
+            try writeJSON(appActiveWaitState())
         default:
             throw CommandError(description: "unknown apps mode '\(mode!)'")
         }
@@ -8479,6 +8527,28 @@ final class Ln1CLI {
             }
             throw CommandError(description: message)
         }
+    }
+
+    private func appActiveWaitState() throws -> AppActiveWaitResult {
+        let target = appRecord(for: try targetRunningApplicationForAppCommand())
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = waitForActiveApp(
+            target: target,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+
+        return AppActiveWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: verification.ok
+                ? "Frontmost app matched the expected target."
+                : "Timed out waiting for frontmost app target."
+        )
     }
 
     private func state() throws {
@@ -17547,7 +17617,7 @@ final class Ln1CLI {
 
     private func appActionRisk(for action: String) -> String {
         switch action {
-        case "apps.list", "apps.plan":
+        case "apps.list", "apps.plan", "apps.waitActive":
             return "low"
         case "apps.activate":
             return "medium"
@@ -17606,6 +17676,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: kAXPickAction as String, domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
+            PolicyActionRecord(name: "apps.waitActive", domain: "apps", risk: appActionRisk(for: "apps.waitActive"), mutates: false),
             PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
             PolicyActionRecord(name: "processes.list", domain: "processes", risk: processActionRisk(for: "processes.list"), mutates: false),
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
@@ -19035,6 +19106,7 @@ final class Ln1CLI {
           Ln1 apps [--all]
           Ln1 apps plan --operation activate (--pid PID|--bundle-id BUNDLE_ID|--current) [--allow-risk low|medium|high|unknown]
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 apps wait-active (--pid PID|--bundle-id BUNDLE_ID|--current) [--timeout-ms N] [--interval-ms N]
           Ln1 processes [list] [--limit N] [--name TEXT]
           Ln1 processes inspect (--pid PID|--current)
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
@@ -19102,6 +19174,7 @@ final class Ln1CLI {
           - `system context` reports bounded host, OS, shell, working directory, and runtime metadata.
           - `apps plan` previews app activation with policy and target checks without changing focus.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
+          - `apps wait-active` waits for the frontmost app to match a target without changing focus.
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `state` emits structured JSON from macOS Accessibility APIs.

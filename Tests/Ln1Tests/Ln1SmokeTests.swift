@@ -25,6 +25,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["apps.plan"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.plan"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["apps.plan"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["apps.waitActive"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.waitActive"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["apps.waitActive"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["apps.activate"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.activate"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["apps.activate"]?["mutates"] as? Bool, true)
@@ -402,6 +405,39 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, false)
         XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetRunning" })
         XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetActivatable" })
+    }
+
+    func testAppsWaitActiveReturnsMatchedFrontmostAppMetadata() throws {
+        let apps = try runLn1(["apps", "--all"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let result = try runLn1([
+            "apps",
+            "wait-active",
+            "--pid", "\(pid)",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+        let target = try XCTUnwrap(verification["target"] as? [String: Any])
+        let current = try XCTUnwrap(verification["current"] as? [String: Any])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "active_app_matched")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertEqual(target["pid"] as? Int, pid)
+        XCTAssertEqual(current["pid"] as? Int, pid)
     }
 
     func testAppsActivatePolicyDenialIsAuditedWithoutChangingFocus() throws {

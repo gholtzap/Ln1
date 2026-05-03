@@ -278,6 +278,14 @@ To bring one regular GUI app forward:
 
 `apps.activate` is a medium-risk mutating app action because it changes the active app and can affect subsequent keyboard input. It accepts `--pid`, `--bundle-id`, or `--current`, verifies the requested app becomes frontmost, and writes an audit record with the target app, policy decision, verification result, and outcome.
 
+Wait for one app to become frontmost without changing focus:
+
+```sh
+.build/debug/Ln1 apps wait-active --pid 123 --timeout-ms 5000
+```
+
+`apps.waitActive` is a low-risk non-mutating app action. It polls the structured frontmost app record until it matches the target PID or bundle identifier, returning target/current app metadata and a verification code instead of relying on fixed sleeps or screenshots.
+
 ## Inspect Running Processes
 
 ```sh
