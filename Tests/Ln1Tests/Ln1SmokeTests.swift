@@ -618,6 +618,8 @@ final class Ln1SmokeTests: XCTestCase {
             let children = try XCTUnwrap(menuBar["children"] as? [[String: Any]])
             XCTAssertEqual(menuBar["id"] as? String, "m0")
             XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
+            XCTAssertNotNil(menuBar["settableAttributes"] as? [String])
+            XCTAssertNotNil(menuBar["valueSettable"] as? Bool)
             XCTAssertLessThanOrEqual(children.count, 5)
         } else {
             XCTAssertTrue((object["message"] as? String)?.contains("No Accessibility menu bar") == true)
@@ -663,6 +665,8 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(identityVerification["ok"] as? Bool, true)
         XCTAssertEqual(identityVerification["minimumConfidence"] as? String, "low")
         XCTAssertEqual(identityVerification["confidenceAccepted"] as? Bool, true)
+        XCTAssertNotNil(element["settableAttributes"] as? [String])
+        XCTAssertNotNil(element["valueSettable"] as? Bool)
     }
 
     func testStateElementReturnsBoundedStructuredElement() throws {
@@ -708,6 +712,8 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(identityVerification["minimumConfidence"] as? String, "low")
         XCTAssertEqual(identityVerification["confidenceAccepted"] as? Bool, true)
         XCTAssertNotNil(identityVerification["actualID"] as? String)
+        XCTAssertNotNil(element["settableAttributes"] as? [String])
+        XCTAssertNotNil(element["valueSettable"] as? Bool)
     }
 
     func testStateWaitElementReturnsStructuredVerificationForCurrentWindow() throws {
@@ -8312,6 +8318,8 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(stableIdentity["label"] as? String)
         XCTAssertEqual(components["role"], "AXButton")
         XCTAssertEqual(components["title"], "save")
+        XCTAssertNotNil(firstWindow["settableAttributes"] as? [String])
+        XCTAssertEqual(firstWindow["valueSettable"] as? Bool, false)
         XCTAssertTrue(reasons.contains("role"))
         XCTAssertTrue(reasons.contains("title"))
     }

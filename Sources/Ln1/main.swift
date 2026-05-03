@@ -32,6 +32,8 @@ struct ElementNode: Codable {
     let enabled: Bool?
     let frame: Rect?
     let actions: [String]
+    let settableAttributes: [String]
+    let valueSettable: Bool
     let children: [ElementNode]
 }
 
@@ -603,6 +605,8 @@ struct AuditElementSummary: Codable {
     let help: String?
     let enabled: Bool?
     let actions: [String]
+    var settableAttributes: [String]? = nil
+    var valueSettable: Bool? = nil
 }
 
 struct AuditOutcome: Codable {
@@ -10735,6 +10739,7 @@ final class Ln1CLI {
         let help = stringAttribute(element, kAXHelpAttribute)
         let elementFrame = frame(element)
         let actions = actionNames(element)
+        let writableAttributes = settableAttributes(element)
 
         return AuditElementSummary(
             stableIdentity: accessibilityElementStableIdentity(
@@ -10753,7 +10758,9 @@ final class Ln1CLI {
             title: title,
             help: help,
             enabled: boolAttribute(element, kAXEnabledAttribute),
-            actions: actions
+            actions: actions,
+            settableAttributes: writableAttributes,
+            valueSettable: writableAttributes.contains(kAXValueAttribute as String)
         )
     }
 
@@ -19607,6 +19614,8 @@ final class Ln1CLI {
                 "enabled": true,
                 "frame": { "x": 10, "y": 20, "width": 80, "height": 32 },
                 "actions": ["AXPress"],
+                "settableAttributes": [],
+                "valueSettable": false,
                 "children": []
               }
             ]
@@ -19632,11 +19641,15 @@ final class Ln1CLI {
                 "role": "AXMenuBar",
                 "title": null,
                 "actions": [],
+                "settableAttributes": [],
+                "valueSettable": false,
                 "children": [
                   {
                     "id": "m0.0",
                     "role": "AXMenuBarItem",
                     "title": "File",
+                    "settableAttributes": [],
+                    "valueSettable": false,
                     "children": []
                   }
                 ]
@@ -19669,6 +19682,8 @@ final class Ln1CLI {
                     },
                     "role": "AXButton",
                     "actions": ["AXPress"],
+                    "settableAttributes": [],
+                    "valueSettable": false,
                     "children": []
                   }
                 ]
@@ -19752,7 +19767,9 @@ final class Ln1CLI {
                 "role": "AXButton",
                 "title": "Save",
                 "enabled": true,
-                "actions": ["AXPress"]
+                "actions": ["AXPress"],
+                "settableAttributes": [],
+                "valueSettable": false
               },
               "action": "AXPress",
               "policy": {
@@ -21960,6 +21977,7 @@ final class Ln1CLI {
         let enabled = boolAttribute(element, kAXEnabledAttribute)
         let elementFrame = frame(element)
         let actions = actionNames(element)
+        let writableAttributes = settableAttributes(element)
         let children: [ElementNode]
         if depth > 0 {
             children = accessibilityArray(element, kAXChildrenAttribute)
@@ -22000,6 +22018,8 @@ final class Ln1CLI {
             enabled: enabled,
             frame: elementFrame,
             actions: actions,
+            settableAttributes: writableAttributes,
+            valueSettable: writableAttributes.contains(kAXValueAttribute as String),
             children: children
         )
     }
@@ -22129,6 +22149,23 @@ final class Ln1CLI {
             return []
         }
         return names.sorted()
+    }
+
+    private func settableAttributes(_ element: AXUIElement) -> [String] {
+        var names: CFArray?
+        guard AXUIElementCopyAttributeNames(element, &names) == .success,
+              let names = names as? [String] else {
+            return []
+        }
+        return names
+            .filter { isAttributeSettable($0, on: element) }
+            .sorted()
+    }
+
+    private func isAttributeSettable(_ attribute: String, on element: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
+        return result == .success && settable.boolValue
     }
 
     private func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String? {

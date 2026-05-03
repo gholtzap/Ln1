@@ -397,9 +397,9 @@ Wait for a desktop window to appear or disappear without relying on a fixed slee
 .build/debug/Ln1 state --depth 4 --max-children 120
 ```
 
-The output is JSON with app metadata, windows, elements, frames, values, and available actions.
+The output is JSON with app metadata, windows, elements, frames, values, available actions, settable Accessibility attributes, and a `valueSettable` shortcut.
 
-Each Accessibility node includes the path-style `id` used by `perform` plus a semantic `stableIdentity`. The stable identity summarizes owner, role, title or help text, actions, and coarse frame when available, then reports a digest, confidence, readable label, components, and reasons. Use the confidence and reasons to decide whether a repeated observation still refers to the same control before acting.
+Each Accessibility node includes the path-style `id` used by `perform` plus a semantic `stableIdentity`. The stable identity summarizes owner, role, title or help text, actions, and coarse frame when available, then reports a digest, confidence, readable label, components, and reasons. Use the confidence, reasons, `actions`, and `settableAttributes` to decide whether a repeated observation still refers to the same control and whether it supports press-style or value-setting operations before acting.
 
 Inspect one known Accessibility element path without walking the full app tree:
 
@@ -488,7 +488,7 @@ Use `--audit-log` to send records to another file during tests or isolated runs:
 .build/debug/Ln1 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open details" --audit-log /tmp/Ln1-audit.jsonl
 ```
 
-The audit entry records typed intent and outcome: timestamp, risk level, target app, element ID, stable identity, available element actions, requested action, optional reason, optional identity verification, and result. It intentionally stores only a small element summary and does not store element values.
+The audit entry records typed intent and outcome: timestamp, risk level, target app, element ID, stable identity, available element actions, settable attribute names, requested action, optional reason, optional identity verification, and result. It intentionally stores only a small element summary and does not store element values.
 
 ## Review The Audit Log
 
