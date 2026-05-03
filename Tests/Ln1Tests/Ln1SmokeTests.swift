@@ -44,6 +44,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["apps.activate"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.activate"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["apps.activate"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["apps.launch"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.launch"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["apps.launch"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["processes.list"]?["domain"] as? String, "processes")
         XCTAssertEqual(actionByName["processes.list"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["processes.list"]?["mutates"] as? Bool, false)
@@ -914,6 +917,51 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }
 
+    func testAppsLaunchPolicyDenialIsAuditedWithoutOpeningApp() throws {
+        guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") != nil else {
+            throw XCTSkip("Finder application bundle was not available from LaunchServices.")
+        }
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-app-launch-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let rejected = try runLn1([
+            "apps",
+            "launch",
+            "--bundle-id", "com.apple.finder",
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let target = try XCTUnwrap(entry["appLaunchTarget"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "apps.launch")
+        XCTAssertEqual(entry["action"] as? String, "apps.launch")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(target["bundleIdentifier"] as? String, "com.apple.finder")
+        XCTAssertNotNil(target["path"] as? String)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
     func testWorkflowPreflightActivateAppBuildsAuditedActivationCommand() throws {
         let apps = try runLn1(["apps"])
 
@@ -951,6 +999,45 @@ final class Ln1SmokeTests: XCTestCase {
             "--reason", "Describe intent"
         ])
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "apps.targetRunning" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
+    }
+
+    func testWorkflowPreflightLaunchAppBuildsAuditedLaunchCommand() throws {
+        guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") != nil else {
+            throw XCTSkip("Finder application bundle was not available from LaunchServices.")
+        }
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-app-launch-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "launch-app",
+            "--bundle-id", "com.apple.finder",
+            "--activate", "false",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "launch-app")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "apps", "launch",
+            "--bundle-id", "com.apple.finder",
+            "--activate", "false",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appLaunchTarget" && $0["status"] as? String == "pass" })
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
     }
 
@@ -8576,6 +8663,27 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "value_verified")
         XCTAssertEqual(identityVerification["code"] as? String, "identity_verified")
+    }
+
+    func testSchemaDocumentsAppLaunchResults() throws {
+        let result = try runLn1(["schema"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let appsLaunch = try XCTUnwrap(object["appsLaunch"] as? [String: Any])
+        let resultObject = try XCTUnwrap(appsLaunch["result"] as? [String: Any])
+        let target = try XCTUnwrap(resultObject["target"] as? [String: Any])
+        let verification = try XCTUnwrap(resultObject["verification"] as? [String: Any])
+
+        XCTAssertTrue((appsLaunch["command"] as? String)?.contains("--allow-risk medium") == true)
+        XCTAssertTrue((appsLaunch["command"] as? String)?.contains("--activate true") == true)
+        XCTAssertEqual(resultObject["action"] as? String, "apps.launch")
+        XCTAssertEqual(resultObject["risk"] as? String, "medium")
+        XCTAssertEqual(resultObject["activate"] as? Bool, true)
+        XCTAssertEqual(target["bundleIdentifier"] as? String, "com.apple.TextEdit")
+        XCTAssertNotNil(target["path"] as? String)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "launched_active_app")
     }
 
     func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {

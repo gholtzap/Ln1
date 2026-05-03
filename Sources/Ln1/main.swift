@@ -147,6 +147,12 @@ struct AppPreflightCheck: Codable {
     let message: String
 }
 
+struct AppLaunchTargetSummary: Codable {
+    let name: String?
+    let bundleIdentifier: String?
+    let path: String
+}
+
 struct AppActivationPlan: Codable {
     let generatedAt: String
     let platform: String
@@ -160,6 +166,21 @@ struct AppActivationPlan: Codable {
     let checks: [AppPreflightCheck]
     let canExecute: Bool
     let requiredAllowRisk: String
+    let message: String
+}
+
+struct AppLaunchResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let target: AppLaunchTargetSummary
+    let app: AppRecord?
+    let activeBefore: AppRecord?
+    let activeAfter: AppRecord?
+    let activate: Bool
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
     let message: String
 }
 
@@ -1493,6 +1514,7 @@ struct ActionAuditRecord: Codable {
     var clipboard: ClipboardAuditSummary? = nil
     var clipboardBefore: ClipboardAuditSummary? = nil
     var clipboardAfter: ClipboardAuditSummary? = nil
+    var appLaunchTarget: AppLaunchTargetSummary? = nil
     var valueLength: Int? = nil
     var valueDigest: String? = nil
     var currentValueLength: Int? = nil
@@ -2263,6 +2285,45 @@ final class Ln1CLI {
         throw CommandError(description: "apps plan/activate requires --pid PID, --bundle-id BUNDLE_ID, or --current")
     }
 
+    private func appLaunchTargetForAppCommand() throws -> (url: URL, summary: AppLaunchTargetSummary) {
+        if let bundleIdentifier = option("--bundle-id") {
+            guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+                throw CommandError(description: "no installed application was found for --bundle-id \(bundleIdentifier)")
+            }
+            return (
+                url,
+                AppLaunchTargetSummary(
+                    name: Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleName") as? String
+                        ?? url.deletingPathExtension().lastPathComponent,
+                    bundleIdentifier: Bundle(url: url)?.bundleIdentifier ?? bundleIdentifier,
+                    path: url.path
+                )
+            )
+        }
+
+        if let rawPath = option("--path") {
+            let url = URL(fileURLWithPath: expandedPath(rawPath)).standardizedFileURL
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  url.pathExtension == "app" else {
+                throw CommandError(description: "apps launch --path requires an existing .app bundle path")
+            }
+            let bundle = Bundle(url: url)
+            return (
+                url,
+                AppLaunchTargetSummary(
+                    name: bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
+                        ?? url.deletingPathExtension().lastPathComponent,
+                    bundleIdentifier: bundle?.bundleIdentifier,
+                    path: url.path
+                )
+            )
+        }
+
+        throw CommandError(description: "apps launch requires --bundle-id BUNDLE_ID or --path APP_BUNDLE")
+    }
+
     private func appActivationChecks(target: NSRunningApplication) -> [AppPreflightCheck] {
         [
             AppPreflightCheck(
@@ -2310,6 +2371,71 @@ final class Ln1CLI {
             code: "active_app_matched",
             message: "frontmost app matches the requested app"
         )
+    }
+
+    private func verifyAppLaunch(
+        target: AppLaunchTargetSummary,
+        launched: NSRunningApplication?,
+        activeAfter: AppRecord?,
+        activate: Bool
+    ) -> FileOperationVerification {
+        guard let launched, !launched.isTerminated else {
+            return FileOperationVerification(
+                ok: false,
+                code: "app_not_running",
+                message: "launched application was not running after launch request"
+            )
+        }
+
+        if let bundleIdentifier = target.bundleIdentifier,
+           launched.bundleIdentifier != bundleIdentifier {
+            return FileOperationVerification(
+                ok: false,
+                code: "bundle_mismatch",
+                message: "running app bundle identifier did not match requested launch target"
+            )
+        }
+
+        if activate, activeAfter?.pid != launched.processIdentifier {
+            return FileOperationVerification(
+                ok: false,
+                code: "active_app_mismatch",
+                message: "frontmost app did not match the launched app after activation"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: activate ? "launched_active_app" : "app_running",
+            message: activate
+                ? "launched app is running and frontmost"
+                : "launched app is running"
+        )
+    }
+
+    private func openApplication(at url: URL, activate: Bool) throws -> NSRunningApplication {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = activate
+
+        let semaphore = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var openedApp: NSRunningApplication?
+        nonisolated(unsafe) var openError: Error?
+
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { app, error in
+            openedApp = app
+            openError = error
+            semaphore.signal()
+        }
+
+        semaphore.wait()
+
+        if let openError {
+            throw CommandError(description: openError.localizedDescription)
+        }
+        guard let openedApp else {
+            throw CommandError(description: "macOS did not return a running app for launch target \(url.path)")
+        }
+        return openedApp
     }
 
     private func waitForActiveApp(
@@ -2753,6 +2879,8 @@ final class Ln1CLI {
             return workflowPreflightWaitActiveApp()
         case "activate-app":
             return try workflowPreflightActivateApp()
+        case "launch-app":
+            return try workflowPreflightLaunchApp()
         case "control-active-app":
             return workflowPreflightControlActiveApp()
         case "set-element-value":
@@ -2842,7 +2970,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-menu, inspect-system, inspect-displays, inspect-process, inspect-element, wait-process, wait-window, wait-element, wait-active-app, activate-app, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-menu, inspect-system, inspect-displays, inspect-process, inspect-element, wait-process, wait-window, wait-element, wait-active-app, activate-app, launch-app, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
         }
     }
 
@@ -3636,6 +3764,75 @@ final class Ln1CLI {
             prerequisites: prerequisites,
             blockers: blockers,
             nextCommand: nextCommand,
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightLaunchApp() throws -> WorkflowPreflight {
+        let action = "apps.launch"
+        let risk = appActionRisk(for: action)
+        let activate = option("--activate").map(parseBool) ?? true
+        var prerequisites = [doctorAuditLogCheck()]
+
+        let target: (url: URL, summary: AppLaunchTargetSummary)?
+        do {
+            target = try appLaunchTargetForAppCommand()
+            prerequisites.append(DoctorCheck(
+                name: "workflow.appLaunchTarget",
+                status: "pass",
+                required: true,
+                message: "An installed app target is available for launch-app.",
+                remediation: nil
+            ))
+        } catch {
+            target = nil
+            prerequisites.append(DoctorCheck(
+                name: "workflow.appLaunchTarget",
+                status: "fail",
+                required: true,
+                message: (error as? CommandError)?.description ?? error.localizedDescription,
+                remediation: "Pass `--bundle-id BUNDLE_ID` for an installed app or `--path /Applications/App.app`."
+            ))
+        }
+
+        let policy = policyDecision(actionRisk: risk)
+        prerequisites.append(DoctorCheck(
+            name: "workflow.policy",
+            status: policy.allowed ? "pass" : "fail",
+            required: true,
+            message: policy.message,
+            remediation: policy.allowed ? nil : "Pass `--allow-risk medium` after reviewing the app launch target."
+        ))
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let target {
+            var arguments = ["Ln1", "apps", "launch"]
+            if let bundleIdentifier = option("--bundle-id") ?? target.summary.bundleIdentifier {
+                arguments += ["--bundle-id", bundleIdentifier]
+            } else {
+                arguments += ["--path", target.summary.path]
+            }
+            arguments += [
+                "--activate", String(activate),
+                "--allow-risk", risk
+            ]
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            arguments += ["--reason", "Describe intent"]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "launch-app",
+            risk: risk,
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
             nextArguments: nextArguments
         )
     }
@@ -9804,6 +10001,8 @@ final class Ln1CLI {
             try writeJSON(appActivationPlan())
         case "activate":
             try writeJSON(activateApp())
+        case "launch":
+            try writeJSON(launchApp())
         case "wait-active":
             try writeJSON(appActiveWaitState())
         default:
@@ -10011,6 +10210,98 @@ final class Ln1CLI {
                 target: targetRecord,
                 activeBefore: activeBefore,
                 activeAfter: activeAfter,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func launchApp() throws -> AppLaunchResult {
+        let target = try appLaunchTargetForAppCommand()
+        let action = "apps.launch"
+        let risk = appActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let activate = option("--activate").map(parseBool) ?? true
+        let activeBefore = activeAppRecord()
+        var launchedApp: NSRunningApplication?
+        var launchedRecord: AppRecord?
+        var activeAfter = activeBefore
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "apps.launch",
+                risk: risk,
+                reason: option("--reason"),
+                app: launchedRecord,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                appLaunchTarget: target.summary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            launchedApp = try openApplication(at: target.url, activate: activate)
+            Thread.sleep(forTimeInterval: 0.15)
+            if let launchedApp {
+                launchedRecord = appRecord(for: launchedApp)
+            }
+            activeAfter = activeAppRecord()
+            verification = verifyAppLaunch(
+                target: target.summary,
+                launched: launchedApp,
+                activeAfter: activeAfter,
+                activate: activate
+            )
+
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "app launch verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Launched \(target.summary.name ?? target.summary.bundleIdentifier ?? target.summary.path)."
+            try writeAudit(ok: true, code: "launched", message: message)
+
+            return AppLaunchResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                target: target.summary,
+                app: launchedRecord,
+                activeBefore: activeBefore,
+                activeAfter: activeAfter,
+                activate: activate,
                 verification: verification!,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
@@ -19557,7 +19848,7 @@ final class Ln1CLI {
         switch action {
         case "apps.list", "apps.plan", "apps.waitActive":
             return "low"
-        case "apps.activate":
+        case "apps.activate", "apps.launch":
             return "medium"
         default:
             return "unknown"
@@ -19620,6 +19911,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
             PolicyActionRecord(name: "apps.waitActive", domain: "apps", risk: appActionRisk(for: "apps.waitActive"), mutates: false),
             PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
+            PolicyActionRecord(name: "apps.launch", domain: "apps", risk: appActionRisk(for: "apps.launch"), mutates: true),
             PolicyActionRecord(name: "processes.list", domain: "processes", risk: processActionRisk(for: "processes.list"), mutates: false),
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
             PolicyActionRecord(name: "processes.wait", domain: "processes", risk: processActionRisk(for: "processes.wait"), mutates: false),
@@ -19977,6 +20269,31 @@ final class Ln1CLI {
                   "reason": "Inspect the active app's UI tree with stable element identities."
                 }
               ]
+            }
+          },
+          "appsLaunch": {
+            "command": "Ln1 apps launch --bundle-id com.apple.TextEdit --activate true --allow-risk medium --reason 'Open editor'",
+            "result": {
+              "ok": true,
+              "action": "apps.launch",
+              "risk": "medium",
+              "target": {
+                "name": "TextEdit",
+                "bundleIdentifier": "com.apple.TextEdit",
+                "path": "/System/Applications/TextEdit.app"
+              },
+              "app": { "name": "TextEdit", "bundleIdentifier": "com.apple.TextEdit", "pid": 456 },
+              "activeBefore": { "name": "Terminal", "bundleIdentifier": "com.apple.Terminal", "pid": 123 },
+              "activeAfter": { "name": "TextEdit", "bundleIdentifier": "com.apple.TextEdit", "pid": 456 },
+              "activate": true,
+              "verification": {
+                "ok": true,
+                "code": "launched_active_app",
+                "message": "launched app is running and frontmost"
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl",
+              "message": "Launched TextEdit."
             }
           },
           "state": {
@@ -21119,16 +21436,17 @@ final class Ln1CLI {
           Ln1 policy
           Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           Ln1 workflow run --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation activate-app|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation activate-app|launch-app|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-menu|inspect-system|inspect-displays|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
           Ln1 apps plan --operation activate (--pid PID|--bundle-id BUNDLE_ID|--current) [--allow-risk low|medium|high|unknown]
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 apps launch (--bundle-id BUNDLE_ID|--path APP_BUNDLE) --allow-risk medium [--activate true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 apps wait-active (--pid PID|--bundle-id BUNDLE_ID|--current) [--timeout-ms N] [--interval-ms N]
           Ln1 processes [list] [--limit N] [--name TEXT]
           Ln1 processes inspect (--pid PID|--current)
@@ -21203,6 +21521,7 @@ final class Ln1CLI {
           - `system context` reports bounded host, OS, shell, working directory, and runtime metadata.
           - `apps plan` previews app activation with policy and target checks without changing focus.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
+          - `apps launch` opens an installed `.app` by bundle ID or path after medium-risk approval and verifies running/frontmost state.
           - `apps wait-active` waits for the frontmost app to match a target without changing focus.
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.

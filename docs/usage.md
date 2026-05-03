@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -71,7 +71,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -89,6 +89,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-element --pid 123 --element w0.2 --title "Export Complete" --match contains --wait-timeout-ms 30000
 .build/debug/Ln1 workflow preflight --operation wait-active-app --pid 123 --wait-timeout-ms 5000
 .build/debug/Ln1 workflow preflight --operation activate-app --pid 123 --allow-risk medium
+.build/debug/Ln1 workflow preflight --operation launch-app --bundle-id com.apple.TextEdit --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
 .build/debug/Ln1 workflow preflight --operation click-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[type=submit]'
 .build/debug/Ln1 workflow preflight --operation fill-browser --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'input[name=q]' --text "search query"
@@ -163,9 +164,11 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 .build/debug/Ln1 workflow run --operation create-directory --path ~/Desktop/Archive --allow-risk medium --dry-run false --execute-mutating true --reason "Prepare archive folder"
 ```
 
-Use dry-run first for mutating browser actions, Accessibility value changes, and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` and `set-element-value` target the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
+Use dry-run first for mutating browser actions, Accessibility value changes, app focus or launch actions, and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` and `set-element-value` target the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
 
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
+
+`launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log.
 
 `set-element-value` is a mutating workflow operation for setting one Accessibility element's `AXValue`. It requires `--element` and `--value`, accepts the same stable identity guard as `perform`, wraps `set-value` with explicit medium-risk approval, and only executes through `workflow run --dry-run false --execute-mutating true --reason TEXT`. After `inspect-element` or `wait-element` finds a settable value element, `workflow resume` suggests a dry-run `set-element-value` plan. After a successful value update, `workflow resume` suggests a dry-run element inspection so the next action is grounded in current structured UI state.
 
@@ -322,6 +325,15 @@ To bring one regular GUI app forward:
 ```
 
 `apps.activate` is a medium-risk mutating app action because it changes the active app and can affect subsequent keyboard input. It accepts `--pid`, `--bundle-id`, or `--current`, verifies the requested app becomes frontmost, and writes an audit record with the target app, policy decision, verification result, and outcome.
+
+Launch an installed GUI app by bundle identifier or `.app` path:
+
+```sh
+.build/debug/Ln1 apps launch --bundle-id com.apple.TextEdit --allow-risk medium --reason "Open editor"
+.build/debug/Ln1 apps launch --path /Applications/TextEdit.app --activate false --allow-risk medium --reason "Start editor in background"
+```
+
+`apps.launch` is a medium-risk mutating app action. `--activate` defaults to `true`; when activation is requested, Ln1 verifies the launched app is also frontmost. Each launch audit records the requested bundle/path target, policy decision, verification result, and outcome.
 
 Wait for one app to become frontmost without changing focus:
 
@@ -521,6 +533,7 @@ Filter audit records before applying the limit:
 
 ```sh
 .build/debug/Ln1 audit --command files.move --code moved --limit 10
+.build/debug/Ln1 audit --command apps.launch --code launched --limit 10
 .build/debug/Ln1 audit --id 5B3D2E12-1D75-4C9E-B6DA-FD1F3C9E6A57
 ```
 
