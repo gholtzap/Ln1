@@ -71,7 +71,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-frontmost-app`, `inspect-apps`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-processes`, `start-task`, `record-task`, `finish-task`, `show-task`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-frontmost-app`, `inspect-apps`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-processes`, `start-task`, `record-task`, `finish-task`, `show-task`, `inspect-process`, `inspect-element`, `wait-process`, `wait-active-window`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -95,6 +95,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation inspect-process --pid 123
 .build/debug/Ln1 workflow preflight --operation inspect-element --pid 123 --element w0.3.1 --expect-identity accessibilityElement:abc123
 .build/debug/Ln1 workflow preflight --operation wait-process --pid 123 --exists false --wait-timeout-ms 5000
+.build/debug/Ln1 workflow preflight --operation wait-active-window --title "Export Complete" --match contains --wait-timeout-ms 30000
 .build/debug/Ln1 workflow preflight --operation wait-window --title "Export Complete" --exists true --wait-timeout-ms 30000
 .build/debug/Ln1 workflow preflight --operation wait-element --pid 123 --element w0.2 --title "Export Complete" --match contains --wait-timeout-ms 30000
 .build/debug/Ln1 workflow preflight --operation wait-active-app --pid 123 --wait-timeout-ms 5000
@@ -209,6 +210,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `inspect-element` is a non-mutating workflow operation for one Accessibility element by path. It runs `state element`, captures the bounded element subtree plus stable identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the inspected element is enabled and pressable, a guarded `set-element-value` dry-run when `AXValue` is settable, or a bounded element re-inspection.
 
 `wait-process` is a non-mutating workflow operation for bounded PID existence waiting. It runs `processes wait`, captures structured verification in the workflow transcript, and `workflow resume` suggests process inspection when the PID is confirmed present or a fresh process list when it is confirmed absent.
+
+`wait-active-window` is a non-mutating workflow operation for frontmost window verification. It runs `desktop wait-active-window`, can match by transient window ID, stable identity ID, owner PID, bundle identifier, title, or `--changed-from`, captures the current frontmost window evidence in the transcript, and `workflow resume` suggests owner process inspection when the wait matches.
 
 `wait-window` is a non-mutating workflow operation for bounded desktop window existence waiting. It runs `desktop wait-window`, captures target filters and matching WindowServer metadata in the workflow transcript, and `workflow resume` suggests owner-process or active-app inspection when a window appears, or a fresh desktop window list when a match disappears.
 
@@ -450,10 +453,14 @@ By default `desktop windows` reports visible non-desktop, normal-layer windows. 
 Wait for a desktop window to appear or disappear without relying on a fixed sleep:
 
 ```sh
+.build/debug/Ln1 desktop wait-active-window --title "Export Complete" --match contains --timeout-ms 30000
+.build/debug/Ln1 desktop wait-active-window --changed-from desktopWindow:STABLE_ID --timeout-ms 5000
 .build/debug/Ln1 desktop wait-window --bundle-id com.apple.TextEdit --exists true --timeout-ms 5000
 .build/debug/Ln1 desktop wait-window --title "Export Complete" --match contains --exists true --timeout-ms 30000
 .build/debug/Ln1 desktop wait-window --id desktopWindow:STABLE_ID --exists false --timeout-ms 5000
 ```
+
+`desktop.waitActiveWindow` polls the same frontmost normal-layer WindowServer metadata as `desktop active-window` and returns structured verification: target filters, whether the current frontmost window was found, whether it changed from a previous transient or stable ID, the current window record, and a matched/timeout code. It can match by transient window ID, semantic `stableIdentity.id`, owner PID, bundle identifier, or title.
 
 `desktop.waitWindow` polls the same WindowServer metadata as `desktop windows` and returns structured verification: the target filters, expected existence state, current matching windows, match count, and a timeout or matched code. It can match by transient window `id`, semantic `stableIdentity.id`, owner PID, bundle identifier, or title with `--match exact|prefix|contains`.
 
