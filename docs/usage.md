@@ -60,9 +60,12 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 
 ```sh
 .build/debug/Ln1 state menu --depth 2 --max-children 80
+.build/debug/Ln1 state find --title "Save" --action AXPress --include-menu --limit 20
 ```
 
 `state menu` returns the target app's macOS Accessibility menu bar as a bounded tree with stable element identities, roles, titles, enabled state, actions, and child paths such as `m0.1.2`. Pass `--pid PID` to inspect a specific running app instead of the frontmost app. This is read-only and useful before selecting a trusted menu action or deciding whether a menu command is present.
+
+`state find` searches the target app's Accessibility windows, and optionally menu bar, by semantic attributes such as role, title, value, help text, action, and enabled state. It returns bounded candidate element IDs with stable identities so the next step can inspect or act on a concrete element without manually scanning a full tree.
 
 ## Preflight A Workflow
 
@@ -93,6 +96,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
 .build/debug/Ln1 workflow preflight --operation set-element-value --element w0.4 --expect-identity accessibilityElement:abc123 --value "New title"
 .build/debug/Ln1 workflow preflight --operation inspect-process --pid 123
+.build/debug/Ln1 workflow preflight --operation find-element --title Save --action AXPress --include-menu --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-element --pid 123 --element w0.3.1 --expect-identity accessibilityElement:abc123
 .build/debug/Ln1 workflow preflight --operation wait-process --pid 123 --exists false --wait-timeout-ms 5000
 .build/debug/Ln1 workflow preflight --operation wait-active-window --title "Export Complete" --match contains --wait-timeout-ms 30000
@@ -206,6 +210,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `start-task`, `record-task`, `finish-task`, and `show-task` are workflow operations for task-scoped memory. They wrap `task start`, `task record`, `task finish`, and `task show` with medium-risk policy checks, transcript capture, optional `--memory-log` isolation, and sensitive-summary redaction from the underlying task memory layer. After starting a task, `workflow resume` suggests a dry-run `record-task` step for the concrete task ID; after recording or finishing, it suggests a dry-run `show-task` read so the next step is grounded in persisted task context.
 
 `inspect-process` is a non-mutating workflow operation for one process by `--pid` or `--current`. It runs `processes inspect`, captures structured process metadata in the workflow transcript, and `workflow resume` can suggest a dry-run app activation when the inspected process belongs to a GUI app.
+
+`find-element` is a non-mutating workflow operation for bounded Accessibility element discovery. It runs `state find`, forwards semantic filters such as `--role`, `--title`, `--value`, `--action`, and `--enabled`, captures matching candidate IDs and stable identities in the transcript, and `workflow resume` suggests a dry-run `inspect-element` step for the first candidate.
 
 `inspect-element` is a non-mutating workflow operation for one Accessibility element by path. It runs `state element`, captures the bounded element subtree plus stable identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the inspected element is enabled and pressable, a guarded `set-element-value` dry-run when `AXValue` is settable, or a bounded element re-inspection.
 

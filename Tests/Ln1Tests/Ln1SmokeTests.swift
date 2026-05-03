@@ -26,6 +26,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["accessibility.inspectElement"]?["domain"] as? String, "accessibility")
         XCTAssertEqual(actionByName["accessibility.inspectElement"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["accessibility.inspectElement"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["accessibility.findElement"]?["domain"] as? String, "accessibility")
+        XCTAssertEqual(actionByName["accessibility.findElement"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["accessibility.findElement"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["domain"] as? String, "accessibility")
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["mutates"] as? Bool, false)
@@ -1264,6 +1267,44 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(element["valueSettable"] as? Bool)
     }
 
+    func testStateFindReturnsBoundedElementCandidates() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let result = try runLn1([
+            "state",
+            "find",
+            "--role", "AXWindow",
+            "--match", "exact",
+            "--depth", "0",
+            "--max-children", "10",
+            "--limit", "5"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let query = try XCTUnwrap(object["query"] as? [String: Any])
+        let matches = try XCTUnwrap(object["matches"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["depth"] as? Int, 0)
+        XCTAssertEqual(object["maxChildren"] as? Int, 10)
+        XCTAssertEqual(object["limit"] as? Int, 5)
+        XCTAssertEqual(object["count"] as? Int, matches.count)
+        XCTAssertLessThanOrEqual(matches.count, 5)
+        XCTAssertEqual(query["role"] as? String, "AXWindow")
+        XCTAssertEqual(query["match"] as? String, "exact")
+        XCTAssertEqual(query["includeMenu"] as? Bool, false)
+
+        if let first = matches.first {
+            let stableIdentity = try XCTUnwrap(first["stableIdentity"] as? [String: Any])
+            XCTAssertNotNil(first["id"] as? String)
+            XCTAssertEqual(first["role"] as? String, "AXWindow")
+            XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
+        }
+    }
+
     func testStateElementReturnsBoundedStructuredElement() throws {
         guard AXIsProcessTrusted() else {
             throw XCTSkip("Accessibility trust is not enabled.")
@@ -1393,6 +1434,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.wait" })
+        if accessibility["trusted"] as? Bool == true {
+            XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "accessibility.findElement" })
+        }
     }
 
     func testAppsInstalledListsLaunchableBundleMetadata() throws {
@@ -2417,6 +2461,64 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.element" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightFindElementBuildsStateFindCommand() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let apps = try runLn1(["apps", "--all"])
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "find-element",
+            "--pid", "\(pid)",
+            "--role", "AXButton",
+            "--title", "Save",
+            "--action", "AXPress",
+            "--enabled", "true",
+            "--match", "contains",
+            "--include-menu",
+            "--depth", "3",
+            "--max-children", "40",
+            "--result-depth", "1",
+            "--result-max-children", "3",
+            "--limit", "7"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "find-element")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "state", "find",
+            "--pid", "\(pid)",
+            "--role", "AXButton",
+            "--title", "Save",
+            "--action", "AXPress",
+            "--enabled", "true",
+            "--match", "contains",
+            "--depth", "3",
+            "--max-children", "40",
+            "--result-depth", "1",
+            "--result-max-children", "3",
+            "--limit", "7",
+            "--include-menu"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.elementQuery" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowPreflightWaitElementBuildsStateWaitCommand() throws {
         guard AXIsProcessTrusted() else {
             throw XCTSkip("Accessibility trust is not enabled.")
@@ -2734,6 +2836,67 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(identityVerification["ok"] as? Bool, true)
         XCTAssertEqual(identityVerification["minimumConfidence"] as? String, "low")
         XCTAssertEqual(identityVerification["confidenceAccepted"] as? Bool, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesNonMutatingElementFindAndCapturesJSON() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-element-find-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "find-element",
+            "--pid", "\(pid)",
+            "--role", "AXWindow",
+            "--match", "exact",
+            "--depth", "0",
+            "--max-children", "10",
+            "--limit", "5",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let matches = try XCTUnwrap(outputJSON["matches"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "find-element")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "state", "find",
+            "--pid", "\(pid)",
+            "--role", "AXWindow",
+            "--match", "exact",
+            "--depth", "0",
+            "--max-children", "10",
+            "--result-depth", "0",
+            "--result-max-children", "20",
+            "--limit", "5"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertEqual(outputJSON["count"] as? Int, matches.count)
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
@@ -3253,6 +3416,80 @@ final class Ln1SmokeTests: XCTestCase {
             "--action", kAXPressAction as String,
             "--allow-risk", "low",
             "--reason", "Describe intent"
+        ])
+    }
+
+    func testWorkflowResumeSuggestsElementInspectionAfterElementFind() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-element-find-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "find-element-transcript",
+            "operation": "find-element",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "state", "find",
+                    "--pid", "123",
+                    "--title", "Save"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "app": [
+                        "pid": 123,
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App"
+                    ],
+                    "matches": [
+                        [
+                            "id": "w0.1",
+                            "stableIdentity": [
+                                "id": "accessibilityElement:abc123",
+                                "kind": "accessibilityElement",
+                                "confidence": "high",
+                                "label": "AXButton: Save",
+                                "components": [:],
+                                "reasons": []
+                            ],
+                            "enabled": true,
+                            "actions": [kAXPressAction as String]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "find-element",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "find-element")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-element",
+            "--pid", "123",
+            "--element", "w0.1",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--depth", "1",
+            "--max-children", "20",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
         ])
     }
 
