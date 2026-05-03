@@ -254,6 +254,23 @@ struct AppLaunchPlan: Codable {
     let message: String
 }
 
+struct AppQuitPlan: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let action: String
+    let risk: String
+    let actionMutates: Bool
+    let policy: AuditPolicyDecision
+    let target: AppRecord
+    let activeBefore: AppRecord?
+    let force: Bool
+    let checks: [AppPreflightCheck]
+    let canExecute: Bool
+    let requiredAllowRisk: String
+    let message: String
+}
+
 struct AppLaunchResult: Codable {
     let ok: Bool
     let action: String
@@ -263,6 +280,20 @@ struct AppLaunchResult: Codable {
     let activeBefore: AppRecord?
     let activeAfter: AppRecord?
     let activate: Bool
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct AppQuitResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let target: AppRecord
+    let activeBefore: AppRecord?
+    let activeAfter: AppRecord?
+    let force: Bool
     let verification: FileOperationVerification
     let auditID: String
     let auditLogPath: String
@@ -2597,7 +2628,7 @@ final class Ln1CLI {
             return app
         }
 
-        throw CommandError(description: "apps plan/activate requires --pid PID, --bundle-id BUNDLE_ID, or --current")
+        throw CommandError(description: "app target selection requires --pid PID, --bundle-id BUNDLE_ID, or --current")
     }
 
     private func appLaunchTargetForAppCommand() throws -> (url: URL, summary: AppLaunchTargetSummary) {
@@ -2734,6 +2765,35 @@ final class Ln1CLI {
         ]
     }
 
+    private func appQuitChecks(target: NSRunningApplication) -> [AppPreflightCheck] {
+        [
+            AppPreflightCheck(
+                name: "apps.targetRunning",
+                ok: !target.isTerminated,
+                code: target.isTerminated ? "terminated" : "running",
+                message: target.isTerminated
+                    ? "target app is terminated"
+                    : "target app is running"
+            ),
+            AppPreflightCheck(
+                name: "apps.targetNotCurrentProcess",
+                ok: target.processIdentifier != getpid(),
+                code: target.processIdentifier == getpid() ? "current_process" : "separate_process",
+                message: target.processIdentifier == getpid()
+                    ? "refusing to quit the current Ln1 process"
+                    : "target app is not the current Ln1 process"
+            ),
+            AppPreflightCheck(
+                name: "apps.targetGUI",
+                ok: target.activationPolicy == .regular,
+                code: target.activationPolicy == .regular ? "regular" : "not_regular",
+                message: target.activationPolicy == .regular
+                    ? "target app has regular activation policy"
+                    : "target app is not a regular GUI application"
+            )
+        ]
+    }
+
     private func verifyAppActivation(
         target: NSRunningApplication,
         requested: Bool,
@@ -2799,6 +2859,35 @@ final class Ln1CLI {
             message: activate
                 ? "launched app is running and frontmost"
                 : "launched app is running"
+        )
+    }
+
+    private func verifyAppQuit(
+        requested: Bool,
+        pid: pid_t,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) -> FileOperationVerification {
+        guard requested else {
+            return FileOperationVerification(
+                ok: false,
+                code: "quit_request_failed",
+                message: "macOS did not accept the app quit request"
+            )
+        }
+
+        let processVerification = waitForProcess(
+            pid: pid,
+            expectedExists: false,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+        return FileOperationVerification(
+            ok: processVerification.ok,
+            code: processVerification.ok ? "app_exited" : "app_still_running",
+            message: processVerification.ok
+                ? "target app process exited"
+                : "target app process was still running after the quit timeout"
         )
     }
 
@@ -3335,6 +3424,8 @@ final class Ln1CLI {
             return try workflowPreflightActivateApp()
         case "launch-app":
             return try workflowPreflightLaunchApp()
+        case "quit-app":
+            return try workflowPreflightQuitApp()
         case "open-file":
             return try workflowPreflightOpenFile()
         case "open-url":
@@ -3428,7 +3519,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-frontmost-app, inspect-apps, inspect-installed-apps, inspect-menu, inspect-system, inspect-displays, inspect-active-window, inspect-windows, inspect-processes, start-task, record-task, finish-task, show-task, inspect-process, find-element, inspect-element, wait-process, wait-active-window, wait-window, wait-element, wait-active-app, activate-app, launch-app, open-file, open-url, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-frontmost-app, inspect-apps, inspect-installed-apps, inspect-menu, inspect-system, inspect-displays, inspect-active-window, inspect-windows, inspect-processes, start-task, record-task, finish-task, show-task, inspect-process, find-element, inspect-element, wait-process, wait-active-window, wait-window, wait-element, wait-active-app, activate-app, launch-app, quit-app, open-file, open-url, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
         }
     }
 
@@ -4900,6 +4991,97 @@ final class Ln1CLI {
 
         return workflowPreflightResult(
             operation: "launch-app",
+            risk: risk,
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightQuitApp() throws -> WorkflowPreflight {
+        let action = "apps.quit"
+        let risk = appActionRisk(for: action)
+        let force = flag("--force")
+        let timeoutMilliseconds = max(100, option("--wait-timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        var prerequisites = [doctorAuditLogCheck()]
+
+        let targetArguments: [String]?
+        if flag("--current") {
+            targetArguments = ["--current"]
+        } else if let pid = option("--pid") {
+            targetArguments = ["--pid", pid]
+        } else if let bundleIdentifier = option("--bundle-id") {
+            targetArguments = ["--bundle-id", bundleIdentifier]
+        } else {
+            targetArguments = nil
+            prerequisites.append(DoctorCheck(
+                name: "workflow.appTarget",
+                status: "fail",
+                required: true,
+                message: "No app target was provided for quit-app.",
+                remediation: "Run `Ln1 apps` and pass `--pid PID`, `--bundle-id BUNDLE_ID`, or `--current`."
+            ))
+        }
+
+        if targetArguments != nil {
+            do {
+                let target = try targetRunningApplicationForAppCommand()
+                prerequisites += appQuitChecks(target: target).map { check in
+                    DoctorCheck(
+                        name: check.name,
+                        status: check.ok ? "pass" : "fail",
+                        required: true,
+                        message: check.message,
+                        remediation: check.ok ? nil : "Choose a running regular GUI app that is not the current Ln1 process."
+                    )
+                }
+            } catch {
+                let message = (error as? CommandError)?.description ?? error.localizedDescription
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.appTarget",
+                    status: "fail",
+                    required: true,
+                    message: message,
+                    remediation: "Run `Ln1 apps` and choose a current running app target."
+                ))
+            }
+        }
+
+        let policy = policyDecision(actionRisk: risk)
+        prerequisites.append(DoctorCheck(
+            name: "workflow.policy",
+            status: policy.allowed ? "pass" : "fail",
+            required: true,
+            message: policy.message,
+            remediation: policy.allowed ? nil : "Pass `--allow-risk high` after reviewing the app quit target."
+        ))
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let targetArguments {
+            var arguments = ["Ln1", "apps", "quit"] + targetArguments
+            if force {
+                arguments.append("--force")
+            }
+            arguments += [
+                "--timeout-ms", String(timeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds),
+                "--allow-risk", risk
+            ]
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            arguments += ["--reason", "Describe intent"]
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "quit-app",
             risk: risk,
             mutates: true,
             prerequisites: prerequisites,
@@ -9197,6 +9379,18 @@ final class Ln1CLI {
                 "Latest app \(action) completed and verified; dry-run active app inspection before choosing the next UI action."
             )
         }
+        if latestOperation == "quit-app" {
+            let arguments = [
+                "Ln1", "workflow", "run",
+                "--operation", "inspect-apps",
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ]
+            return (
+                arguments,
+                "Latest app quit completed and verified; dry-run running app inspection before choosing the next action."
+            )
+        }
 
         guard latestOperation == "read-browser" else {
             return nil
@@ -11586,6 +11780,8 @@ final class Ln1CLI {
             try writeJSON(activateApp())
         case "launch":
             try writeJSON(launchApp())
+        case "quit":
+            try writeJSON(quitApp())
         case "wait-active":
             try writeJSON(appActiveWaitState())
         default:
@@ -11600,8 +11796,10 @@ final class Ln1CLI {
             try writeJSON(appActivationPlan(operation: operation))
         case "launch":
             try writeJSON(appLaunchPlan(operation: operation))
+        case "quit":
+            try writeJSON(appQuitPlan(operation: operation))
         default:
-            throw CommandError(description: "unsupported apps plan operation '\(operation)'. Use activate or launch.")
+            throw CommandError(description: "unsupported apps plan operation '\(operation)'. Use activate, launch, or quit.")
         }
     }
 
@@ -11772,6 +11970,37 @@ final class Ln1CLI {
         )
     }
 
+    private func appQuitPlan(operation: String = "quit") throws -> AppQuitPlan {
+        let target = try targetRunningApplicationForAppCommand()
+        let action = "apps.quit"
+        let risk = appActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let activeBefore = activeAppRecord()
+        let force = flag("--force")
+        let checks = appQuitChecks(target: target)
+        let canExecute = policy.allowed && checks.allSatisfy(\.ok)
+        let targetRecord = appRecord(for: target)
+
+        return AppQuitPlan(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: operation,
+            action: action,
+            risk: risk,
+            actionMutates: true,
+            policy: policy,
+            target: targetRecord,
+            activeBefore: activeBefore,
+            force: force,
+            checks: checks,
+            canExecute: canExecute,
+            requiredAllowRisk: risk,
+            message: canExecute
+                ? "Quit preflight passed for \(appDisplayName(targetRecord))."
+                : "Quit preflight did not pass for \(appDisplayName(targetRecord))."
+        )
+    }
+
     private func activateApp() throws -> AppActivationResult {
         let target = try targetRunningApplicationForAppCommand()
         let action = "apps.activate"
@@ -11931,6 +12160,102 @@ final class Ln1CLI {
                 activeBefore: activeBefore,
                 activeAfter: activeAfter,
                 activate: activate,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func quitApp() throws -> AppQuitResult {
+        let target = try targetRunningApplicationForAppCommand()
+        let action = "apps.quit"
+        let risk = appActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let targetRecord = appRecord(for: target)
+        let targetPID = target.processIdentifier
+        let activeBefore = activeAppRecord()
+        let force = flag("--force")
+        let timeoutMilliseconds = max(100, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let checks = appQuitChecks(target: target)
+        var activeAfter = activeBefore
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "apps.quit",
+                risk: risk,
+                reason: option("--reason"),
+                app: targetRecord,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let failedCheck = checks.first(where: { !$0.ok }) {
+                let message = failedCheck.message
+                verification = FileOperationVerification(ok: false, code: failedCheck.code, message: message)
+                try writeAudit(ok: false, code: "preflight_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let requested = force ? target.forceTerminate() : target.terminate()
+            verification = verifyAppQuit(
+                requested: requested,
+                pid: targetPID,
+                timeoutMilliseconds: timeoutMilliseconds,
+                intervalMilliseconds: intervalMilliseconds
+            )
+            activeAfter = activeAppRecord()
+
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "app quit verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Quit \(appDisplayName(targetRecord))."
+            try writeAudit(ok: true, code: "quit", message: message)
+
+            return AppQuitResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                target: targetRecord,
+                activeBefore: activeBefore,
+                activeAfter: activeAfter,
+                force: force,
                 verification: verification!,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
@@ -21810,6 +22135,8 @@ final class Ln1CLI {
             return "low"
         case "apps.activate", "apps.launch":
             return "medium"
+        case "apps.quit":
+            return "high"
         default:
             return "unknown"
         }
@@ -21875,6 +22202,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "apps.waitActive", domain: "apps", risk: appActionRisk(for: "apps.waitActive"), mutates: false),
             PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
             PolicyActionRecord(name: "apps.launch", domain: "apps", risk: appActionRisk(for: "apps.launch"), mutates: true),
+            PolicyActionRecord(name: "apps.quit", domain: "apps", risk: appActionRisk(for: "apps.quit"), mutates: true),
             PolicyActionRecord(name: "processes.list", domain: "processes", risk: processActionRisk(for: "processes.list"), mutates: false),
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
             PolicyActionRecord(name: "processes.wait", domain: "processes", risk: processActionRisk(for: "processes.wait"), mutates: false),
@@ -23455,20 +23783,21 @@ final class Ln1CLI {
           Ln1 policy
           Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--memory-log PATH] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation start-task|record-task|finish-task|activate-app|launch-app|open-file|open-url|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation start-task|record-task|finish-task|activate-app|launch-app|quit-app|open-file|open-url|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|activate-app|launch-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
           Ln1 apps active
           Ln1 apps list [--all] [--limit N]
           Ln1 apps installed [--limit N] [--name TEXT] [--bundle-id BUNDLE_ID]
-          Ln1 apps plan --operation activate|launch (--pid PID|--bundle-id BUNDLE_ID|--current|--path APP_BUNDLE) [--activate true|false] [--allow-risk low|medium|high|unknown]
+          Ln1 apps plan --operation activate|launch|quit (--pid PID|--bundle-id BUNDLE_ID|--current|--path APP_BUNDLE) [--activate true|false] [--allow-risk low|medium|high|unknown]
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 apps launch (--bundle-id BUNDLE_ID|--path APP_BUNDLE) --allow-risk medium [--activate true|false] [--reason TEXT] [--audit-log PATH]
+          Ln1 apps quit (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk high [--force] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 apps wait-active (--pid PID|--bundle-id BUNDLE_ID|--current) [--timeout-ms N] [--interval-ms N]
           Ln1 open (--path PATH|--url URL) --allow-risk medium [--plan] [--reason TEXT] [--audit-log PATH]
           Ln1 processes [list] [--limit N] [--name TEXT]
@@ -23551,6 +23880,7 @@ final class Ln1CLI {
           - `apps plan` previews app activation or launch with policy and target checks without changing focus or opening apps.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
           - `apps launch` opens an installed `.app` by bundle ID or path after medium-risk approval and verifies running/frontmost state.
+          - `apps quit` asks one regular GUI app to terminate after high-risk approval and verifies process exit.
           - `apps wait-active` waits for the frontmost app to match a target without changing focus.
           - `open` opens one file path or URL through the macOS default handler after medium-risk approval and audits the handoff metadata.
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.

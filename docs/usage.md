@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `open`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `apps quit`, `open`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -105,6 +105,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-active-app --pid 123 --wait-timeout-ms 5000
 .build/debug/Ln1 workflow preflight --operation activate-app --pid 123 --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation launch-app --bundle-id com.apple.TextEdit --allow-risk medium
+.build/debug/Ln1 workflow preflight --operation quit-app --pid 123 --allow-risk high
 .build/debug/Ln1 workflow preflight --operation open-file --path ~/Downloads/report.pdf --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation open-url --url https://example.com/report --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
@@ -186,6 +187,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
 
 `launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log. After a successful launch, `workflow resume` suggests an active-app inspection dry-run.
+
+`quit-app` is a high-risk mutating workflow operation for closing one running regular GUI app by PID, bundle identifier, or current target. It wraps `apps quit`, refuses to quit the current Ln1 process, verifies that the target process exits within a bounded timeout, records policy and verification evidence in the audit log, and `workflow resume` suggests a running-app inspection dry-run.
 
 `open-file` and `open-url` are mutating workflow operations for handing one artifact to the macOS default workspace handler. They wrap `Ln1 open --path PATH` or `Ln1 open --url URL` with medium-risk approval, validate readable file metadata or URL shape before execution, include the default handler app when macOS reports one, record target metadata in the audit log, and `workflow resume` suggests active-window inspection after a successful handoff.
 
@@ -373,6 +376,7 @@ To preview a focus change or app launch without mutating the desktop:
 ```sh
 .build/debug/Ln1 apps plan --operation activate --pid 123 --allow-risk medium
 .build/debug/Ln1 apps plan --operation launch --bundle-id com.apple.TextEdit --activate false --allow-risk medium
+.build/debug/Ln1 apps plan --operation quit --pid 123 --allow-risk high
 ```
 
 `apps plan` returns the target app or app bundle, current active app, preflight checks, policy decision, and whether the action can execute. This gives an assistant a structured, explainable way to decide whether a focus change or app launch is safe before acting.
@@ -393,6 +397,15 @@ Launch an installed GUI app by bundle identifier or `.app` path:
 ```
 
 `apps.launch` is a medium-risk mutating app action. `--activate` defaults to `true`; when activation is requested, Ln1 verifies the launched app is also frontmost. Each launch audit records the requested bundle/path target, policy decision, verification result, and outcome.
+
+Ask one regular GUI app to quit and verify the process exits:
+
+```sh
+.build/debug/Ln1 apps quit --pid 123 --allow-risk high --reason "Close completed app"
+.build/debug/Ln1 apps quit --bundle-id com.example.App --force --allow-risk high --reason "Force close unresponsive app"
+```
+
+`apps.quit` is a high-risk mutating app action because it can close unsaved work. It accepts `--pid`, `--bundle-id`, or `--current`, refuses to terminate the current Ln1 process, requires a regular GUI app target, sends a normal terminate request unless `--force` is present, waits for the process to exit, and writes an audit record with policy, target, verification, and outcome metadata.
 
 Open one file path or URL with the macOS default handler:
 
