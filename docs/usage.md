@@ -187,7 +187,7 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 
 `launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log. After a successful launch, `workflow resume` suggests an active-app inspection dry-run.
 
-`open-file` and `open-url` are mutating workflow operations for handing one artifact to the macOS default workspace handler. They wrap `Ln1 open --path PATH` or `Ln1 open --url URL` with medium-risk approval, validate readable file metadata or URL shape before execution, record target metadata in the audit log, and `workflow resume` suggests active-window inspection after a successful handoff.
+`open-file` and `open-url` are mutating workflow operations for handing one artifact to the macOS default workspace handler. They wrap `Ln1 open --path PATH` or `Ln1 open --url URL` with medium-risk approval, validate readable file metadata or URL shape before execution, include the default handler app when macOS reports one, record target metadata in the audit log, and `workflow resume` suggests active-window inspection after a successful handoff.
 
 `inspect-frontmost-app` is a non-mutating workflow operation for the current frontmost app. It runs `apps active`, captures app name, bundle identifier, and PID without requiring Accessibility permission, and `workflow resume` suggests a dry-run process inspection for that PID.
 
@@ -402,7 +402,7 @@ Open one file path or URL with the macOS default handler:
 .build/debug/Ln1 open --path ~/Downloads/report.pdf --plan --allow-risk medium
 ```
 
-`workspace.open` is a medium-risk mutating workspace action because it can launch or focus another app. `--path` validates that the target file or directory exists and is readable before handoff; `--url` validates an absolute URL and records scheme/host metadata. Execution records the target metadata, policy decision, macOS open-request verification, audit ID, and active app before and after the handoff.
+`workspace.open` is a medium-risk mutating workspace action because it can launch or focus another app. `--path` validates that the target file or directory exists and is readable before handoff; `--url` validates an absolute URL and records scheme/host metadata. `--plan` returns the target, policy decision, current active app, and default handler app when LaunchServices reports one without opening the target. Execution records the target and handler metadata, policy decision, macOS open-request verification, audit ID, and active app before and after the handoff.
 
 Wait for one app to become frontmost without changing focus:
 

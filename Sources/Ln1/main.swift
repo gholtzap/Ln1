@@ -286,6 +286,7 @@ struct WorkspaceOpenPlan: Codable {
     let actionMutates: Bool
     let policy: AuditPolicyDecision
     let target: WorkspaceOpenTarget
+    let handler: AppLaunchTargetSummary?
     let activeBefore: AppRecord?
     let canExecute: Bool
     let requiredAllowRisk: String
@@ -297,6 +298,7 @@ struct WorkspaceOpenResult: Codable {
     let action: String
     let risk: String
     let target: WorkspaceOpenTarget
+    let handler: AppLaunchTargetSummary?
     let activeBefore: AppRecord?
     let activeAfter: AppRecord?
     let verification: FileOperationVerification
@@ -1678,6 +1680,7 @@ struct ActionAuditRecord: Codable {
     var clipboardAfter: ClipboardAuditSummary? = nil
     var appLaunchTarget: AppLaunchTargetSummary? = nil
     var workspaceOpenTarget: WorkspaceOpenTarget? = nil
+    var workspaceOpenHandler: AppLaunchTargetSummary? = nil
     var valueLength: Int? = nil
     var valueDigest: String? = nil
     var currentValueLength: Int? = nil
@@ -2811,6 +2814,23 @@ final class Ln1CLI {
 
     private func workspaceOpenTargetDisplayName(_ target: WorkspaceOpenTarget) -> String {
         target.path ?? target.url
+    }
+
+    private func workspaceOpenHandler(for url: URL) -> AppLaunchTargetSummary? {
+        guard let handlerURL = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+            return nil
+        }
+        return appBundleSummary(for: handlerURL.standardizedFileURL)
+    }
+
+    private func appBundleSummary(for url: URL) -> AppLaunchTargetSummary {
+        let bundle = Bundle(url: url)
+        return AppLaunchTargetSummary(
+            name: bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
+                ?? url.deletingPathExtension().lastPathComponent,
+            bundleIdentifier: bundle?.bundleIdentifier,
+            path: url.path
+        )
     }
 
     private func runningApp(for target: AppLaunchTargetSummary) -> NSRunningApplication? {
@@ -11944,6 +11964,7 @@ final class Ln1CLI {
         let action = "workspace.open"
         let risk = workspaceActionRisk(for: action)
         let policy = policyDecision(actionRisk: risk)
+        let handler = workspaceOpenHandler(for: target.url)
         let activeBefore = activeAppRecord()
 
         return WorkspaceOpenPlan(
@@ -11954,11 +11975,12 @@ final class Ln1CLI {
             actionMutates: true,
             policy: policy,
             target: target.summary,
+            handler: handler,
             activeBefore: activeBefore,
             canExecute: policy.allowed,
             requiredAllowRisk: risk,
             message: policy.allowed
-                ? "Workspace open preflight passed for \(workspaceOpenTargetDisplayName(target.summary))."
+                ? "Workspace open preflight passed for \(workspaceOpenTargetDisplayName(target.summary))\(handler.map { " with default handler \($0.name ?? $0.bundleIdentifier ?? $0.path)" } ?? "")."
                 : "Workspace open preflight did not pass for \(workspaceOpenTargetDisplayName(target.summary))."
         )
     }
@@ -11970,6 +11992,7 @@ final class Ln1CLI {
         let policy = policyDecision(actionRisk: risk)
         let auditID = UUID().uuidString
         let auditURL = try auditLogURL()
+        let handler = workspaceOpenHandler(for: target.url)
         let activeBefore = activeAppRecord()
         var activeAfter = activeBefore
         var verification: FileOperationVerification?
@@ -11989,6 +12012,7 @@ final class Ln1CLI {
                 policy: policy,
                 verification: verification,
                 workspaceOpenTarget: target.summary,
+                workspaceOpenHandler: handler,
                 outcome: AuditOutcome(ok: ok, code: code, message: message)
             ), to: auditURL)
             auditWritten = true
@@ -12020,6 +12044,7 @@ final class Ln1CLI {
                 action: action,
                 risk: risk,
                 target: target.summary,
+                handler: handler,
                 activeBefore: activeBefore,
                 activeAfter: activeAfter,
                 verification: verification!,

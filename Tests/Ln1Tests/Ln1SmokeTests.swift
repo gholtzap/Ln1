@@ -1892,6 +1892,38 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testOpenPlanReturnsDefaultHandlerMetadataWithoutOpeningTarget() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-open-plan-\(UUID().uuidString)")
+        let target = directory.appendingPathComponent("artifact.txt")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "artifact".write(to: target, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "open",
+            "--path", target.path,
+            "--plan",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        let targetSummary = try XCTUnwrap(object["target"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "workspace.open")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["actionMutates"] as? Bool, true)
+        XCTAssertEqual(object["canExecute"] as? Bool, true)
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(targetSummary["kind"] as? String, "file")
+        XCTAssertEqual(targetSummary["path"] as? String, target.path)
+        if let handler = object["handler"] as? [String: Any] {
+            XCTAssertNotNil(handler["path"] as? String)
+        }
+    }
+
     func testWorkflowRunDryRunActivateAppReturnsStructuredCommandWithoutChangingFocus() throws {
         let apps = try runLn1(["apps"])
 
