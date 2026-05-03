@@ -318,6 +318,14 @@ Wait for a process to exist or disappear:
 
 `processes.wait` returns a structured verification result with the expected existence state, whether it matched before the timeout, and current process metadata when the PID is still visible.
 
+## Inspect Displays
+
+```sh
+.build/debug/Ln1 desktop displays
+```
+
+`desktop.listDisplays` returns connected display metadata from CoreGraphics and AppKit: display ID, user-facing name when available, main/active/online/built-in flags, mirror-set state, coordinate bounds, pixel dimensions, backing scale, rotation, and color space name. This is a low-risk desktop inspection action that does not require screenshots or Accessibility access.
+
 ## Inspect Visible Desktop Windows
 
 ```sh

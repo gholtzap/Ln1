@@ -449,6 +449,32 @@ struct DesktopWindowsState: Codable {
     let windows: [DesktopWindowRecord]
 }
 
+struct DesktopDisplayRecord: Codable {
+    let id: String
+    let displayID: UInt32
+    let name: String?
+    let main: Bool
+    let active: Bool
+    let online: Bool
+    let builtin: Bool
+    let inMirrorSet: Bool
+    let bounds: Rect
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let scaleFactor: Double?
+    let rotationDegrees: Double
+    let colorSpaceName: String?
+}
+
+struct DesktopDisplaysState: Codable {
+    let generatedAt: String
+    let platform: String
+    let available: Bool
+    let message: String
+    let count: Int
+    let displays: [DesktopDisplayRecord]
+}
+
 struct TrustRecord: Codable {
     let trusted: Bool
     let message: String
@@ -1889,6 +1915,8 @@ final class Ln1CLI {
         let mode = arguments.dropFirst().first ?? "windows"
 
         switch mode {
+        case "displays":
+            try writeJSON(desktopDisplays())
         case "windows":
             try writeJSON(desktopWindows())
         default:
@@ -8313,6 +8341,13 @@ final class Ln1CLI {
                 risk: desktopActionRisk(for: "desktop.listWindows"),
                 mutates: false,
                 reason: "Refresh visible window metadata and stable desktop identities."
+            ),
+            ObservationAction(
+                name: "desktop.listDisplays",
+                command: "Ln1 desktop displays",
+                risk: desktopActionRisk(for: "desktop.listDisplays"),
+                mutates: false,
+                reason: "Inspect connected display topology, coordinate bounds, scale, and rotation."
             ),
             ObservationAction(
                 name: "apps.list",
@@ -17695,7 +17730,7 @@ final class Ln1CLI {
 
     private func desktopActionRisk(for action: String) -> String {
         switch action {
-        case "desktop.listWindows":
+        case "desktop.listDisplays", "desktop.listWindows":
             return "low"
         default:
             return "unknown"
@@ -17778,6 +17813,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
             PolicyActionRecord(name: "processes.wait", domain: "processes", risk: processActionRisk(for: "processes.wait"), mutates: false),
             PolicyActionRecord(name: "system.context", domain: "system", risk: systemActionRisk(for: "system.context"), mutates: false),
+            PolicyActionRecord(name: "desktop.listDisplays", domain: "desktop", risk: desktopActionRisk(for: "desktop.listDisplays"), mutates: false),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
@@ -19206,6 +19242,7 @@ final class Ln1CLI {
           Ln1 processes [list] [--limit N] [--name TEXT]
           Ln1 processes inspect (--pid PID|--current)
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
+          Ln1 desktop displays
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
@@ -19272,6 +19309,7 @@ final class Ln1CLI {
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
           - `apps wait-active` waits for the frontmost app to match a target without changing focus.
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
+          - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
@@ -19775,6 +19813,86 @@ final class Ln1CLI {
         }
 
         return actions
+    }
+
+    private func desktopDisplays() -> DesktopDisplaysState {
+        var screenByDisplayID: [CGDirectDisplayID: NSScreen] = [:]
+        for screen in NSScreen.screens {
+            guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                continue
+            }
+            screenByDisplayID[CGDirectDisplayID(screenNumber.uint32Value)] = screen
+        }
+
+        let maxDisplays: UInt32 = 32
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(maxDisplays))
+        var displayCount: UInt32 = 0
+        let result = CGGetOnlineDisplayList(maxDisplays, &displayIDs, &displayCount)
+        guard result == .success else {
+            return DesktopDisplaysState(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                available: false,
+                message: "Display metadata is unavailable from this process.",
+                count: 0,
+                displays: []
+            )
+        }
+
+        var resolvedDisplayIDs = Array(displayIDs.prefix(Int(displayCount)))
+        if resolvedDisplayIDs.isEmpty {
+            resolvedDisplayIDs = screenByDisplayID.keys.sorted()
+        }
+        let mainDisplayID = CGMainDisplayID()
+        if resolvedDisplayIDs.isEmpty, mainDisplayID != 0 {
+            resolvedDisplayIDs = [mainDisplayID]
+        }
+
+        let displays = resolvedDisplayIDs.map { displayID -> DesktopDisplayRecord in
+            let bounds = CGDisplayBounds(displayID)
+            let screen = screenByDisplayID[displayID]
+            return DesktopDisplayRecord(
+                id: "display:\(displayID)",
+                displayID: displayID,
+                name: screen?.localizedName,
+                main: CGDisplayIsMain(displayID) != 0,
+                active: CGDisplayIsActive(displayID) != 0,
+                online: CGDisplayIsOnline(displayID) != 0,
+                builtin: CGDisplayIsBuiltin(displayID) != 0,
+                inMirrorSet: CGDisplayIsInMirrorSet(displayID) != 0,
+                bounds: Rect(
+                    x: Double(bounds.origin.x),
+                    y: Double(bounds.origin.y),
+                    width: Double(bounds.size.width),
+                    height: Double(bounds.size.height)
+                ),
+                pixelWidth: CGDisplayPixelsWide(displayID),
+                pixelHeight: CGDisplayPixelsHigh(displayID),
+                scaleFactor: screen.map { Double($0.backingScaleFactor) },
+                rotationDegrees: CGDisplayRotation(displayID),
+                colorSpaceName: screen?.colorSpace?.localizedName
+            )
+        }
+        .sorted { left, right in
+            if left.main != right.main {
+                return left.main && !right.main
+            }
+            if left.active != right.active {
+                return left.active && !right.active
+            }
+            return left.displayID < right.displayID
+        }
+
+        return DesktopDisplaysState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            available: true,
+            message: displays.isEmpty
+                ? "No online displays were reported."
+                : "Read connected display metadata.",
+            count: displays.count,
+            displays: displays
+        )
     }
 
     private func desktopWindows(limitOverride: Int? = nil) throws -> DesktopWindowsState {

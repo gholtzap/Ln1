@@ -43,6 +43,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["system.context"]?["domain"] as? String, "system")
         XCTAssertEqual(actionByName["system.context"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["system.context"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["desktop.listDisplays"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.listDisplays"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["desktop.listDisplays"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
@@ -339,6 +342,42 @@ final class Ln1SmokeTests: XCTestCase {
         }
     }
 
+    func testDesktopDisplaysReturnsStructuredDisplayTopology() throws {
+        let result = try runLn1([
+            "desktop",
+            "displays"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let displays = try XCTUnwrap(object["displays"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertNotNil(object["available"] as? Bool)
+        XCTAssertNotNil(object["message"] as? String)
+        XCTAssertEqual(object["count"] as? Int, displays.count)
+
+        if object["available"] as? Bool == true {
+            XCTAssertGreaterThanOrEqual(displays.count, 1)
+            let first = try XCTUnwrap(displays.first)
+            XCTAssertNotNil(first["id"] as? String)
+            XCTAssertNotNil(first["displayID"] as? Int)
+            XCTAssertNotNil(first["main"] as? Bool)
+            XCTAssertNotNil(first["active"] as? Bool)
+            XCTAssertNotNil(first["online"] as? Bool)
+            XCTAssertNotNil(first["builtin"] as? Bool)
+            XCTAssertNotNil(first["inMirrorSet"] as? Bool)
+            XCTAssertNotNil(first["pixelWidth"] as? Int)
+            XCTAssertNotNil(first["pixelHeight"] as? Int)
+            XCTAssertNotNil(first["rotationDegrees"] as? Double)
+            let bounds = try XCTUnwrap(first["bounds"] as? [String: Any])
+            XCTAssertNotNil(bounds["x"] as? Double)
+            XCTAssertNotNil(bounds["y"] as? Double)
+            XCTAssertNotNil(bounds["width"] as? Double)
+            XCTAssertNotNil(bounds["height"] as? Double)
+        }
+    }
+
     func testObserveReturnsStructuredFirstStepSnapshot() throws {
         let result = try runLn1([
             "observe",
@@ -366,6 +405,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(blockers)
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "system.context" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listDisplays" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
