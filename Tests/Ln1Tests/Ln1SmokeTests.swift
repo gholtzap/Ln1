@@ -547,6 +547,38 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("missing required option --element"), result.stderr)
     }
 
+    func testStateMenuReturnsBoundedStructuredMenuBar() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let result = try runLn1([
+            "state",
+            "menu",
+            "--depth", "1",
+            "--max-children", "5"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let app = try XCTUnwrap(object["app"] as? [String: Any])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertNotNil(app["pid"] as? Int)
+        XCTAssertEqual(object["depth"] as? Int, 1)
+        XCTAssertEqual(object["maxChildren"] as? Int, 5)
+        XCTAssertTrue((object["message"] as? String)?.contains("menu bar") == true)
+        if let menuBar = object["menuBar"] as? [String: Any] {
+            let stableIdentity = try XCTUnwrap(menuBar["stableIdentity"] as? [String: Any])
+            let children = try XCTUnwrap(menuBar["children"] as? [[String: Any]])
+            XCTAssertEqual(menuBar["id"] as? String, "m0")
+            XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
+            XCTAssertLessThanOrEqual(children.count, 5)
+        } else {
+            XCTAssertTrue((object["message"] as? String)?.contains("No Accessibility menu bar") == true)
+        }
+    }
+
     func testStateElementReturnsBoundedStructuredElement() throws {
         guard AXIsProcessTrusted() else {
             throw XCTSkip("Accessibility trust is not enabled.")

@@ -89,6 +89,16 @@ struct AccessibilityElementWaitResult: Codable {
     let message: String
 }
 
+struct AccessibilityMenuState: Codable {
+    let generatedAt: String
+    let platform: String
+    let app: AppRecord
+    let menuBar: ElementNode?
+    let depth: Int
+    let maxChildren: Int
+    let message: String
+}
+
 struct AppState: Codable {
     let app: AppRecord
     let windows: [ElementNode]
@@ -9469,6 +9479,42 @@ final class Ln1CLI {
         )
     }
 
+    private func stateMenuState() throws -> AccessibilityMenuState {
+        let depth = max(0, option("--depth").flatMap(Int.init) ?? 2)
+        let maxChildren = max(0, option("--max-children").flatMap(Int.init) ?? 80)
+
+        try requireTrusted()
+        let app = try targetApp()
+        let appRecord = AppRecord(
+            name: app.localizedName,
+            bundleIdentifier: app.bundleIdentifier,
+            pid: app.processIdentifier
+        )
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        let menuBar = accessibilityElement(axApp, kAXMenuBarAttribute).map { menuBar in
+            buildNode(
+                menuBar,
+                id: "m0",
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier,
+                depth: depth,
+                maxChildren: maxChildren
+            )
+        }
+
+        return AccessibilityMenuState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            app: appRecord,
+            menuBar: menuBar,
+            depth: depth,
+            maxChildren: maxChildren,
+            message: menuBar == nil
+                ? "No Accessibility menu bar was available for the target app."
+                : "Accessibility menu bar state inspected."
+        )
+    }
+
     private func accessibilityElementWaitTarget() throws -> AccessibilityElementWaitTarget {
         let element = try requiredOption("--element")
         let match = option("--match") ?? "contains"
@@ -9611,6 +9657,11 @@ final class Ln1CLI {
     }
 
     private func state() throws {
+        if arguments.dropFirst().first == "menu" {
+            try writeJSON(stateMenuState())
+            return
+        }
+
         if arguments.dropFirst().first == "element" {
             try writeJSON(stateElementInspectState())
             return
@@ -19147,6 +19198,41 @@ final class Ln1CLI {
               }
             ]
           },
+          "stateMenu": {
+            "command": "Ln1 state menu --depth 2 --max-children 80",
+            "result": {
+              "generatedAt": "ISO-8601 timestamp",
+              "platform": "macOS",
+              "app": {
+                "name": "frontmost or requested app name",
+                "bundleIdentifier": "com.example.App",
+                "pid": 123
+              },
+              "menuBar": {
+                "id": "m0",
+                "stableIdentity": {
+                  "id": "accessibilityElement:stable-semantic-digest",
+                  "kind": "accessibilityElement",
+                  "confidence": "medium",
+                  "label": "AXMenuBar in com.example.App"
+                },
+                "role": "AXMenuBar",
+                "title": null,
+                "actions": [],
+                "children": [
+                  {
+                    "id": "m0.0",
+                    "role": "AXMenuBarItem",
+                    "title": "File",
+                    "children": []
+                  }
+                ]
+              },
+              "depth": 2,
+              "maxChildren": 80,
+              "message": "Accessibility menu bar state inspected."
+            }
+          },
           "stateAll": {
             "generatedAt": "ISO-8601 timestamp",
             "platform": "macOS",
@@ -20191,6 +20277,7 @@ final class Ln1CLI {
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
+          Ln1 state menu [--pid PID] [--depth N] [--max-children N]
           Ln1 state element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--depth N] [--max-children N]
           Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
@@ -20261,6 +20348,7 @@ final class Ln1CLI {
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
           - `state` emits structured JSON from macOS Accessibility APIs.
+          - `state menu` inspects the target app menu bar as a bounded Accessibility tree.
           - `state element` inspects one Accessibility element path with optional stable identity verification.
           - `state wait-element` waits for an Accessibility element path and optional identity, text, or enabled-state criteria.
           - `state --all` walks every running GUI app macOS exposes to this process.
@@ -21569,6 +21657,16 @@ final class Ln1CLI {
             return []
         }
         return array
+    }
+
+    private func accessibilityElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (value as! AXUIElement)
     }
 
     private func actionNames(_ element: AXUIElement) -> [String] {

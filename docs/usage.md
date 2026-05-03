@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -55,6 +55,14 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 ```
 
 `observe` is the safest first command before acting. It returns Accessibility trust status, the active app, a bounded running-app list, visible desktop windows with stable identities, current blockers, and suggested next typed commands. It does not require Accessibility permission; when Accessibility is not trusted, the snapshot reports that blocker and suggests `Ln1 trust` instead of trying to inspect or control app UI.
+
+## Inspect App Menus
+
+```sh
+.build/debug/Ln1 state menu --depth 2 --max-children 80
+```
+
+`state menu` returns the target app's macOS Accessibility menu bar as a bounded tree with stable element identities, roles, titles, enabled state, actions, and child paths such as `m0.1.2`. Pass `--pid PID` to inspect a specific running app instead of the frontmost app. This is read-only and useful before selecting a trusted menu action or deciding whether a menu command is present.
 
 ## Preflight A Workflow
 
