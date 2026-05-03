@@ -1112,6 +1112,29 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(first["path"] as? String)
     }
 
+    func testAppsListReturnsBoundedStructuredRunningAppState() throws {
+        let result = try runLn1([
+            "apps",
+            "list",
+            "--limit", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let apps = try XCTUnwrap(object["apps"] as? [[String: Any]])
+        let first = try XCTUnwrap(apps.first)
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["includeAll"] as? Bool, false)
+        XCTAssertEqual(object["limit"] as? Int, 10)
+        XCTAssertEqual(object["count"] as? Int, apps.count)
+        XCTAssertLessThanOrEqual(apps.count, 10)
+        XCTAssertNotNil(object["truncated"] as? Bool)
+        XCTAssertNotNil(object["message"] as? String)
+        XCTAssertNotNil(first["pid"] as? Int)
+        XCTAssertNotNil(first["active"] as? Bool)
+    }
+
     func testAppsPlanPreflightsActivationWithoutChangingFocus() throws {
         let apps = try runLn1(["apps"])
 
@@ -1676,6 +1699,70 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "workflow", "run",
             "--operation", "launch-app",
             "--bundle-id", "com.example.App",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+    }
+
+    func testWorkflowResumeSuggestsActiveInspectionAfterRunningAppsInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-apps-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "running-apps-transcript",
+            "operation": "inspect-apps",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "apps", "list",
+                    "--limit", "10"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "platform": "macOS",
+                    "limit": 10,
+                    "count": 1,
+                    "activeApp": [
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App",
+                        "pid": 123,
+                        "active": true
+                    ],
+                    "apps": [
+                        [
+                            "name": "Example",
+                            "bundleIdentifier": "com.example.App",
+                            "pid": 123,
+                            "active": true
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-apps",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-apps")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-active-app",
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
         ])
@@ -3422,6 +3509,30 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "apps", "installed",
             "--limit", "5",
             "--bundle-id", "com.apple.finder"
+        ])
+    }
+
+    func testWorkflowPreflightInspectAppsBuildsRunningAppsCommand() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-apps",
+            "--all",
+            "--limit", "12"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-apps")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "apps", "list",
+            "--limit", "12",
+            "--all"
         ])
     }
 
@@ -5447,6 +5558,43 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["limit"] as? Int, 5)
         XCTAssertEqual(first["bundleIdentifier"] as? String, "com.apple.finder")
         XCTAssertNotNil(first["path"] as? String)
+    }
+
+    func testWorkflowRunExecutesNonMutatingRunningAppsInspectAndCapturesJSON() throws {
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-apps-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-apps",
+            "--limit", "10",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let apps = try XCTUnwrap(outputJSON["apps"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-apps")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "apps", "list",
+            "--limit", "10"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertEqual(outputJSON["limit"] as? Int, 10)
+        XCTAssertEqual(outputJSON["count"] as? Int, apps.count)
+        XCTAssertLessThanOrEqual(apps.count, 10)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
     func testWorkflowRunExecutesNonMutatingClipboardReadAndCapturesJSON() throws {

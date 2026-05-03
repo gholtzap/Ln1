@@ -78,6 +78,7 @@ Examples:
 ```sh
 .build/debug/Ln1 workflow preflight --operation inspect-system
 .build/debug/Ln1 workflow preflight --operation review-audit --id AUDIT_ID --audit-log /tmp/Ln1-audit.jsonl
+.build/debug/Ln1 workflow preflight --operation inspect-apps --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-installed-apps --name TextEdit --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 .build/debug/Ln1 workflow preflight --operation inspect-displays
@@ -176,6 +177,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
 
 `launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log. After a successful launch, `workflow resume` suggests an active-app inspection dry-run.
+
+`inspect-apps` is a non-mutating workflow operation for bounded running app inventory. It runs `apps list`, forwards `--all` and `--limit`, captures app names, bundle identifiers, PIDs, active flags, truncation, and the active app in the workflow transcript, and `workflow resume` suggests a dry-run active app or process inspection.
 
 `inspect-installed-apps` is a non-mutating workflow operation for installed app bundle discovery. It wraps `apps installed`, captures app names, bundle identifiers, versions, executable paths, and bundle paths in the workflow transcript, and `workflow resume` can suggest a `launch-app` dry-run for the first discovered bundle identifier.
 
@@ -317,6 +320,12 @@ To resume after an interruption, ask for a recommendation from the latest transc
 
 ```sh
 .build/debug/Ln1 apps
+```
+
+For workflow capture or bounded app inventories, use the object-shaped list mode:
+
+```sh
+.build/debug/Ln1 apps list --limit 20
 ```
 
 If you are running from a non-interactive shell and want every process macOS exposes:
