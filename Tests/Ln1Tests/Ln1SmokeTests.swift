@@ -292,6 +292,29 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightInspectProcessesBuildsProcessListCommand() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-processes",
+            "--name", "Finder",
+            "--limit", "15"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-processes")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "processes", "list",
+            "--limit", "15",
+            "--name", "Finder"
+        ])
+    }
+
     func testWorkflowRunExecutesNonMutatingSystemContextAndCapturesJSON() throws {
         let workflowLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-system-\(UUID().uuidString).jsonl")
@@ -434,6 +457,44 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["limit"] as? Int, 10)
         XCTAssertEqual(outputJSON["count"] as? Int, windows.count)
         XCTAssertLessThanOrEqual(windows.count, 10)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesNonMutatingProcessListAndCapturesJSON() throws {
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-processes-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-processes",
+            "--workflow-log", workflowLog.path,
+            "--limit", "10",
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let processes = try XCTUnwrap(outputJSON["processes"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-processes")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "processes", "list",
+            "--limit", "10"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertEqual(outputJSON["limit"] as? Int, 10)
+        XCTAssertEqual(outputJSON["count"] as? Int, processes.count)
+        XCTAssertLessThanOrEqual(processes.count, 10)
+        XCTAssertTrue(processes.contains { $0["currentProcess"] as? Bool == true })
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
@@ -586,6 +647,71 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "workflow", "run",
             "--operation", "inspect-process",
             "--pid", "456",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+    }
+
+    func testWorkflowResumeSuggestsProcessInspectionAfterProcessListInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-processes-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-processes-transcript",
+            "operation": "inspect-processes",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "processes", "list",
+                    "--limit", "10"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "platform": "macOS",
+                    "count": 2,
+                    "processes": [
+                        [
+                            "pid": 111,
+                            "name": "First",
+                            "activeApp": false,
+                            "currentProcess": false
+                        ],
+                        [
+                            "pid": 222,
+                            "name": "Active",
+                            "bundleIdentifier": "com.example.App",
+                            "activeApp": true,
+                            "currentProcess": false
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-processes",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-processes")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-process",
+            "--pid", "222",
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
         ])
