@@ -3345,10 +3345,34 @@ final class Ln1CLI {
         let action = option("--action") ?? kAXPressAction as String
         let risk = riskLevel(for: action)
         let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        var targetPid = activePid
         var prerequisites = [
             doctorAccessibilityCheck(),
             doctorAuditLogCheck()
         ]
+
+        if option("--pid") != nil || option("--bundle-id") != nil || flag("--current") {
+            do {
+                let target = try targetRunningApplicationForAppCommand()
+                targetPid = target.processIdentifier
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.appTarget",
+                    status: "pass",
+                    required: true,
+                    message: "A running app target is available for control-active-app.",
+                    remediation: nil
+                ))
+            } catch {
+                targetPid = nil
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.appTarget",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Run `Ln1 apps` and choose a running app target, or omit app targeting to use the frontmost app."
+                ))
+            }
+        }
 
         let element = option("--element")
         if element == nil {
@@ -3357,7 +3381,7 @@ final class Ln1CLI {
                 status: "fail",
                 required: true,
                 message: "No target element was provided for control-active-app.",
-                remediation: "Run `Ln1 state\(activePid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80` and choose an element ID plus stableIdentity."
+                remediation: "Run `Ln1 state\(targetPid.map { " --pid \($0)" } ?? "") --depth 3 --max-children 80` and choose an element ID plus stableIdentity."
             ))
         }
 
@@ -3376,8 +3400,8 @@ final class Ln1CLI {
         let nextArguments: [String]?
         if blockers.isEmpty, let element {
             var arguments = ["Ln1", "perform"]
-            if let activePid {
-                arguments += ["--pid", String(activePid)]
+            if let targetPid {
+                arguments += ["--pid", String(targetPid)]
             }
             arguments += ["--element", element]
             if let expectedIdentity = option("--expect-identity") {

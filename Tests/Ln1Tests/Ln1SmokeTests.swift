@@ -1413,6 +1413,49 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
+    func testWorkflowPreflightControlActiveAppUsesExplicitPID() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let apps = try runLn1(["apps", "--all"])
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let target = records.first(where: { $0["active"] as? Bool != true && $0["pid"] is Int })
+            ?? records.first(where: { $0["pid"] is Int }),
+              let pid = target["pid"] as? Int else {
+            throw XCTSkip("No running app record was available from macOS.")
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "control-active-app",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "control-active-app")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "perform",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--action", kAXPressAction as String,
+            "--allow-risk", "low",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowResumeSuggestsActivationAfterProcessInspectForGUIApp() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-process-resume-\(UUID().uuidString)")
