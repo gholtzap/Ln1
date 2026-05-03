@@ -597,6 +597,24 @@ struct ActionResult: Codable {
     let auditLogPath: String
 }
 
+struct AccessibilityValueSetResult: Codable {
+    let ok: Bool
+    let pid: Int32
+    let element: String
+    let stableIdentity: StableIdentity?
+    let action: String
+    let risk: String
+    let valueLength: Int
+    let valueDigest: String
+    let currentValueLength: Int?
+    let currentValueDigest: String?
+    let verification: FileOperationVerification
+    let identityVerification: IdentityVerification?
+    let message: String
+    let auditID: String
+    let auditLogPath: String
+}
+
 struct AuditElementSummary: Codable {
     let stableIdentity: StableIdentity?
     let role: String?
@@ -1475,6 +1493,10 @@ struct ActionAuditRecord: Codable {
     var clipboard: ClipboardAuditSummary? = nil
     var clipboardBefore: ClipboardAuditSummary? = nil
     var clipboardAfter: ClipboardAuditSummary? = nil
+    var valueLength: Int? = nil
+    var valueDigest: String? = nil
+    var currentValueLength: Int? = nil
+    var currentValueDigest: String? = nil
     var browserTab: BrowserAuditSummary? = nil
     let outcome: AuditOutcome
 }
@@ -1973,6 +1995,8 @@ final class Ln1CLI {
             try state()
         case "perform":
             try perform()
+        case "set-value":
+            try setAccessibilityValue()
         case "audit":
             try audit()
         case "task":
@@ -10281,6 +10305,147 @@ final class Ln1CLI {
                 ), to: auditURL)
             }
             throw error
+        }
+    }
+
+    private func setAccessibilityValue() throws {
+        let commandName = "set-value"
+        let actionName = "accessibility.setValue"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = accessibilityActionRisk(for: actionName)
+        var appRecord: AppRecord?
+        var elementSummary: AuditElementSummary?
+        var elementID: String?
+        var policy: AuditPolicyDecision?
+        var identityVerification: IdentityVerification?
+        var verification: FileOperationVerification?
+        var valueLength: Int?
+        var valueDigest: String?
+        var currentValueLength: Int?
+        var currentValueDigest: String?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: commandName,
+                risk: risk,
+                reason: option("--reason"),
+                app: appRecord,
+                elementID: elementID ?? option("--element"),
+                element: elementSummary,
+                action: actionName,
+                policy: policy,
+                verification: verification,
+                identityVerification: identityVerification,
+                valueLength: valueLength,
+                valueDigest: valueDigest,
+                currentValueLength: currentValueLength,
+                currentValueDigest: currentValueDigest,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            policy = policyDecision(actionRisk: risk)
+            guard policy?.allowed == true else {
+                let message = policy?.message ?? "policy denied action"
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let value = try requiredOption("--value")
+            valueLength = value.count
+            valueDigest = sha256Digest(value)
+            elementID = try requiredOption("--element")
+            try requireTrusted()
+            let app = try targetApp()
+            appRecord = AppRecord(
+                name: app.localizedName,
+                bundleIdentifier: app.bundleIdentifier,
+                pid: app.processIdentifier
+            )
+            let element = try resolveElement(id: elementID!, in: app.processIdentifier)
+            let normalizedElementID = try normalizedElementID(elementID!)
+            elementSummary = auditSummary(
+                element,
+                pathID: normalizedElementID,
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier
+            )
+
+            identityVerification = try verifyElementIdentity(elementSummary?.stableIdentity)
+            guard identityVerification?.ok != false else {
+                let message = identityVerification?.message ?? "element identity verification failed"
+                try writeAudit(ok: false, code: identityVerification?.code ?? "identity_rejected", message: message)
+                throw CommandError(description: message)
+            }
+
+            let writableAttributes = elementSummary?.settableAttributes ?? settableAttributes(element)
+            guard writableAttributes.contains(kAXValueAttribute as String) else {
+                let message = "element \(elementID!) does not expose settable AXValue"
+                try writeAudit(ok: false, code: "value_not_settable", message: message)
+                throw CommandError(description: message)
+            }
+
+            let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFTypeRef)
+            guard result == .success else {
+                let message = "AXUIElementSetAttributeValue failed with \(result)"
+                try writeAudit(ok: false, code: "set_value_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let currentValue = stringLikeAttribute(element, kAXValueAttribute)
+            currentValueLength = currentValue?.count
+            currentValueDigest = currentValue.map(sha256Digest)
+            let matched = currentValue == value
+            verification = FileOperationVerification(
+                ok: matched,
+                code: matched ? "value_verified" : "value_mismatch",
+                message: matched
+                    ? "element AXValue contains text with the requested length and digest"
+                    : "element AXValue did not match requested text after setting"
+            )
+            guard matched else {
+                let message = verification?.message ?? "element value verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Set AXValue on \(elementID!)."
+            try writeAudit(ok: true, code: "set_value", message: message)
+
+            try writeJSON(AccessibilityValueSetResult(
+                ok: true,
+                pid: app.processIdentifier,
+                element: elementID!,
+                stableIdentity: elementSummary?.stableIdentity,
+                action: actionName,
+                risk: risk,
+                valueLength: valueLength ?? 0,
+                valueDigest: valueDigest ?? "",
+                currentValueLength: currentValueLength,
+                currentValueDigest: currentValueDigest,
+                verification: verification!,
+                identityVerification: identityVerification,
+                message: message,
+                auditID: auditID,
+                auditLogPath: auditURL.path
+            ))
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
         }
     }
 
@@ -19107,6 +19272,17 @@ final class Ln1CLI {
         }
     }
 
+    private func accessibilityActionRisk(for action: String) -> String {
+        switch action {
+        case "accessibility.inspectMenu", "accessibility.inspectElement", "accessibility.waitElement":
+            return "low"
+        case "accessibility.setValue":
+            return "medium"
+        default:
+            return riskLevel(for: action)
+        }
+    }
+
     private func fileActionRisk(for action: String) -> String {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
@@ -19220,6 +19396,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "accessibility.inspectMenu", domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: "accessibility.inspectElement", domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: "accessibility.waitElement", domain: "accessibility", risk: "low", mutates: false),
+            PolicyActionRecord(name: "accessibility.setValue", domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
             PolicyActionRecord(name: "apps.waitActive", domain: "apps", risk: appActionRisk(for: "apps.waitActive"), mutates: false),
@@ -19735,6 +19912,40 @@ final class Ln1CLI {
                 "id": "accessibilityElement:stable-semantic-digest",
                 "kind": "accessibilityElement",
                 "confidence": "high"
+              },
+              "identityVerification": {
+                "ok": true,
+                "code": "identity_verified",
+                "expectedID": "accessibilityElement:stable-semantic-digest",
+                "actualID": "accessibilityElement:stable-semantic-digest",
+                "minimumConfidence": "medium",
+                "actualConfidence": "high"
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
+            }
+          },
+          "setValue": {
+            "command": "Ln1 set-value --pid 456 --element a0.w0.4 --expect-identity accessibilityElement:stable-semantic-digest --min-identity-confidence medium --value 'new text' --allow-risk medium --reason 'Update field'",
+            "result": {
+              "ok": true,
+              "pid": 456,
+              "element": "a0.w0.4",
+              "stableIdentity": {
+                "id": "accessibilityElement:stable-semantic-digest",
+                "kind": "accessibilityElement",
+                "confidence": "high"
+              },
+              "action": "accessibility.setValue",
+              "risk": "medium",
+              "valueLength": 8,
+              "valueDigest": "hex encoded SHA-256 digest",
+              "currentValueLength": 8,
+              "currentValueDigest": "hex encoded SHA-256 digest",
+              "verification": {
+                "ok": true,
+                "code": "value_verified",
+                "message": "element AXValue contains text with the requested length and digest"
               },
               "identityVerification": {
                 "ok": true,
@@ -20711,6 +20922,7 @@ final class Ln1CLI {
           Ln1 state element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--depth N] [--max-children N]
           Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|m0.1|a0.w0.1.2|a0.m0.1 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
+          Ln1 set-value [--pid PID] --element w0.1.2|a0.w0.1.2 --value TEXT --allow-risk medium [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 audit [--limit N] [--id AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           Ln1 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
           Ln1 task record --task-id ID --kind observation|decision|action|verification|note --summary TEXT --allow-risk medium [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
@@ -20785,6 +20997,7 @@ final class Ln1CLI {
           - Element IDs are child-index paths. Use window IDs from `state` and menu IDs from `state menu` with `perform`.
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
+          - `set-value` sets one element's AXValue only after medium-risk approval, verifies length and digest, and audits metadata without storing text.
           - `audit` can filter records by exact audit ID, command name, and outcome code before applying the limit.
           - `task` stores and reads task-scoped memory as medium-risk local persistence with sensitive-summary redaction.
           - `files` emits read-only filesystem metadata, bounded search evidence, and available typed file actions.

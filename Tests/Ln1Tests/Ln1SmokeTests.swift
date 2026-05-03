@@ -29,6 +29,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["domain"] as? String, "accessibility")
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["accessibility.waitElement"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["accessibility.setValue"]?["domain"] as? String, "accessibility")
+        XCTAssertEqual(actionByName["accessibility.setValue"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["accessibility.setValue"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["apps.list"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.list"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["apps.list"]?["mutates"] as? Bool, false)
@@ -8344,6 +8347,30 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(identityVerification["actualConfidence"] as? String, "high")
     }
 
+    func testSchemaDocumentsGuardedAccessibilityValueSetting() throws {
+        let result = try runLn1(["schema"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let setValue = try XCTUnwrap(object["setValue"] as? [String: Any])
+        let resultObject = try XCTUnwrap(setValue["result"] as? [String: Any])
+        let stableIdentity = try XCTUnwrap(resultObject["stableIdentity"] as? [String: Any])
+        let verification = try XCTUnwrap(resultObject["verification"] as? [String: Any])
+        let identityVerification = try XCTUnwrap(resultObject["identityVerification"] as? [String: Any])
+
+        XCTAssertTrue((setValue["command"] as? String)?.contains("--expect-identity") == true)
+        XCTAssertTrue((setValue["command"] as? String)?.contains("--allow-risk medium") == true)
+        XCTAssertEqual(resultObject["action"] as? String, "accessibility.setValue")
+        XCTAssertEqual(resultObject["risk"] as? String, "medium")
+        XCTAssertEqual(resultObject["valueLength"] as? Int, 8)
+        XCTAssertNotNil(resultObject["valueDigest"] as? String)
+        XCTAssertNil(resultObject["value"] as? String)
+        XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "value_verified")
+        XCTAssertEqual(identityVerification["code"] as? String, "identity_verified")
+    }
+
     func testTaskMemoryRecordsTaskScopedEventsWithSensitiveSummaryRedaction() throws {
         let memoryLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-task-memory-\(UUID().uuidString).jsonl")
@@ -13339,6 +13366,49 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(entry["risk"] as? String, "unknown")
         XCTAssertEqual(policy["allowedRisk"] as? String, "low")
         XCTAssertEqual(policy["actionRisk"] as? String, "unknown")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
+    func testSetValuePolicyDenialIsAuditedBeforeAccessibilityTrust() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-set-value-policy-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let rejected = try runLn1([
+            "set-value",
+            "--audit-log", auditLog.path,
+            "--element", "w0",
+            "--value", "secret",
+            "--reason", "policy verification"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "set-value")
+        XCTAssertEqual(entry["reason"] as? String, "policy verification")
+        XCTAssertEqual(entry["elementID"] as? String, "w0")
+        XCTAssertEqual(entry["action"] as? String, "accessibility.setValue")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertNil(entry["value"] as? String)
+        XCTAssertNil(entry["valueLength"] as? Int)
+        XCTAssertNil(entry["valueDigest"] as? String)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
         XCTAssertEqual(policy["allowed"] as? Bool, false)
         XCTAssertEqual(outcome["ok"] as? Bool, false)
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")

@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -476,6 +476,16 @@ When identity constraints are present, `perform` recomputes the target element i
 
 Every `perform` attempt appends a structured JSONL audit record before returning success or failure. The action result includes the audit record ID and log path, plus the target stable identity and identity verification result when available.
 
+## Set An Accessibility Value
+
+Use `set-value` for controls that report `AXValue` in their `settableAttributes`:
+
+```sh
+.build/debug/Ln1 set-value --pid 123 --element w0.4 --expect-identity accessibilityElement:abc123 --min-identity-confidence medium --value "New title" --allow-risk medium --reason "Rename selected item"
+```
+
+`set-value` is a medium-risk mutating Accessibility action. It checks policy before touching Accessibility APIs, resolves the target element, verifies any supplied stable identity guard, refuses elements that do not expose settable `AXValue`, sets the value, then verifies the current value by length and SHA-256 digest. The result and audit record include value lengths and digests, but not the value text.
+
 By default the audit log is stored at:
 
 ```text
@@ -511,7 +521,7 @@ Filter audit records before applying the limit:
 .build/debug/Ln1 audit --id 5B3D2E12-1D75-4C9E-B6DA-FD1F3C9E6A57
 ```
 
-`--id` matches an exact audit record ID. `--command` matches audit command names such as `perform`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `clipboard.write-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `read_clipboard_text`, `wrote_clipboard_text`, or `read_dom`.
+`--id` matches an exact audit record ID. `--command` matches audit command names such as `perform`, `set-value`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `clipboard.write-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `set_value`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `read_clipboard_text`, `wrote_clipboard_text`, or `read_dom`.
 
 ## Track Task Memory
 
