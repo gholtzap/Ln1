@@ -42,6 +42,42 @@ struct ComputerState: Codable {
     let windows: [ElementNode]
 }
 
+struct AccessibilityElementWaitTarget: Codable {
+    let element: String
+    let expectedIdentity: String?
+    let minimumConfidence: String?
+    let title: String?
+    let value: String?
+    let match: String
+    let enabled: Bool?
+}
+
+struct AccessibilityElementWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let target: AccessibilityElementWaitTarget
+    let expectedExists: Bool
+    let current: ElementNode?
+    let identityVerification: IdentityVerification?
+    let titleMatched: Bool?
+    let valueMatched: Bool?
+    let enabledMatched: Bool?
+    let matched: Bool
+}
+
+struct AccessibilityElementWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let app: AppRecord
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let depth: Int
+    let maxChildren: Int
+    let verification: AccessibilityElementWaitVerification
+    let message: String
+}
+
 struct AppState: Codable {
     let app: AppRecord
     let windows: [ElementNode]
@@ -8938,7 +8974,193 @@ final class Ln1CLI {
         )
     }
 
+    private func stateElementWaitState() throws -> AccessibilityElementWaitResult {
+        let target = try accessibilityElementWaitTarget()
+        let expectedExists = option("--exists").map(parseBool) ?? true
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let depth = max(0, option("--depth").flatMap(Int.init) ?? 0)
+        let maxChildren = max(0, option("--max-children").flatMap(Int.init) ?? 20)
+
+        try requireTrusted()
+        let app = try targetApp()
+        let appRecord = AppRecord(
+            name: app.localizedName,
+            bundleIdentifier: app.bundleIdentifier,
+            pid: app.processIdentifier
+        )
+        let verification = try waitForAccessibilityElement(
+            target: target,
+            expectedExists: expectedExists,
+            app: app,
+            depth: depth,
+            maxChildren: maxChildren,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+
+        return AccessibilityElementWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            app: appRecord,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            depth: depth,
+            maxChildren: maxChildren,
+            verification: verification,
+            message: verification.ok
+                ? "Accessibility element matched the expected structured state."
+                : verification.message
+        )
+    }
+
+    private func accessibilityElementWaitTarget() throws -> AccessibilityElementWaitTarget {
+        let element = try requiredOption("--element")
+        let match = option("--match") ?? "contains"
+        guard ["exact", "contains"].contains(match) else {
+            throw CommandError(description: "state wait-element --match must be exact or contains")
+        }
+        let enabled = try option("--enabled").map {
+            try booleanOption($0, optionName: "--enabled")
+        }
+
+        return AccessibilityElementWaitTarget(
+            element: element,
+            expectedIdentity: option("--expect-identity"),
+            minimumConfidence: option("--min-identity-confidence"),
+            title: option("--title"),
+            value: option("--value"),
+            match: match,
+            enabled: enabled
+        )
+    }
+
+    private func waitForAccessibilityElement(
+        target: AccessibilityElementWaitTarget,
+        expectedExists: Bool,
+        app: NSRunningApplication,
+        depth: Int,
+        maxChildren: Int,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) throws -> AccessibilityElementWaitVerification {
+        let deadline = Date().addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var snapshot = try accessibilityElementWaitSnapshot(
+            target: target,
+            app: app,
+            depth: depth,
+            maxChildren: maxChildren
+        )
+
+        while snapshot.matches != expectedExists, Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            snapshot = try accessibilityElementWaitSnapshot(
+                target: target,
+                app: app,
+                depth: depth,
+                maxChildren: maxChildren
+            )
+        }
+
+        let matched = snapshot.matches == expectedExists
+        return AccessibilityElementWaitVerification(
+            ok: matched,
+            code: matched ? "accessibility_element_matched" : "accessibility_element_timeout",
+            message: matched
+                ? "accessibility element state matched expected criteria"
+                : "accessibility element state did not match expected criteria before timeout",
+            target: target,
+            expectedExists: expectedExists,
+            current: snapshot.node,
+            identityVerification: snapshot.identityVerification,
+            titleMatched: snapshot.titleMatched,
+            valueMatched: snapshot.valueMatched,
+            enabledMatched: snapshot.enabledMatched,
+            matched: matched
+        )
+    }
+
+    private struct AccessibilityElementWaitSnapshot {
+        let node: ElementNode?
+        let identityVerification: IdentityVerification?
+        let titleMatched: Bool?
+        let valueMatched: Bool?
+        let enabledMatched: Bool?
+        let matches: Bool
+    }
+
+    private func accessibilityElementWaitSnapshot(
+        target: AccessibilityElementWaitTarget,
+        app: NSRunningApplication,
+        depth: Int,
+        maxChildren: Int
+    ) throws -> AccessibilityElementWaitSnapshot {
+        let normalizedID: String
+        do {
+            normalizedID = try normalizedElementID(target.element)
+        } catch {
+            throw error
+        }
+
+        let element: AXUIElement
+        do {
+            element = try resolveElement(id: normalizedID, in: app.processIdentifier)
+        } catch let error as CommandError {
+            if error.description.contains("out of range") {
+                return AccessibilityElementWaitSnapshot(
+                    node: nil,
+                    identityVerification: nil,
+                    titleMatched: target.title == nil ? nil : false,
+                    valueMatched: target.value == nil ? nil : false,
+                    enabledMatched: target.enabled == nil ? nil : false,
+                    matches: false
+                )
+            }
+            throw error
+        }
+
+        let node = buildNode(
+            element,
+            id: normalizedID,
+            ownerName: app.localizedName,
+            ownerBundleIdentifier: app.bundleIdentifier,
+            depth: depth,
+            maxChildren: maxChildren
+        )
+        let identityVerification = try verifyElementIdentity(node.stableIdentity)
+        let identityMatched = identityVerification?.ok != false
+        let titleMatched = target.title.map { expectedTitle in
+            stringValue(node.title, matches: expectedTitle, mode: target.match)
+        }
+        let valueMatched = target.value.map { expectedValue in
+            stringValue(node.value, matches: expectedValue, mode: target.match)
+        }
+        let enabledMatched = target.enabled.map { expectedEnabled in
+            node.enabled == expectedEnabled
+        }
+        let matches = identityMatched
+            && (titleMatched ?? true)
+            && (valueMatched ?? true)
+            && (enabledMatched ?? true)
+
+        return AccessibilityElementWaitSnapshot(
+            node: node,
+            identityVerification: identityVerification,
+            titleMatched: titleMatched,
+            valueMatched: valueMatched,
+            enabledMatched: enabledMatched,
+            matches: matches
+        )
+    }
+
     private func state() throws {
+        if arguments.dropFirst().first == "wait-element" {
+            try writeJSON(stateElementWaitState())
+            return
+        }
+
         try requireTrusted()
         let depth = option("--depth").flatMap(Int.init) ?? 4
         let maxChildren = option("--max-children").flatMap(Int.init) ?? 120
@@ -15716,15 +15938,19 @@ final class Ln1CLI {
     }
 
     private func browserText(_ currentText: String?, matches expectedText: String, mode: String) -> Bool {
-        guard let currentText else {
+        stringValue(currentText, matches: expectedText, mode: mode)
+    }
+
+    private func stringValue(_ currentValue: String?, matches expectedValue: String, mode: String) -> Bool {
+        guard let currentValue else {
             return false
         }
 
         switch mode {
         case "exact":
-            return currentText == expectedText
+            return currentValue == expectedValue
         case "contains":
-            return currentText.contains(expectedText)
+            return currentValue.contains(expectedValue)
         default:
             return false
         }
@@ -18061,6 +18287,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: kAXShowMenuAction as String, domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: kAXConfirmAction as String, domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: kAXPickAction as String, domain: "accessibility", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "accessibility.waitElement", domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
             PolicyActionRecord(name: "apps.waitActive", domain: "apps", risk: appActionRisk(for: "apps.waitActive"), mutates: false),
@@ -19503,6 +19730,7 @@ final class Ln1CLI {
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
+          Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           Ln1 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           Ln1 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
@@ -19571,6 +19799,7 @@ final class Ln1CLI {
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
           - `state` emits structured JSON from macOS Accessibility APIs.
+          - `state wait-element` waits for an Accessibility element path and optional identity, text, or enabled-state criteria.
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
