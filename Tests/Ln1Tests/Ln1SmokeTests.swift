@@ -59,6 +59,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["apps.hide"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.hide"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["apps.hide"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["apps.unhide"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.unhide"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["apps.unhide"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["apps.quit"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.quit"]?["risk"] as? String, "high")
         XCTAssertEqual(actionByName["apps.quit"]?["mutates"] as? Bool, true)
@@ -1628,6 +1631,43 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetGUI" })
     }
 
+    func testAppsPlanPreflightsUnhideWithoutUnhidingApp() throws {
+        let apps = try runLn1(["apps"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        let first = try XCTUnwrap(records.first)
+        let pid = try XCTUnwrap(first["pid"] as? Int)
+
+        let result = try runLn1([
+            "apps",
+            "plan",
+            "--operation", "unhide",
+            "--pid", "\(pid)",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        let target = try XCTUnwrap(object["target"] as? [String: Any])
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "unhide")
+        XCTAssertEqual(object["action"] as? String, "apps.unhide")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["actionMutates"] as? Bool, true)
+        XCTAssertEqual(object["requiredAllowRisk"] as? String, "medium")
+        XCTAssertEqual(object["canExecute"] as? Bool, true)
+        XCTAssertEqual(target["pid"] as? Int, pid)
+        XCTAssertNotNil(target["hidden"] as? Bool)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "medium")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetRunning" })
+        XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetGUI" })
+    }
+
     func testAppsPlanPreflightsQuitWithoutQuittingApp() throws {
         let apps = try runLn1(["apps"])
 
@@ -1839,6 +1879,54 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }
 
+    func testAppsUnhidePolicyDenialIsAuditedWithoutUnhidingApp() throws {
+        let apps = try runLn1(["apps"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        let first = try XCTUnwrap(records.first)
+        let pid = try XCTUnwrap(first["pid"] as? Int)
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-app-unhide-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let rejected = try runLn1([
+            "apps",
+            "unhide",
+            "--pid", "\(pid)",
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let app = try XCTUnwrap(entry["app"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "apps.unhide")
+        XCTAssertEqual(entry["action"] as? String, "apps.unhide")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(app["pid"] as? Int, pid)
+        XCTAssertNotNil(app["hidden"] as? Bool)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
     func testAppsQuitPolicyDenialIsAuditedWithoutQuittingApp() throws {
         let apps = try runLn1(["apps"])
 
@@ -1998,6 +2086,51 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(object["canProceed"] as? Bool, true)
         XCTAssertEqual(object["nextArguments"] as? [String], [
             "Ln1", "apps", "hide",
+            "--pid", "\(pid)",
+            "--timeout-ms", "1500",
+            "--interval-ms", "75",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "apps.targetRunning" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "apps.targetGUI" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
+    }
+
+    func testWorkflowPreflightUnhideAppBuildsAuditedUnhideCommand() throws {
+        let apps = try runLn1(["apps"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        let first = try XCTUnwrap(records.first)
+        let pid = try XCTUnwrap(first["pid"] as? Int)
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-app-unhide-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "unhide-app",
+            "--pid", "\(pid)",
+            "--wait-timeout-ms", "1500",
+            "--interval-ms", "75",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "unhide-app")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "apps", "unhide",
             "--pid", "\(pid)",
             "--timeout-ms", "1500",
             "--interval-ms", "75",
@@ -2279,6 +2412,56 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(command["requiresReason"] as? Bool, true)
         XCTAssertEqual(command["argv"] as? [String], [
             "Ln1", "apps", "hide",
+            "--pid", "\(pid)",
+            "--timeout-ms", "2000",
+            "--interval-ms", "100",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: auditLog.path))
+    }
+
+    func testWorkflowRunDryRunUnhideAppReturnsStructuredCommandWithoutUnhiding() throws {
+        let apps = try runLn1(["apps"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        let first = try XCTUnwrap(records.first)
+        let pid = try XCTUnwrap(first["pid"] as? Int)
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-app-unhide-dry-run-\(UUID().uuidString)")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "unhide-app",
+            "--pid", "\(pid)",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "true"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "unhide-app")
+        XCTAssertEqual(object["mode"] as? String, "dry-run")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["executed"] as? Bool, false)
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "apps", "unhide",
             "--pid", "\(pid)",
             "--timeout-ms", "2000",
             "--interval-ms", "100",
@@ -2590,6 +2773,89 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("app hide completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsRunningAppsInspectionAfterUnhideApp() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-app-unhide-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "unhide-app-transcript",
+            "transcriptPath": workflowLog.path,
+            "generatedAt": "2026-05-03T00:00:00Z",
+            "platform": "macOS",
+            "operation": "unhide-app",
+            "mode": "execute",
+            "dryRun": false,
+            "ready": true,
+            "wouldExecute": true,
+            "executed": true,
+            "risk": "medium",
+            "mutates": true,
+            "blockers": [],
+            "command": [
+                "argv": [
+                    "Ln1", "apps", "unhide",
+                    "--pid", "123",
+                    "--allow-risk", "medium",
+                    "--reason", "Show app"
+                ]
+            ],
+            "execution": [
+                "argv": [
+                    "Ln1", "apps", "unhide",
+                    "--pid", "123",
+                    "--allow-risk", "medium",
+                    "--reason", "Show app"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "apps.unhide",
+                    "target": [
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App",
+                        "pid": 123,
+                        "hidden": true
+                    ],
+                    "hiddenAfter": false,
+                    "verification": [
+                        "ok": true,
+                        "code": "app_unhidden"
+                    ]
+                ]
+            ],
+            "preflight": [
+                "operation": "unhide-app",
+                "nextArguments": []
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "unhide-app",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "unhide-app")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-apps",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("app unhide completed") == true)
     }
 
     func testWorkflowResumeSuggestsRunningAppsInspectionAfterQuitApp() throws {
