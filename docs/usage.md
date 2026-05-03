@@ -71,13 +71,14 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-processes`, `start-task`, `record-task`, `finish-task`, `show-task`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-frontmost-app`, `inspect-apps`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-processes`, `start-task`, `record-task`, `finish-task`, `show-task`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
 ```sh
 .build/debug/Ln1 workflow preflight --operation inspect-system
 .build/debug/Ln1 workflow preflight --operation review-audit --id AUDIT_ID --audit-log /tmp/Ln1-audit.jsonl
+.build/debug/Ln1 workflow preflight --operation inspect-frontmost-app
 .build/debug/Ln1 workflow preflight --operation inspect-apps --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-installed-apps --name TextEdit --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
@@ -177,6 +178,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
 
 `launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log. After a successful launch, `workflow resume` suggests an active-app inspection dry-run.
+
+`inspect-frontmost-app` is a non-mutating workflow operation for the current frontmost app. It runs `apps active`, captures app name, bundle identifier, and PID without requiring Accessibility permission, and `workflow resume` suggests a dry-run process inspection for that PID.
 
 `inspect-apps` is a non-mutating workflow operation for bounded running app inventory. It runs `apps list`, forwards `--all` and `--limit`, captures app names, bundle identifiers, PIDs, active flags, truncation, and the active app in the workflow transcript, and `workflow resume` suggests a dry-run active app or process inspection.
 
@@ -320,6 +323,12 @@ To resume after an interruption, ask for a recommendation from the latest transc
 
 ```sh
 .build/debug/Ln1 apps
+```
+
+To inspect just the frontmost app without Accessibility permission:
+
+```sh
+.build/debug/Ln1 apps active
 ```
 
 For workflow capture or bounded app inventories, use the object-shaped list mode:

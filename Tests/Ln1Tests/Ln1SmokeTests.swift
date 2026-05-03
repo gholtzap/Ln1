@@ -35,6 +35,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["apps.list"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.list"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["apps.list"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["apps.active"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.active"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["apps.active"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["apps.installed"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.installed"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["apps.installed"]?["mutates"] as? Bool, false)
@@ -1079,6 +1082,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.waitWindow" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listDisplays" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.active" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.installed" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
@@ -1133,6 +1137,24 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(object["message"] as? String)
         XCTAssertNotNil(first["pid"] as? Int)
         XCTAssertNotNil(first["active"] as? Bool)
+    }
+
+    func testAppsActiveReturnsFrontmostAppMetadata() throws {
+        let result = try runLn1([
+            "apps",
+            "active"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertNotNil(object["found"] as? Bool)
+        XCTAssertNotNil(object["message"] as? String)
+        if object["found"] as? Bool == true {
+            let app = try XCTUnwrap(object["app"] as? [String: Any])
+            XCTAssertNotNil(app["pid"] as? Int)
+        }
     }
 
     func testAppsPlanPreflightsActivationWithoutChangingFocus() throws {
@@ -1763,6 +1785,60 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(object["nextArguments"] as? [String], [
             "Ln1", "workflow", "run",
             "--operation", "inspect-active-app",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+    }
+
+    func testWorkflowResumeSuggestsProcessInspectionAfterFrontmostAppInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-frontmost-app-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "frontmost-app-transcript",
+            "operation": "inspect-frontmost-app",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "apps", "active"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "platform": "macOS",
+                    "found": true,
+                    "app": [
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App",
+                        "pid": 123
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-frontmost-app",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-frontmost-app")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-process",
+            "--pid", "123",
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
         ])
@@ -3533,6 +3609,26 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "apps", "list",
             "--limit", "12",
             "--all"
+        ])
+    }
+
+    func testWorkflowPreflightInspectFrontmostAppBuildsActiveAppCommand() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-frontmost-app"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-frontmost-app")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "apps", "active"
         ])
     }
 
@@ -5594,6 +5690,38 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["limit"] as? Int, 10)
         XCTAssertEqual(outputJSON["count"] as? Int, apps.count)
         XCTAssertLessThanOrEqual(apps.count, 10)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesNonMutatingFrontmostAppInspectAndCapturesJSON() throws {
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-frontmost-app-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-frontmost-app",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-frontmost-app")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "apps", "active"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertNotNil(outputJSON["found"] as? Bool)
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
