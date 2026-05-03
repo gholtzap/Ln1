@@ -71,7 +71,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -109,6 +109,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-browser-attribute --endpoint http://127.0.0.1:9222 --id TARGET_ID --selector 'button[aria-expanded]' --attribute aria-expanded --text true --match exact
 .build/debug/Ln1 workflow preflight --operation wait-clipboard --changed-from 42 --has-string true
 .build/debug/Ln1 workflow preflight --operation inspect-clipboard
+.build/debug/Ln1 workflow preflight --operation read-clipboard --max-characters 4096
 .build/debug/Ln1 workflow preflight --operation inspect-file --path ~/Desktop/a.txt
 .build/debug/Ln1 workflow preflight --operation read-file --path ~/Desktop/a.txt --max-characters 4096
 .build/debug/Ln1 workflow preflight --operation tail-file --path ~/Desktop/a.txt --max-characters 4096
@@ -209,7 +210,9 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 
 `search-files` is a non-mutating workflow operation for bounded filename and content search. It validates a readable root and non-empty `--query`, forwards the same search bounds as `files search`, and `workflow resume` suggests a dry-run `inspect-file` workflow for the first matched file or the search root.
 
-`inspect-clipboard` is a non-mutating workflow operation for clipboard metadata snapshots. It wraps `clipboard state` without returning clipboard text, and `workflow resume` suggests either bounded text reading after explicit medium-risk approval or a metadata wait for future plain text.
+`inspect-clipboard` is a non-mutating workflow operation for clipboard metadata snapshots. It wraps `clipboard state` without returning clipboard text, and `workflow resume` suggests either a dry-run `read-clipboard` workflow after explicit medium-risk approval or a metadata wait for future plain text.
+
+`read-clipboard` is a medium-risk non-mutating workflow operation for bounded clipboard text. It wraps `clipboard read-text` with explicit medium-risk approval, optional `--pasteboard`, `--max-characters`, and `--audit-log`, and `workflow resume` suggests a clipboard metadata check so later steps can verify the pasteboard did not change unexpectedly.
 
 `wait-clipboard` is a non-mutating workflow operation for bounded clipboard metadata waiting. It can wait for the pasteboard change count to differ from `--changed-from N`, for plain-text availability with `--has-string true|false`, or for a specific text digest with `--string-digest HEX`, without returning clipboard text.
 
@@ -724,7 +727,7 @@ Wait for clipboard metadata without returning copied text:
 .build/debug/Ln1 clipboard wait --changed-from 42 --has-string true --timeout-ms 5000
 ```
 
-`clipboard.wait` is a low-risk read action. It polls pasteboard metadata until the change count differs from `--changed-from`, the plain-text availability matches `--has-string`, and/or the text digest matches `--string-digest`; it returns only metadata, lengths, and digests. After a successful `wait-clipboard` workflow, `workflow resume` suggests either bounded `clipboard read-text` when plain text is available or another metadata-only state check when it is not.
+`clipboard.wait` is a low-risk read action. It polls pasteboard metadata until the change count differs from `--changed-from`, the plain-text availability matches `--has-string`, and/or the text digest matches `--string-digest`; it returns only metadata, lengths, and digests. After a successful `wait-clipboard` workflow, `workflow resume` suggests either a dry-run `read-clipboard` workflow when plain text is available or another metadata-only state check when it is not.
 
 Read bounded plain text from the clipboard only after explicitly allowing medium-risk clipboard access:
 
