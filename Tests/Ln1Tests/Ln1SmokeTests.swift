@@ -28,6 +28,12 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["apps.activate"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.activate"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["apps.activate"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["processes.list"]?["domain"] as? String, "processes")
+        XCTAssertEqual(actionByName["processes.list"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["processes.list"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["processes.inspect"]?["domain"] as? String, "processes")
+        XCTAssertEqual(actionByName["processes.inspect"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["processes.inspect"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
@@ -230,6 +236,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(blockers)
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.wait" })
     }
@@ -481,6 +488,48 @@ final class Ln1SmokeTests: XCTestCase {
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
         ])
+    }
+
+    func testProcessesListReturnsBoundedStructuredProcessMetadata() throws {
+        let result = try runLn1([
+            "processes",
+            "--limit", "25"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let processes = try XCTUnwrap(object["processes"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["limit"] as? Int, 25)
+        XCTAssertEqual(object["count"] as? Int, processes.count)
+        XCTAssertLessThanOrEqual(processes.count, 25)
+        XCTAssertNotNil(object["truncated"] as? Bool)
+        XCTAssertTrue(processes.contains { $0["currentProcess"] as? Bool == true })
+
+        let first = try XCTUnwrap(processes.first)
+        XCTAssertNotNil(first["pid"] as? Int)
+        XCTAssertNotNil(first["currentProcess"] as? Bool)
+        XCTAssertNotNil(first["activeApp"] as? Bool)
+    }
+
+    func testProcessesInspectCurrentReturnsCurrentProcessMetadata() throws {
+        let result = try runLn1([
+            "processes",
+            "inspect",
+            "--current"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let process = try XCTUnwrap(object["process"] as? [String: Any])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["found"] as? Bool, true)
+        XCTAssertEqual(process["currentProcess"] as? Bool, true)
+        XCTAssertNotNil(process["pid"] as? Int)
+        XCTAssertNotNil(process["activeApp"] as? Bool)
+        XCTAssertTrue(process["name"] is String || process["executablePath"] is String)
     }
 
     func testDoctorReturnsReadinessChecksWithRemediation() throws {

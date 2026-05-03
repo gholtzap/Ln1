@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; app listing/planning, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; app listing/planning, process metadata reads, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -260,6 +260,27 @@ To bring one regular GUI app forward:
 ```
 
 `apps.activate` is a medium-risk mutating app action because it changes the active app and can affect subsequent keyboard input. It accepts `--pid`, `--bundle-id`, or `--current`, verifies the requested app becomes frontmost, and writes an audit record with the target app, policy decision, verification result, and outcome.
+
+## Inspect Running Processes
+
+```sh
+.build/debug/Ln1 processes --limit 50
+```
+
+`processes.list` returns bounded process metadata from macOS process APIs: PID, process name, executable path when available, related app name, bundle identifier, whether the process owns the frontmost app, and whether it is the current Ln1 process. It intentionally does not read command-line arguments.
+
+Filter by process name, app name, or bundle identifier:
+
+```sh
+.build/debug/Ln1 processes list --name Safari --limit 20
+```
+
+Inspect one process without listing the whole table:
+
+```sh
+.build/debug/Ln1 processes inspect --pid 123
+.build/debug/Ln1 processes inspect --current
+```
 
 ## Inspect Visible Desktop Windows
 

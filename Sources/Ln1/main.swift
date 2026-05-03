@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CryptoKit
+import Darwin
 import Foundation
 
 struct CommandError: Error, CustomStringConvertible {
@@ -92,6 +93,33 @@ struct AppActivationResult: Codable {
     let verification: FileOperationVerification
     let auditID: String
     let auditLogPath: String
+    let message: String
+}
+
+struct ProcessRecord: Codable {
+    let pid: Int32
+    let name: String?
+    let executablePath: String?
+    let bundleIdentifier: String?
+    let appName: String?
+    let activeApp: Bool
+    let currentProcess: Bool
+}
+
+struct ProcessListState: Codable {
+    let generatedAt: String
+    let platform: String
+    let limit: Int
+    let count: Int
+    let truncated: Bool
+    let processes: [ProcessRecord]
+}
+
+struct ProcessInspectState: Codable {
+    let generatedAt: String
+    let platform: String
+    let found: Bool
+    let process: ProcessRecord?
     let message: String
 }
 
@@ -1758,6 +1786,8 @@ final class Ln1CLI {
             try workflow()
         case "apps":
             try apps()
+        case "processes":
+            try processes()
         case "desktop":
             try desktop()
         case "state":
@@ -2077,6 +2107,99 @@ final class Ln1CLI {
 
     private func appDisplayName(_ app: AppRecord) -> String {
         app.name ?? app.bundleIdentifier ?? "pid \(app.pid)"
+    }
+
+    private func runningProcessRecords() -> [ProcessRecord] {
+        let bytesNeeded = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        guard bytesNeeded > 0 else {
+            return []
+        }
+
+        let pidCapacity = Int(bytesNeeded) / MemoryLayout<pid_t>.stride
+        var pids = [pid_t](repeating: 0, count: pidCapacity)
+        let bytesReturned = pids.withUnsafeMutableBytes { buffer in
+            proc_listpids(
+                UInt32(PROC_ALL_PIDS),
+                0,
+                buffer.baseAddress,
+                Int32(buffer.count)
+            )
+        }
+        guard bytesReturned > 0 else {
+            return []
+        }
+
+        let returnedCount = min(
+            pids.count,
+            Int(bytesReturned) / MemoryLayout<pid_t>.stride
+        )
+        return pids
+            .prefix(returnedCount)
+            .filter { $0 > 0 }
+            .compactMap(processRecord(for:))
+            .sorted(by: processRecordPrecedes)
+    }
+
+    private func processRecord(for pid: pid_t) -> ProcessRecord? {
+        let name = processName(for: pid)
+        let path = processPath(for: pid)
+        let app = NSRunningApplication(processIdentifier: pid)
+        if name == nil, path == nil, app == nil {
+            return nil
+        }
+
+        let activePID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        return ProcessRecord(
+            pid: pid,
+            name: name,
+            executablePath: path,
+            bundleIdentifier: app?.bundleIdentifier,
+            appName: app?.localizedName,
+            activeApp: pid == activePID,
+            currentProcess: pid == getpid()
+        )
+    }
+
+    private func processName(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 1_024)
+        let length = proc_name(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else {
+            return nil
+        }
+        return stringFromNullTerminatedBuffer(buffer)
+    }
+
+    private func processPath(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4_096)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else {
+            return nil
+        }
+        return stringFromNullTerminatedBuffer(buffer)
+    }
+
+    private func processRecordPrecedes(_ lhs: ProcessRecord, _ rhs: ProcessRecord) -> Bool {
+        if lhs.currentProcess != rhs.currentProcess {
+            return lhs.currentProcess && !rhs.currentProcess
+        }
+        if lhs.activeApp != rhs.activeApp {
+            return lhs.activeApp && !rhs.activeApp
+        }
+        let lhsGUI = lhs.bundleIdentifier != nil
+        let rhsGUI = rhs.bundleIdentifier != nil
+        if lhsGUI != rhsGUI {
+            return lhsGUI && !rhsGUI
+        }
+        return lhs.pid < rhs.pid
+    }
+
+    private func stringFromNullTerminatedBuffer(_ buffer: [CChar]) -> String? {
+        let endIndex = buffer.firstIndex(of: 0) ?? buffer.count
+        guard endIndex > 0 else {
+            return nil
+        }
+        let bytes = buffer[..<endIndex].map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     private func policy() throws {
@@ -7677,6 +7800,13 @@ final class Ln1CLI {
                 reason: "List running GUI apps and identify the active process."
             ),
             ObservationAction(
+                name: "processes.list",
+                command: "Ln1 processes --limit 50",
+                risk: processActionRisk(for: "processes.list"),
+                mutates: false,
+                reason: "List running process metadata without reading command-line arguments."
+            ),
+            ObservationAction(
                 name: "clipboard.state",
                 command: "Ln1 clipboard state",
                 risk: clipboardActionRisk(for: "clipboard.state"),
@@ -7749,6 +7879,76 @@ final class Ln1CLI {
         default:
             throw CommandError(description: "unknown apps mode '\(mode!)'")
         }
+    }
+
+    private func processes() throws {
+        let mode = arguments.dropFirst().first
+        switch mode {
+        case nil:
+            try writeJSON(processListState())
+        case let option? where option.hasPrefix("--"):
+            try writeJSON(processListState())
+        case "list":
+            try writeJSON(processListState())
+        case "inspect":
+            try writeJSON(processInspectState())
+        case "--help", "-h", "help":
+            printHelp()
+        default:
+            throw CommandError(description: "unknown processes mode '\(mode!)'")
+        }
+    }
+
+    private func processListState() throws -> ProcessListState {
+        let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
+        let nameFilter = option("--name")?.lowercased()
+        var records = runningProcessRecords()
+        if let nameFilter, !nameFilter.isEmpty {
+            records = records.filter { record in
+                (record.name?.lowercased().contains(nameFilter) == true)
+                    || (record.appName?.lowercased().contains(nameFilter) == true)
+                    || (record.bundleIdentifier?.lowercased().contains(nameFilter) == true)
+            }
+        }
+
+        let limited = Array(records.prefix(limit))
+        return ProcessListState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            limit: limit,
+            count: limited.count,
+            truncated: records.count > limited.count,
+            processes: limited
+        )
+    }
+
+    private func processInspectState() throws -> ProcessInspectState {
+        let pid: pid_t
+        if flag("--current") {
+            pid = getpid()
+        } else if let rawPID = option("--pid"), let parsedPID = pid_t(rawPID), parsedPID > 0 {
+            pid = parsedPID
+        } else {
+            throw CommandError(description: "processes inspect requires --pid PID or --current")
+        }
+
+        guard let record = processRecord(for: pid) else {
+            return ProcessInspectState(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                found: false,
+                process: nil,
+                message: "No running process metadata was available for pid \(pid)."
+            )
+        }
+
+        return ProcessInspectState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            found: true,
+            process: record,
+            message: "Read process metadata for pid \(pid)."
+        )
     }
 
     private func appActivationPlan() throws -> AppActivationPlan {
@@ -16938,6 +17138,15 @@ final class Ln1CLI {
         }
     }
 
+    private func processActionRisk(for action: String) -> String {
+        switch action {
+        case "processes.list", "processes.inspect":
+            return "low"
+        default:
+            return "unknown"
+        }
+    }
+
     private func taskMemoryActionRisk(for action: String) -> String {
         switch action {
         case "task.memoryStart", "task.memoryRecord", "task.memoryFinish", "task.memoryShow":
@@ -16980,6 +17189,8 @@ final class Ln1CLI {
             PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
             PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
+            PolicyActionRecord(name: "processes.list", domain: "processes", risk: processActionRisk(for: "processes.list"), mutates: false),
+            PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
@@ -18403,6 +18614,8 @@ final class Ln1CLI {
           Ln1 apps [--all]
           Ln1 apps plan --operation activate (--pid PID|--bundle-id BUNDLE_ID|--current) [--allow-risk low|medium|high|unknown]
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 processes [list] [--limit N] [--name TEXT]
+          Ln1 processes inspect (--pid PID|--current)
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
@@ -18466,6 +18679,7 @@ final class Ln1CLI {
           - `policy` describes known action risk levels and mutation behavior.
           - `apps plan` previews app activation with policy and target checks without changing focus.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
+          - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
