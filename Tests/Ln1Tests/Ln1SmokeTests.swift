@@ -1004,6 +1004,39 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.processTarget" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightWaitWindowBuildsDesktopWaitCommand() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "wait-window",
+            "--title", "Export Complete",
+            "--match", "contains",
+            "--exists", "true",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50",
+            "--limit", "20"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-window")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "desktop", "wait-window",
+            "--title", "Export Complete",
+            "--match", "contains",
+            "--exists", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50",
+            "--limit", "20"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowTarget" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowRunExecutesNonMutatingProcessWaitAndCapturesJSON() throws {
         let workflowLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-process-wait-\(UUID().uuidString).jsonl")
@@ -1043,6 +1076,46 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["matched"] as? Bool, true)
         XCTAssertNotNil(verification["current"] as? [String: Any])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesNonMutatingWindowWaitAndCapturesJSON() throws {
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-window-wait-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "wait-window",
+            "--title", "Ln1 nonexistent window \(UUID().uuidString)",
+            "--match", "exact",
+            "--exists", "false",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50",
+            "--limit", "20",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-window")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual((command["argv"] as? [String])?.prefix(3), [
+            "Ln1", "desktop", "wait-window"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertNotNil(verification["ok"] as? Bool)
+        XCTAssertNotNil(verification["matched"] as? Bool)
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
@@ -1266,6 +1339,60 @@ final class Ln1SmokeTests: XCTestCase {
             "--pid", "123",
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
+        ])
+    }
+
+    func testWorkflowResumeSuggestsWindowInventoryAfterAbsentWindowWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-window-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-window-transcript",
+            "operation": "wait-window",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "desktop", "wait-window",
+                    "--title", "Export Complete",
+                    "--exists", "false"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "verification": [
+                        "ok": true,
+                        "code": "desktop_window_matched",
+                        "expectedExists": false,
+                        "matched": true,
+                        "currentCount": 0,
+                        "current": []
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-window",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-window")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "desktop", "windows",
+            "--limit", "50"
         ])
     }
 

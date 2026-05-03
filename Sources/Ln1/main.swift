@@ -2653,6 +2653,8 @@ final class Ln1CLI {
             return workflowPreflightInspectProcess()
         case "wait-process":
             return workflowPreflightWaitProcess()
+        case "wait-window":
+            return workflowPreflightWaitWindow()
         case "wait-active-app":
             return workflowPreflightWaitActiveApp()
         case "activate-app":
@@ -2740,7 +2742,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, inspect-system, inspect-displays, inspect-process, wait-process, wait-active-app, activate-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use inspect-active-app, inspect-system, inspect-displays, inspect-process, wait-process, wait-window, wait-active-app, activate-app, control-active-app, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
         }
     }
 
@@ -2901,6 +2903,99 @@ final class Ln1CLI {
 
         return workflowPreflightResult(
             operation: "wait-process",
+            risk: "low",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightWaitWindow() -> WorkflowPreflight {
+        var prerequisites: [DoctorCheck] = []
+        var targetArguments: [String] = []
+        if let id = option("--id") {
+            targetArguments += ["--id", id]
+        }
+        if let ownerPID = option("--owner-pid") {
+            if Int32(ownerPID).map({ $0 > 0 }) == true {
+                targetArguments += ["--owner-pid", ownerPID]
+            } else {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.windowTarget",
+                    status: "fail",
+                    required: true,
+                    message: "Window owner pid must be a positive integer.",
+                    remediation: "Pass `--owner-pid PID` from `Ln1 desktop windows`."
+                ))
+            }
+        }
+        if let bundleIdentifier = option("--bundle-id") {
+            targetArguments += ["--bundle-id", bundleIdentifier]
+        }
+        if let title = option("--title") {
+            targetArguments += ["--title", title]
+        }
+
+        if targetArguments.isEmpty && prerequisites.isEmpty {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.windowTarget",
+                status: "fail",
+                required: true,
+                message: "No desktop window target was provided for wait-window.",
+                remediation: "Pass `--id ID`, `--owner-pid PID`, `--bundle-id BUNDLE_ID`, or `--title TEXT` from `Ln1 desktop windows`."
+            ))
+        } else if prerequisites.isEmpty {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.windowTarget",
+                status: "pass",
+                required: true,
+                message: "A desktop window target filter is available for wait-window.",
+                remediation: nil
+            ))
+        }
+
+        let match = option("--match") ?? "contains"
+        if !["exact", "prefix", "contains"].contains(match) {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.windowMatch",
+                status: "fail",
+                required: true,
+                message: "Window title match mode must be exact, prefix, or contains.",
+                remediation: "Pass `--match exact`, `--match prefix`, or `--match contains`."
+            ))
+        }
+
+        let expectedExists = option("--exists").map(parseBool) ?? true
+        let waitTimeoutMilliseconds = max(100, option("--wait-timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(50, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let limit = max(1, option("--limit").flatMap(Int.init) ?? 200)
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty {
+            var arguments = [
+                "Ln1", "desktop", "wait-window"
+            ] + targetArguments + [
+                "--match", match,
+                "--exists", String(expectedExists),
+                "--timeout-ms", String(waitTimeoutMilliseconds),
+                "--interval-ms", String(intervalMilliseconds),
+                "--limit", String(limit)
+            ]
+            if flag("--include-desktop") {
+                arguments.append("--include-desktop")
+            }
+            if flag("--all-layers") {
+                arguments.append("--all-layers")
+            }
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "wait-window",
             risk: "low",
             mutates: false,
             prerequisites: prerequisites,
@@ -6856,6 +6951,13 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "wait-window" {
+            return workflowWindowWaitRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                workflowURL: workflowURL
+            )
+        }
         if latestOperation == "inspect-system" {
             let arguments = ["Ln1", "observe", "--app-limit", "20", "--window-limit", "20"]
             return (
@@ -7968,6 +8070,98 @@ final class Ln1CLI {
         }
 
         return nil
+    }
+
+    private func workflowWindowWaitRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let verification = outputJSON["verification"] as? [String: Any] else {
+            return nil
+        }
+
+        let expectedExists = verification["expectedExists"] as? Bool
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--exists").map(parseBool)
+            ?? true
+        let matched = verification["matched"] as? Bool == true
+        let ok = verification["ok"] as? Bool == true
+        let current = verification["current"] as? [[String: Any]] ?? []
+
+        if ok, matched, expectedExists, let window = current.first {
+            if window["active"] as? Bool == true {
+                return (
+                    arguments: [
+                        "Ln1", "workflow", "run",
+                        "--operation", "inspect-active-app",
+                        "--dry-run", "true",
+                        "--workflow-log", workflowURL.path
+                    ],
+                    message: "Latest desktop window wait found a window owned by the active app; dry-run active app inspection before choosing a UI action."
+                )
+            }
+
+            if let ownerPID = window["ownerPID"] as? Int {
+                return (
+                    arguments: [
+                        "Ln1", "workflow", "run",
+                        "--operation", "inspect-process",
+                        "--pid", String(ownerPID),
+                        "--dry-run", "true",
+                        "--workflow-log", workflowURL.path
+                    ],
+                    message: "Latest desktop window wait found a visible window; dry-run owner process inspection before choosing the next app or UI action."
+                )
+            }
+        }
+
+        if ok, matched, !expectedExists {
+            return (
+                arguments: ["Ln1", "desktop", "windows", "--limit", "50"],
+                message: "Latest desktop window wait confirmed the matching window is absent; list current desktop windows before choosing the next step."
+            )
+        }
+
+        let retryArguments = workflowWindowWaitRetryArguments(from: execution["argv"] as? [String], workflowURL: workflowURL)
+        if let retryArguments {
+            return (
+                arguments: retryArguments,
+                message: "Latest desktop window wait completed without matching; dry-run another bounded wait before retrying."
+            )
+        }
+
+        return (
+            arguments: ["Ln1", "desktop", "windows", "--limit", "50"],
+            message: "Latest desktop window wait completed; list current desktop windows before choosing the next step."
+        )
+    }
+
+    private func workflowWindowWaitRetryArguments(from arguments: [String]?, workflowURL: URL) -> [String]? {
+        guard let arguments else {
+            return nil
+        }
+
+        var retry = ["Ln1", "workflow", "run", "--operation", "wait-window"]
+        for optionName in ["--id", "--owner-pid", "--bundle-id", "--title", "--match", "--exists", "--limit"] {
+            guard let value = workflowArgumentValue(in: arguments, for: optionName) else {
+                continue
+            }
+            retry += [optionName, value]
+        }
+        if let timeout = workflowArgumentValue(in: arguments, for: "--timeout-ms") {
+            retry += ["--wait-timeout-ms", timeout]
+        }
+        if let interval = workflowArgumentValue(in: arguments, for: "--interval-ms") {
+            retry += ["--interval-ms", interval]
+        }
+        if arguments.contains("--include-desktop") {
+            retry.append("--include-desktop")
+        }
+        if arguments.contains("--all-layers") {
+            retry.append("--all-layers")
+        }
+        retry += ["--dry-run", "true", "--workflow-log", workflowURL.path]
+        return retry
     }
 
     private func workflowActiveAppWaitRecommendation(
@@ -19291,11 +19485,11 @@ final class Ln1CLI {
           Ln1 policy
           Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-active-app|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-active-app|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow run --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow preflight --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-window|wait-active-app|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-window|wait-active-app|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-window|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--endpoint URL_OR_PATH] [--id TARGET_ID] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow run --operation activate-app|control-active-app|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-active-app|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation inspect-active-app|inspect-system|inspect-displays|inspect-process|wait-process|wait-window|wait-active-app|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
@@ -19429,6 +19623,7 @@ final class Ln1CLI {
           - `browser wait-attribute` waits for one element attribute to match without returning attribute contents.
           - Workflow fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, and navigate-browser preflight browser actions before returning typed mutating browser argv arrays for review.
           - Workflow mutating execution requires --execute-mutating true and a non-placeholder --reason before running the underlying audited command.
+          - Workflow wait-window waits for desktop window appearance or disappearance before inspecting owner process or active app state.
           - Workflow wait-browser-url waits for post-action browser URL verification without fixed sleeps.
           - Workflow wait-browser-selector waits for dynamic page UI readiness or disappearance before the next browser action.
           - Workflow wait-browser-count waits for dynamic collection sizes before inspecting or acting.
