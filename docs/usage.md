@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -309,6 +309,15 @@ If you are running from a non-interactive shell and want every process macOS exp
 ```sh
 .build/debug/Ln1 apps --all
 ```
+
+Discover installed app bundle identifiers and app bundle paths before launch planning:
+
+```sh
+.build/debug/Ln1 apps installed --name TextEdit --limit 20
+.build/debug/Ln1 apps installed --bundle-id com.apple.TextEdit
+```
+
+`apps.installed` is a low-risk non-mutating inventory of app bundle metadata from standard macOS application locations. It returns app names, bundle identifiers, bundle paths, versions, and executable paths so a caller can choose `apps plan --operation launch` without guessing bundle IDs.
 
 To preview a focus change or app launch without mutating the desktop:
 

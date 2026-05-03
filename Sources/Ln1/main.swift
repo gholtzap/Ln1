@@ -140,6 +140,25 @@ struct AppSummary: Codable {
     let active: Bool
 }
 
+struct InstalledAppRecord: Codable {
+    let name: String
+    let bundleIdentifier: String?
+    let path: String
+    let version: String?
+    let executablePath: String?
+}
+
+struct InstalledAppsState: Codable {
+    let generatedAt: String
+    let platform: String
+    let searchRoots: [String]
+    let limit: Int
+    let count: Int
+    let truncated: Bool
+    let apps: [InstalledAppRecord]
+    let message: String
+}
+
 struct AppPreflightCheck: Codable {
     let name: String
     let ok: Bool
@@ -2267,6 +2286,116 @@ final class Ln1CLI {
         }
 
         return records
+    }
+
+    private func installedAppsState() -> InstalledAppsState {
+        let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
+        let nameFilter = option("--name")?.lowercased()
+        let bundleIdentifierFilter = option("--bundle-id")?.lowercased()
+        let searchRoots = installedAppSearchRoots()
+        var records: [InstalledAppRecord] = []
+        var seenPaths = Set<String>()
+
+        for root in searchRoots {
+            guard FileManager.default.fileExists(atPath: root.path) else {
+                continue
+            }
+            collectInstalledApps(
+                under: root,
+                nameFilter: nameFilter,
+                bundleIdentifierFilter: bundleIdentifierFilter,
+                seenPaths: &seenPaths,
+                records: &records
+            )
+        }
+
+        records.sort {
+            let leftName = $0.name.localizedCaseInsensitiveCompare($1.name)
+            if leftName != .orderedSame {
+                return leftName == .orderedAscending
+            }
+            return $0.path < $1.path
+        }
+
+        let limited = Array(records.prefix(limit))
+        return InstalledAppsState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            searchRoots: searchRoots.map(\.path),
+            limit: limit,
+            count: limited.count,
+            truncated: records.count > limited.count,
+            apps: limited,
+            message: "Read installed app bundle metadata."
+        )
+    }
+
+    private func installedAppSearchRoots() -> [URL] {
+        [
+            URL(fileURLWithPath: "/Applications"),
+            URL(fileURLWithPath: "/System/Applications"),
+            URL(fileURLWithPath: "/System/Applications/Utilities"),
+            URL(fileURLWithPath: "/System/Library/CoreServices"),
+            URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications")
+        ].map(\.standardizedFileURL)
+    }
+
+    private func collectInstalledApps(
+        under root: URL,
+        nameFilter: String?,
+        bundleIdentifierFilter: String?,
+        seenPaths: inout Set<String>,
+        records: inout [InstalledAppRecord]
+    ) {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "app" else {
+                continue
+            }
+            enumerator.skipDescendants()
+
+            let standardizedURL = url.standardizedFileURL
+            guard seenPaths.insert(standardizedURL.path).inserted,
+                  let record = installedAppRecord(for: standardizedURL) else {
+                continue
+            }
+            if let nameFilter,
+               !record.name.lowercased().contains(nameFilter) {
+                continue
+            }
+            if let bundleIdentifierFilter,
+               record.bundleIdentifier?.lowercased() != bundleIdentifierFilter {
+                continue
+            }
+            records.append(record)
+        }
+    }
+
+    private func installedAppRecord(for url: URL) -> InstalledAppRecord? {
+        guard let bundle = Bundle(url: url) else {
+            return nil
+        }
+
+        let name = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? url.deletingPathExtension().lastPathComponent
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+
+        return InstalledAppRecord(
+            name: name,
+            bundleIdentifier: bundle.bundleIdentifier,
+            path: url.path,
+            version: version,
+            executablePath: bundle.executableURL?.path
+        )
     }
 
     private func targetRunningApplicationForAppCommand() throws -> NSRunningApplication {
@@ -9954,6 +10083,13 @@ final class Ln1CLI {
                 reason: "List running GUI apps and identify the active process."
             ),
             ObservationAction(
+                name: "apps.installed",
+                command: "Ln1 apps installed --limit 50",
+                risk: appActionRisk(for: "apps.installed"),
+                mutates: false,
+                reason: "Discover installed app bundle identifiers and paths before launch planning."
+            ),
+            ObservationAction(
                 name: "processes.list",
                 command: "Ln1 processes --limit 50",
                 risk: processActionRisk(for: "processes.list"),
@@ -10028,6 +10164,8 @@ final class Ln1CLI {
             try writeJSON(appSummaries(includeAll: includeAll, activePid: activePid))
         case "plan":
             try appsPlan()
+        case "installed":
+            try writeJSON(installedAppsState())
         case "activate":
             try writeJSON(activateApp())
         case "launch":
@@ -19921,7 +20059,7 @@ final class Ln1CLI {
 
     private func appActionRisk(for action: String) -> String {
         switch action {
-        case "apps.list", "apps.plan", "apps.waitActive":
+        case "apps.list", "apps.installed", "apps.plan", "apps.waitActive":
             return "low"
         case "apps.activate", "apps.launch":
             return "medium"
@@ -19983,6 +20121,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "accessibility.waitElement", domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: "accessibility.setValue", domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
+            PolicyActionRecord(name: "apps.installed", domain: "apps", risk: appActionRisk(for: "apps.installed"), mutates: false),
             PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
             PolicyActionRecord(name: "apps.waitActive", domain: "apps", risk: appActionRisk(for: "apps.waitActive"), mutates: false),
             PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
@@ -20344,6 +20483,27 @@ final class Ln1CLI {
                   "reason": "Inspect the active app's UI tree with stable element identities."
                 }
               ]
+            }
+          },
+          "appsInstalled": {
+            "command": "Ln1 apps installed --name TextEdit --limit 20",
+            "result": {
+              "generatedAt": "ISO-8601 timestamp",
+              "platform": "macOS",
+              "searchRoots": ["/Applications", "/System/Applications"],
+              "limit": 20,
+              "count": 1,
+              "truncated": false,
+              "apps": [
+                {
+                  "name": "TextEdit",
+                  "bundleIdentifier": "com.apple.TextEdit",
+                  "path": "/System/Applications/TextEdit.app",
+                  "version": "1.18",
+                  "executablePath": "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit"
+                }
+              ],
+              "message": "Read installed app bundle metadata."
             }
           },
           "appsLaunchPlan": {
@@ -21551,6 +21711,7 @@ final class Ln1CLI {
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
+          Ln1 apps installed [--limit N] [--name TEXT] [--bundle-id BUNDLE_ID]
           Ln1 apps plan --operation activate|launch (--pid PID|--bundle-id BUNDLE_ID|--current|--path APP_BUNDLE) [--activate true|false] [--allow-risk low|medium|high|unknown]
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 apps launch (--bundle-id BUNDLE_ID|--path APP_BUNDLE) --allow-risk medium [--activate true|false] [--reason TEXT] [--audit-log PATH]
@@ -21626,6 +21787,7 @@ final class Ln1CLI {
           - Run `Ln1 trust` before Accessibility-backed `state`, `perform`, or `set-value` commands.
           - `policy` describes known action risk levels and mutation behavior.
           - `system context` reports bounded host, OS, shell, working directory, and runtime metadata.
+          - `apps installed` lists installed app bundle identifiers and paths for launch planning.
           - `apps plan` previews app activation or launch with policy and target checks without changing focus or opening apps.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
           - `apps launch` opens an installed `.app` by bundle ID or path after medium-risk approval and verifies running/frontmost state.

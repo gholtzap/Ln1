@@ -35,6 +35,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["apps.list"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.list"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["apps.list"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["apps.installed"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.installed"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["apps.installed"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["apps.plan"]?["domain"] as? String, "apps")
         XCTAssertEqual(actionByName["apps.plan"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["apps.plan"]?["mutates"] as? Bool, false)
@@ -797,9 +800,37 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.waitWindow" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listDisplays" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.installed" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.wait" })
+    }
+
+    func testAppsInstalledListsLaunchableBundleMetadata() throws {
+        guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") != nil else {
+            throw XCTSkip("Finder application bundle was not available from LaunchServices.")
+        }
+
+        let result = try runLn1([
+            "apps",
+            "installed",
+            "--bundle-id", "com.apple.finder",
+            "--limit", "5"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let apps = try XCTUnwrap(object["apps"] as? [[String: Any]])
+        let first = try XCTUnwrap(apps.first)
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["limit"] as? Int, 5)
+        XCTAssertEqual(object["count"] as? Int, apps.count)
+        XCTAssertLessThanOrEqual(apps.count, 5)
+        XCTAssertNotNil(object["truncated"] as? Bool)
+        XCTAssertEqual(first["bundleIdentifier"] as? String, "com.apple.finder")
+        XCTAssertNotNil(first["name"] as? String)
+        XCTAssertNotNil(first["path"] as? String)
     }
 
     func testAppsPlanPreflightsActivationWithoutChangingFocus() throws {
@@ -8791,6 +8822,27 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "value_verified")
         XCTAssertEqual(identityVerification["code"] as? String, "identity_verified")
+    }
+
+    func testSchemaDocumentsInstalledAppInventory() throws {
+        let result = try runLn1(["schema"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let appsInstalled = try XCTUnwrap(object["appsInstalled"] as? [String: Any])
+        let resultObject = try XCTUnwrap(appsInstalled["result"] as? [String: Any])
+        let roots = try XCTUnwrap(resultObject["searchRoots"] as? [String])
+        let apps = try XCTUnwrap(resultObject["apps"] as? [[String: Any]])
+        let first = try XCTUnwrap(apps.first)
+
+        XCTAssertTrue((appsInstalled["command"] as? String)?.contains("apps installed") == true)
+        XCTAssertEqual(resultObject["platform"] as? String, "macOS")
+        XCTAssertEqual(resultObject["limit"] as? Int, 20)
+        XCTAssertEqual(resultObject["truncated"] as? Bool, false)
+        XCTAssertTrue(roots.contains("/Applications"))
+        XCTAssertEqual(first["bundleIdentifier"] as? String, "com.apple.TextEdit")
+        XCTAssertNotNil(first["path"] as? String)
+        XCTAssertNotNil(first["executablePath"] as? String)
     }
 
     func testSchemaDocumentsAppLaunchPlanResults() throws {
