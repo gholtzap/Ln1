@@ -532,6 +532,138 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(process["name"] is String || process["executablePath"] is String)
     }
 
+    func testWorkflowPreflightInspectProcessBuildsProcessInspectCommand() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-process",
+            "--current"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-process")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "processes", "inspect", "--current"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.processTarget" && $0["status"] as? String == "pass" })
+    }
+
+    func testWorkflowRunExecutesNonMutatingProcessInspectAndCapturesJSON() throws {
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-process-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-process",
+            "--current",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let process = try XCTUnwrap(outputJSON["process"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-process")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "processes", "inspect", "--current"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["found"] as? Bool, true)
+        XCTAssertEqual(process["currentProcess"] as? Bool, true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowResumeSuggestsActivationAfterProcessInspectForGUIApp() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-process-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-process-transcript",
+            "transcriptPath": workflowLog.path,
+            "generatedAt": "2026-05-03T00:00:00Z",
+            "platform": "macOS",
+            "operation": "inspect-process",
+            "mode": "execute",
+            "dryRun": false,
+            "ready": true,
+            "wouldExecute": true,
+            "executed": true,
+            "risk": "low",
+            "mutates": false,
+            "blockers": [],
+            "command": [
+                "argv": [
+                    "Ln1", "processes", "inspect",
+                    "--pid", "123"
+                ]
+            ],
+            "execution": [
+                "argv": [
+                    "Ln1", "processes", "inspect",
+                    "--pid", "123"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "found": true,
+                    "process": [
+                        "pid": 123,
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App",
+                        "appName": "Example",
+                        "activeApp": false,
+                        "currentProcess": false
+                    ]
+                ]
+            ],
+            "preflight": [
+                "operation": "inspect-process",
+                "nextArguments": []
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-process",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-process")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "activate-app",
+            "--bundle-id", "com.example.App",
+            "--allow-risk", "medium",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+    }
+
     func testDoctorReturnsReadinessChecksWithRemediation() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-doctor-\(UUID().uuidString)")
