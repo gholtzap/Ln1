@@ -53,6 +53,27 @@ struct AllComputerState: Codable {
     let apps: [AppState]
 }
 
+struct SystemContextState: Codable {
+    let generatedAt: String
+    let platform: String
+    let hostName: String
+    let userName: String
+    let homeDirectory: String
+    let currentDirectory: String
+    let shellPath: String?
+    let processIdentifier: Int32
+    let executablePath: String?
+    let operatingSystemVersion: String
+    let operatingSystemVersionString: String
+    let architecture: String
+    let processorCount: Int
+    let activeProcessorCount: Int
+    let physicalMemoryBytes: UInt64
+    let systemUptimeSeconds: Double
+    let timeZoneIdentifier: String
+    let localeIdentifier: String
+}
+
 struct AppSummary: Codable {
     let name: String?
     let bundleIdentifier: String?
@@ -1799,6 +1820,8 @@ final class Ln1CLI {
             try doctor()
         case "policy":
             try policy()
+        case "system":
+            try system()
         case "observe":
             try observe()
         case "workflow":
@@ -1829,6 +1852,18 @@ final class Ln1CLI {
             printHelp()
         default:
             throw CommandError(description: "unknown command '\(command)'")
+        }
+    }
+
+    private func system() throws {
+        let mode = arguments.dropFirst().first ?? "context"
+        switch mode {
+        case "context", "info":
+            try writeJSON(systemContextState())
+        case "--help", "-h", "help":
+            printHelp()
+        default:
+            throw CommandError(description: "unknown system mode '\(mode)'")
         }
     }
 
@@ -2249,6 +2284,45 @@ final class Ln1CLI {
         }
         let bytes = buffer[..<endIndex].map { UInt8(bitPattern: $0) }
         return String(decoding: bytes, as: UTF8.self)
+    }
+
+    private func systemContextState() -> SystemContextState {
+        let processInfo = ProcessInfo.processInfo
+        let version = processInfo.operatingSystemVersion
+        return SystemContextState(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            hostName: processInfo.hostName,
+            userName: NSUserName(),
+            homeDirectory: NSHomeDirectory(),
+            currentDirectory: FileManager.default.currentDirectoryPath,
+            shellPath: processInfo.environment["SHELL"],
+            processIdentifier: processInfo.processIdentifier,
+            executablePath: Bundle.main.executableURL?.path,
+            operatingSystemVersion: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
+            operatingSystemVersionString: processInfo.operatingSystemVersionString,
+            architecture: systemArchitecture(),
+            processorCount: processInfo.processorCount,
+            activeProcessorCount: processInfo.activeProcessorCount,
+            physicalMemoryBytes: processInfo.physicalMemory,
+            systemUptimeSeconds: processInfo.systemUptime,
+            timeZoneIdentifier: TimeZone.current.identifier,
+            localeIdentifier: Locale.current.identifier
+        )
+    }
+
+    private func systemArchitecture() -> String {
+        #if arch(arm64)
+        return "arm64"
+        #elseif arch(x86_64)
+        return "x86_64"
+        #elseif arch(arm)
+        return "arm"
+        #elseif arch(i386)
+        return "i386"
+        #else
+        return "unknown"
+        #endif
     }
 
     private func policy() throws {
@@ -8063,6 +8137,13 @@ final class Ln1CLI {
         windowLimit: Int
     ) -> [ObservationAction] {
         var actions = [
+            ObservationAction(
+                name: "system.context",
+                command: "Ln1 system context",
+                risk: systemActionRisk(for: "system.context"),
+                mutates: false,
+                reason: "Inspect OS, host, shell, working directory, and runtime metadata."
+            ),
             ObservationAction(
                 name: "desktop.listWindows",
                 command: "Ln1 desktop windows --limit \(windowLimit)",
@@ -17434,6 +17515,15 @@ final class Ln1CLI {
         }
     }
 
+    private func systemActionRisk(for action: String) -> String {
+        switch action {
+        case "system.context":
+            return "low"
+        default:
+            return "unknown"
+        }
+    }
+
     private func appActionRisk(for action: String) -> String {
         switch action {
         case "apps.list", "apps.plan":
@@ -17499,6 +17589,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "processes.list", domain: "processes", risk: processActionRisk(for: "processes.list"), mutates: false),
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
             PolicyActionRecord(name: "processes.wait", domain: "processes", risk: processActionRisk(for: "processes.wait"), mutates: false),
+            PolicyActionRecord(name: "system.context", domain: "system", risk: systemActionRisk(for: "system.context"), mutates: false),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
@@ -18911,6 +19002,7 @@ final class Ln1CLI {
           Ln1 trust [--prompt true|false]
           Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           Ln1 policy
+          Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           Ln1 workflow preflight --operation inspect-active-app|inspect-process|wait-process|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           Ln1 workflow next --operation inspect-active-app|inspect-process|wait-process|activate-app|control-active-app|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
@@ -18986,6 +19078,7 @@ final class Ln1CLI {
         Notes:
           - Run `Ln1 trust` before Accessibility-backed `state` or `perform` commands.
           - `policy` describes known action risk levels and mutation behavior.
+          - `system context` reports bounded host, OS, shell, working directory, and runtime metadata.
           - `apps plan` previews app activation with policy and target checks without changing focus.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.

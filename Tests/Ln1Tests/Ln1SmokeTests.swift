@@ -37,6 +37,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["processes.wait"]?["domain"] as? String, "processes")
         XCTAssertEqual(actionByName["processes.wait"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["processes.wait"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["system.context"]?["domain"] as? String, "system")
+        XCTAssertEqual(actionByName["system.context"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["system.context"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
@@ -170,6 +173,30 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["workflow.logRead"]?["mutates"] as? Bool, false)
     }
 
+    func testSystemContextReturnsBoundedHostRuntimeMetadata() throws {
+        let result = try runLn1(["system", "context"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertNotNil(object["hostName"] as? String)
+        XCTAssertNotNil(object["userName"] as? String)
+        XCTAssertNotNil(object["homeDirectory"] as? String)
+        XCTAssertEqual(object["currentDirectory"] as? String, packageRoot.path)
+        XCTAssertNotNil(object["processIdentifier"] as? Int)
+        XCTAssertNotNil(object["operatingSystemVersion"] as? String)
+        XCTAssertNotNil(object["operatingSystemVersionString"] as? String)
+        XCTAssertNotNil(object["architecture"] as? String)
+        XCTAssertNotNil(object["processorCount"] as? Int)
+        XCTAssertNotNil(object["activeProcessorCount"] as? Int)
+        XCTAssertNotNil(object["physicalMemoryBytes"] as? Int)
+        XCTAssertNotNil(object["systemUptimeSeconds"] as? Double)
+        XCTAssertNotNil(object["timeZoneIdentifier"] as? String)
+        XCTAssertNotNil(object["localeIdentifier"] as? String)
+        XCTAssertNil(object["environment"])
+    }
+
     func testDesktopWindowsReturnsStructuredVisibleWindowInventory() throws {
         let result = try runLn1([
             "desktop",
@@ -237,6 +264,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(desktop["limit"] as? Int, 3)
         XCTAssertNotNil(desktop["available"] as? Bool)
         XCTAssertNotNil(blockers)
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "system.context" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })
