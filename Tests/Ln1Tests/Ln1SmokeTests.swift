@@ -68,6 +68,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["system.context"]?["domain"] as? String, "system")
         XCTAssertEqual(actionByName["system.context"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["system.context"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["workspace.open"]?["domain"] as? String, "workspace")
+        XCTAssertEqual(actionByName["workspace.open"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["workspace.open"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["desktop.listDisplays"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listDisplays"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listDisplays"]?["mutates"] as? Bool, false)
@@ -1785,6 +1788,110 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightOpenFileBuildsAuditedOpenCommand() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-open-file-\(UUID().uuidString)")
+        let target = directory.appendingPathComponent("artifact.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "artifact".write(to: target, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "open-file",
+            "--path", target.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "open-file")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "open",
+            "--path", target.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.workspaceOpenTarget" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
+    }
+
+    func testWorkflowPreflightOpenURLBuildsAuditedOpenCommand() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-open-url-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "open-url",
+            "--url", "https://example.com/report",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["operation"] as? String, "open-url")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "open",
+            "--url", "https://example.com/report",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+    }
+
+    func testWorkflowRunDryRunOpenURLReturnsStructuredCommandWithoutOpeningURL() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-open-url-dry-run-\(UUID().uuidString).jsonl")
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-open-url-dry-run-\(UUID().uuidString)-workflow.jsonl")
+        defer {
+            try? FileManager.default.removeItem(at: auditLog)
+            try? FileManager.default.removeItem(at: workflowLog)
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "open-url",
+            "--url", "https://example.com/report",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "true"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "open-url")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["executed"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "open",
+            "--url", "https://example.com/report",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+    }
+
     func testWorkflowRunDryRunActivateAppReturnsStructuredCommandWithoutChangingFocus() throws {
         let apps = try runLn1(["apps"])
 
@@ -1999,6 +2106,88 @@ final class Ln1SmokeTests: XCTestCase {
             "--workflow-log", workflowLog.path
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("app launch completed") == true)
+    }
+
+    func testWorkflowResumeSuggestsActiveWindowInspectionAfterOpenURL() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-open-url-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "open-url-transcript",
+            "transcriptPath": workflowLog.path,
+            "generatedAt": "2026-05-03T00:00:00Z",
+            "platform": "macOS",
+            "operation": "open-url",
+            "mode": "execute",
+            "dryRun": false,
+            "ready": true,
+            "wouldExecute": true,
+            "executed": true,
+            "risk": "medium",
+            "mutates": true,
+            "blockers": [],
+            "command": [
+                "argv": [
+                    "Ln1", "open",
+                    "--url", "https://example.com/report",
+                    "--allow-risk", "medium",
+                    "--reason", "Open report"
+                ]
+            ],
+            "execution": [
+                "argv": [
+                    "Ln1", "open",
+                    "--url", "https://example.com/report",
+                    "--allow-risk", "medium",
+                    "--reason", "Open report"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "workspace.open",
+                    "target": [
+                        "kind": "url",
+                        "url": "https://example.com/report",
+                        "scheme": "https",
+                        "host": "example.com"
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "open_request_accepted"
+                    ]
+                ]
+            ],
+            "preflight": [
+                "operation": "open-url",
+                "nextArguments": []
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "open-url",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "open-url")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-active-window",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("workspace open completed") == true)
     }
 
     func testWorkflowResumeSuggestsLaunchDryRunAfterInstalledAppInspect() throws {
@@ -15397,6 +15586,53 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNil(entry["value"] as? String)
         XCTAssertNil(entry["valueLength"] as? Int)
         XCTAssertNil(entry["valueDigest"] as? String)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
+    func testOpenPolicyDenialWritesAuditWithoutOpeningTarget() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-open-denied-\(UUID().uuidString)")
+        let target = directory.appendingPathComponent("artifact.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "artifact".write(to: target, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let denied = try runLn1([
+            "open",
+            "--path", target.path,
+            "--allow-risk", "low",
+            "--reason", "policy verification",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(denied.status, 0)
+        XCTAssertTrue(denied.stderr.contains("policy denied medium action"), denied.stderr)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "open"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let targetSummary = try XCTUnwrap(entry["workspaceOpenTarget"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "open")
+        XCTAssertEqual(entry["reason"] as? String, "policy verification")
+        XCTAssertEqual(entry["action"] as? String, "workspace.open")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(targetSummary["kind"] as? String, "file")
+        XCTAssertEqual(targetSummary["path"] as? String, target.path)
         XCTAssertEqual(policy["allowedRisk"] as? String, "low")
         XCTAssertEqual(policy["actionRisk"] as? String, "medium")
         XCTAssertEqual(policy["allowed"] as? Bool, false)
