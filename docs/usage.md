@@ -71,7 +71,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -81,6 +81,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation inspect-installed-apps --name TextEdit --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 .build/debug/Ln1 workflow preflight --operation inspect-displays
+.build/debug/Ln1 workflow preflight --operation inspect-windows --limit 50
 .build/debug/Ln1 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
 .build/debug/Ln1 workflow preflight --operation set-element-value --element w0.4 --expect-identity accessibilityElement:abc123 --value "New title"
 .build/debug/Ln1 workflow preflight --operation inspect-process --pid 123
@@ -182,6 +183,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `inspect-system` is a non-mutating workflow operation for host and runtime metadata. It runs `system context`, captures bounded OS, shell, working-directory, timezone, locale, memory, uptime, and processor evidence in the workflow transcript, and `workflow resume` suggests a fresh `observe` snapshot.
 
 `inspect-displays` is a non-mutating workflow operation for display topology. It runs `desktop displays`, captures connected display IDs, coordinate bounds, pixel dimensions, scale, rotation, and display flags in the workflow transcript, and `workflow resume` suggests a fresh `observe` snapshot.
+
+`inspect-windows` is a non-mutating workflow operation for visible desktop window inventory. It runs `desktop windows`, captures WindowServer owner, title, bounds, layer, and stable identity metadata in the workflow transcript, and `workflow resume` suggests active-app or owner-process inspection when the inventory points to a concrete next target.
 
 `inspect-process` is a non-mutating workflow operation for one process by `--pid` or `--current`. It runs `processes inspect`, captures structured process metadata in the workflow transcript, and `workflow resume` can suggest a dry-run app activation when the inspected process belongs to a GUI app.
 
