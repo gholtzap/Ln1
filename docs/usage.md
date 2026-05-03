@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, app listing/planning, process metadata reads, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -344,6 +344,16 @@ By default `desktop windows` reports visible non-desktop, normal-layer windows. 
 ```sh
 .build/debug/Ln1 desktop windows --include-desktop --all-layers
 ```
+
+Wait for a desktop window to appear or disappear without relying on a fixed sleep:
+
+```sh
+.build/debug/Ln1 desktop wait-window --bundle-id com.apple.TextEdit --exists true --timeout-ms 5000
+.build/debug/Ln1 desktop wait-window --title "Export Complete" --match contains --exists true --timeout-ms 30000
+.build/debug/Ln1 desktop wait-window --id desktopWindow:STABLE_ID --exists false --timeout-ms 5000
+```
+
+`desktop.waitWindow` polls the same WindowServer metadata as `desktop windows` and returns structured verification: the target filters, expected existence state, current matching windows, match count, and a timeout or matched code. It can match by transient window `id`, semantic `stableIdentity.id`, owner PID, bundle identifier, or title with `--match exact|prefix|contains`.
 
 ## Emit Structured State
 

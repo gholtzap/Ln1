@@ -49,6 +49,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["desktop.waitWindow"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.waitWindow"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["desktop.waitWindow"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.watch"]?["risk"] as? String, "low")
@@ -477,6 +480,43 @@ final class Ln1SmokeTests: XCTestCase {
         }
     }
 
+    func testDesktopWaitWindowReturnsStructuredExistenceVerification() throws {
+        let unlikelyTitle = "Ln1 nonexistent window \(UUID().uuidString)"
+        let result = try runLn1([
+            "desktop",
+            "wait-window",
+            "--title", unlikelyTitle,
+            "--match", "exact",
+            "--exists", "false",
+            "--timeout-ms", "0",
+            "--interval-ms", "10",
+            "--limit", "20"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+        let target = try XCTUnwrap(verification["target"] as? [String: Any])
+        let current = try XCTUnwrap(verification["current"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 0)
+        XCTAssertEqual(object["intervalMilliseconds"] as? Int, 10)
+        XCTAssertEqual(object["includeDesktop"] as? Bool, false)
+        XCTAssertEqual(object["includeAllLayers"] as? Bool, false)
+        XCTAssertEqual(object["limit"] as? Int, 20)
+        XCTAssertEqual(target["title"] as? String, unlikelyTitle)
+        XCTAssertEqual(target["titleMatch"] as? String, "exact")
+        XCTAssertEqual(verification["expectedExists"] as? Bool, false)
+        XCTAssertEqual(verification["currentCount"] as? Int, current.count)
+
+        if verification["code"] as? String != "desktop_window_metadata_unavailable" {
+            XCTAssertEqual(verification["ok"] as? Bool, true)
+            XCTAssertEqual(verification["matched"] as? Bool, true)
+            XCTAssertEqual(current.count, 0)
+        }
+    }
+
     func testObserveReturnsStructuredFirstStepSnapshot() throws {
         let result = try runLn1([
             "observe",
@@ -504,6 +544,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(blockers)
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "system.context" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.waitWindow" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listDisplays" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "processes.list" })

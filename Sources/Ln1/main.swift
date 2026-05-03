@@ -449,6 +449,37 @@ struct DesktopWindowsState: Codable {
     let windows: [DesktopWindowRecord]
 }
 
+struct DesktopWindowWaitTarget: Codable {
+    let id: String?
+    let ownerPID: Int32?
+    let bundleIdentifier: String?
+    let title: String?
+    let titleMatch: String
+}
+
+struct DesktopWindowWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let target: DesktopWindowWaitTarget
+    let expectedExists: Bool
+    let currentCount: Int
+    let current: [DesktopWindowRecord]
+    let matched: Bool
+}
+
+struct DesktopWindowWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let includeDesktop: Bool
+    let includeAllLayers: Bool
+    let limit: Int
+    let verification: DesktopWindowWaitVerification
+    let message: String
+}
+
 struct DesktopDisplayRecord: Codable {
     let id: String
     let displayID: UInt32
@@ -1917,6 +1948,8 @@ final class Ln1CLI {
         switch mode {
         case "displays":
             try writeJSON(desktopDisplays())
+        case "wait-window":
+            try writeJSON(desktopWindowWaitState())
         case "windows":
             try writeJSON(desktopWindows())
         default:
@@ -8362,6 +8395,14 @@ final class Ln1CLI {
                 risk: desktopActionRisk(for: "desktop.listWindows"),
                 mutates: false,
                 reason: "Refresh visible window metadata and stable desktop identities."
+            ),
+            ObservationAction(
+                name: "desktop.waitWindow",
+                command: activePid.map { "Ln1 desktop wait-window --owner-pid \($0) --exists true --timeout-ms 5000" }
+                    ?? "Ln1 desktop wait-window --title TITLE --exists true --timeout-ms 5000",
+                risk: desktopActionRisk(for: "desktop.waitWindow"),
+                mutates: false,
+                reason: "Wait for a visible desktop window to appear or disappear using structured metadata."
             ),
             ObservationAction(
                 name: "desktop.listDisplays",
@@ -17751,7 +17792,7 @@ final class Ln1CLI {
 
     private func desktopActionRisk(for action: String) -> String {
         switch action {
-        case "desktop.listDisplays", "desktop.listWindows":
+        case "desktop.listDisplays", "desktop.listWindows", "desktop.waitWindow":
             return "low"
         default:
             return "unknown"
@@ -17836,6 +17877,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "system.context", domain: "system", risk: systemActionRisk(for: "system.context"), mutates: false),
             PolicyActionRecord(name: "desktop.listDisplays", domain: "desktop", risk: desktopActionRisk(for: "desktop.listDisplays"), mutates: false),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
+            PolicyActionRecord(name: "desktop.waitWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.waitWindow"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
@@ -19265,6 +19307,7 @@ final class Ln1CLI {
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop displays
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
+          Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           Ln1 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
@@ -19332,6 +19375,7 @@ final class Ln1CLI {
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
+          - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.
           - Element IDs are child-index paths. Use IDs from `state` with `perform`.
@@ -19914,6 +19958,155 @@ final class Ln1CLI {
             count: displays.count,
             displays: displays
         )
+    }
+
+    private func desktopWindowWaitState() throws -> DesktopWindowWaitResult {
+        let target = try desktopWindowWaitTarget()
+        let expectedExists = option("--exists").map(parseBool) ?? true
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let limit = max(0, option("--limit").flatMap(Int.init) ?? 200)
+        let verification = try waitForDesktopWindow(
+            target: target,
+            expectedExists: expectedExists,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            limit: limit
+        )
+
+        return DesktopWindowWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            includeDesktop: flag("--include-desktop"),
+            includeAllLayers: flag("--all-layers"),
+            limit: limit,
+            verification: verification,
+            message: verification.ok
+                ? "Desktop window metadata matched the expected state."
+                : verification.message
+        )
+    }
+
+    private func desktopWindowWaitTarget() throws -> DesktopWindowWaitTarget {
+        let id = option("--id")
+        let ownerPID = try option("--owner-pid").map { rawValue -> Int32 in
+            guard let pid = Int32(rawValue), pid > 0 else {
+                throw CommandError(description: "desktop wait-window --owner-pid must be a positive integer")
+            }
+            return pid
+        }
+        let bundleIdentifier = option("--bundle-id")
+        let title = option("--title")
+        let titleMatch = option("--match") ?? "contains"
+        guard ["exact", "prefix", "contains"].contains(titleMatch) else {
+            throw CommandError(description: "desktop wait-window --match must be exact, prefix, or contains")
+        }
+        guard id != nil || ownerPID != nil || bundleIdentifier != nil || title != nil else {
+            throw CommandError(description: "desktop wait-window requires --id, --owner-pid, --bundle-id, or --title")
+        }
+
+        return DesktopWindowWaitTarget(
+            id: id,
+            ownerPID: ownerPID,
+            bundleIdentifier: bundleIdentifier,
+            title: title,
+            titleMatch: titleMatch
+        )
+    }
+
+    private func waitForDesktopWindow(
+        target: DesktopWindowWaitTarget,
+        expectedExists: Bool,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int,
+        limit: Int
+    ) throws -> DesktopWindowWaitVerification {
+        let deadline = Date().addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var state = try desktopWindows(limitOverride: limit)
+        var current = desktopWindowMatches(in: state, target: target)
+
+        while state.available && (current.isEmpty != !expectedExists), Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            state = try desktopWindows(limitOverride: limit)
+            current = desktopWindowMatches(in: state, target: target)
+        }
+
+        guard state.available else {
+            return DesktopWindowWaitVerification(
+                ok: false,
+                code: "desktop_window_metadata_unavailable",
+                message: state.message,
+                target: target,
+                expectedExists: expectedExists,
+                currentCount: 0,
+                current: [],
+                matched: false
+            )
+        }
+
+        let matched = current.isEmpty == !expectedExists
+        return DesktopWindowWaitVerification(
+            ok: matched,
+            code: matched ? "desktop_window_matched" : "desktop_window_timeout",
+            message: matched
+                ? "desktop window state matched expected existence"
+                : "desktop window state did not match expected existence before timeout",
+            target: target,
+            expectedExists: expectedExists,
+            currentCount: current.count,
+            current: current,
+            matched: matched
+        )
+    }
+
+    private func desktopWindowMatches(
+        in state: DesktopWindowsState,
+        target: DesktopWindowWaitTarget
+    ) -> [DesktopWindowRecord] {
+        state.windows.filter { desktopWindow($0, matches: target) }
+    }
+
+    private func desktopWindow(
+        _ window: DesktopWindowRecord,
+        matches target: DesktopWindowWaitTarget
+    ) -> Bool {
+        if let id = target.id,
+           window.id != id && window.stableIdentity.id != id {
+            return false
+        }
+        if let ownerPID = target.ownerPID, window.ownerPID != ownerPID {
+            return false
+        }
+        if let bundleIdentifier = target.bundleIdentifier,
+           window.ownerBundleIdentifier != bundleIdentifier {
+            return false
+        }
+        if let title = target.title,
+           !desktopWindowTitle(window.title, matches: title, mode: target.titleMatch) {
+            return false
+        }
+        return true
+    }
+
+    private func desktopWindowTitle(_ currentTitle: String?, matches expectedTitle: String, mode: String) -> Bool {
+        guard let currentTitle else {
+            return false
+        }
+
+        switch mode {
+        case "exact":
+            return currentTitle == expectedTitle
+        case "prefix":
+            return currentTitle.hasPrefix(expectedTitle)
+        case "contains":
+            return currentTitle.contains(expectedTitle)
+        default:
+            return false
+        }
     }
 
     private func desktopWindows(limitOverride: Int? = nil) throws -> DesktopWindowsState {
