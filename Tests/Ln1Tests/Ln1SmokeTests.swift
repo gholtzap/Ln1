@@ -2329,6 +2329,73 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowResumeSuggestsInspectionAfterSetElementValue() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-set-value-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "set-value-transcript",
+            "operation": "set-element-value",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "set-value",
+                    "--pid", "123",
+                    "--element", "w0.1",
+                    "--value", "prepared value",
+                    "--allow-risk", "medium"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "pid": 123,
+                    "element": "w0.1",
+                    "stableIdentity": [
+                        "id": "accessibilityElement:abc123",
+                        "kind": "accessibilityElement",
+                        "confidence": "high"
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "value_verified"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "set-element-value",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "set-element-value")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-element",
+            "--pid", "123",
+            "--element", "w0.1",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--depth", "1",
+            "--max-children", "20",
+            "--dry-run", "true"
+        ])
+    }
+
     func testWorkflowResumeSuggestsStateInspectionAfterMenuInspect() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-menu-inspect-resume-\(UUID().uuidString)")

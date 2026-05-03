@@ -7749,6 +7749,12 @@ final class Ln1CLI {
                 execution: execution
             )
         }
+        if latestOperation == "set-element-value" {
+            return workflowSetElementValueRecommendation(
+                outputJSON: outputJSON,
+                execution: execution
+            )
+        }
         if latestOperation == "inspect-process" {
             return workflowProcessInspectRecommendation(
                 outputJSON: outputJSON,
@@ -9208,6 +9214,43 @@ final class Ln1CLI {
             message: hasMenuChildren
                 ? "Latest Accessibility menu inspection found menu items; inspect the target app UI state before choosing a trusted action."
                 : "Latest Accessibility menu inspection completed without menu items; inspect the target app UI state before choosing the next action."
+        )
+    }
+
+    private func workflowSetElementValueRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any]
+    ) -> (arguments: [String], message: String)? {
+        let pid = outputJSON["pid"] as? Int
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--pid").flatMap(Int.init)
+        guard let elementID = outputJSON["element"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--element") else {
+            return nil
+        }
+
+        let stableIdentity = outputJSON["stableIdentity"] as? [String: Any]
+        let expectedIdentity = stableIdentity?["id"] as? String
+
+        var arguments = ["Ln1", "workflow", "run", "--operation", "inspect-element"]
+        if let pid {
+            arguments += ["--pid", String(pid)]
+        }
+        arguments += ["--element", elementID]
+        if let expectedIdentity {
+            arguments += [
+                "--expect-identity", expectedIdentity,
+                "--min-identity-confidence", "medium"
+            ]
+        }
+        arguments += [
+            "--depth", "1",
+            "--max-children", "20",
+            "--dry-run", "true"
+        ]
+
+        return (
+            arguments: arguments,
+            message: "Latest Accessibility value update completed and verified; dry-run element inspection before choosing the next UI action."
         )
     }
 
