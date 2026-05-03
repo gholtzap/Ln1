@@ -582,6 +582,47 @@ final class Ln1SmokeTests: XCTestCase {
         }
     }
 
+    func testStateElementCanInspectMenuBarPathWhenAvailable() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let menuResult = try runLn1([
+            "state",
+            "menu",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(menuResult.status, 0, menuResult.stderr)
+        let menuState = try decodeJSONObject(menuResult.stdout)
+        let app = try XCTUnwrap(menuState["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        guard menuState["menuBar"] is [String: Any] else {
+            throw XCTSkip("No Accessibility menu bar was available for the frontmost app.")
+        }
+
+        let result = try runLn1([
+            "state",
+            "element",
+            "--pid", "\(pid)",
+            "--element", "m0",
+            "--min-identity-confidence", "low",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let element = try XCTUnwrap(object["element"] as? [String: Any])
+        let identityVerification = try XCTUnwrap(object["identityVerification"] as? [String: Any])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(element["id"] as? String, "m0")
+        XCTAssertEqual(identityVerification["ok"] as? Bool, true)
+        XCTAssertEqual(identityVerification["minimumConfidence"] as? String, "low")
+        XCTAssertEqual(identityVerification["confidenceAccepted"] as? Bool, true)
+    }
+
     func testStateElementReturnsBoundedStructuredElement() throws {
         guard AXIsProcessTrusted() else {
             throw XCTSkip("Accessibility trust is not enabled.")
@@ -1232,6 +1273,28 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(object["canProceed"] as? Bool, false)
         XCTAssertTrue(blockers.contains("workflow.element"))
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.element" && $0["status"] as? String == "fail" })
+    }
+
+    func testWorkflowPreflightInspectElementAcceptsMenuElementPath() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-element",
+            "--element", "a0.m0.1",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-element")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertFalse(blockers.contains("workflow.element"))
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.element" && $0["status"] as? String == "pass" })
     }
 
     func testWorkflowPreflightWaitElementBuildsStateWaitCommand() throws {

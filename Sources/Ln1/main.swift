@@ -19401,7 +19401,7 @@ final class Ln1CLI {
             }
           },
           "perform": {
-            "command": "Ln1 perform --pid 456 --element a0.w0.3.1 --expect-identity accessibilityElement:stable-semantic-digest --min-identity-confidence medium --action AXPress --allow-risk low --reason 'Open details'",
+            "command": "Ln1 perform --pid 456 --element a0.w0.3.1|a0.m0.1 --expect-identity accessibilityElement:stable-semantic-digest --min-identity-confidence medium --action AXPress --allow-risk low --reason 'Open details'",
             "result": {
               "ok": true,
               "stableIdentity": {
@@ -20381,7 +20381,7 @@ final class Ln1CLI {
           Ln1 state menu [--pid PID] [--depth N] [--max-children N]
           Ln1 state element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--depth N] [--max-children N]
           Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
-          Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
+          Ln1 perform [--pid PID] --element w0.1.2|m0.1|a0.w0.1.2|a0.m0.1 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
           Ln1 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           Ln1 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
           Ln1 task record --task-id ID --kind observation|decision|action|verification|note --summary TEXT --allow-risk medium [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
@@ -20453,7 +20453,7 @@ final class Ln1CLI {
           - `state element` inspects one Accessibility element path with optional stable identity verification.
           - `state wait-element` waits for an Accessibility element path and optional identity, text, or enabled-state criteria.
           - `state --all` walks every running GUI app macOS exposes to this process.
-          - Element IDs are child-index paths. Use IDs from `state` with `perform`.
+          - Element IDs are child-index paths. Use window IDs from `state` and menu IDs from `state menu` with `perform`.
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `audit` can filter records by command name and outcome code before applying the limit.
@@ -21538,8 +21538,31 @@ final class Ln1CLI {
 
     private func resolveElement(id: String, in pid: pid_t) throws -> AXUIElement {
         let id = try normalizedElementID(id)
+        let axApp = AXUIElementCreateApplication(pid)
+
+        if id.first == "m" {
+            let parts = id.dropFirst().split(separator: ".").map(String.init)
+            guard let menuIndexString = parts.first, let menuIndex = Int(menuIndexString) else {
+                throw CommandError(description: "invalid menu path in element id \(id)")
+            }
+            guard menuIndex == 0 else {
+                throw CommandError(description: "menu bar index \(menuIndex) is out of range")
+            }
+            guard var current = accessibilityElement(axApp, kAXMenuBarAttribute) else {
+                throw CommandError(description: "menu bar is unavailable")
+            }
+            for childIndexString in parts.dropFirst() {
+                current = try childElement(
+                    of: current,
+                    childIndexString: childIndexString,
+                    in: id
+                )
+            }
+            return current
+        }
+
         guard id.first == "w" else {
-            throw CommandError(description: "element id must start with a window path like w0")
+            throw CommandError(description: "element id must start with a window path like w0 or menu path like m0")
         }
 
         let parts = id.dropFirst().split(separator: ".").map(String.init)
@@ -21547,7 +21570,6 @@ final class Ln1CLI {
             throw CommandError(description: "invalid window path in element id \(id)")
         }
 
-        let axApp = AXUIElementCreateApplication(pid)
         let windows = accessibilityArray(axApp, kAXWindowsAttribute)
         guard windows.indices.contains(windowIndex) else {
             throw CommandError(description: "window index \(windowIndex) is out of range")
@@ -21555,31 +21577,45 @@ final class Ln1CLI {
 
         var current = windows[windowIndex]
         for childIndexString in parts.dropFirst() {
-            guard let childIndex = Int(childIndexString) else {
-                throw CommandError(description: "invalid child index '\(childIndexString)' in \(id)")
-            }
-
-            let children = accessibilityArray(current, kAXChildrenAttribute)
-            guard children.indices.contains(childIndex) else {
-                throw CommandError(description: "child index \(childIndex) is out of range in \(id)")
-            }
-            current = children[childIndex]
+            current = try childElement(
+                of: current,
+                childIndexString: childIndexString,
+                in: id
+            )
         }
 
         return current
     }
 
+    private func childElement(
+        of element: AXUIElement,
+        childIndexString: String,
+        in id: String
+    ) throws -> AXUIElement {
+        guard let childIndex = Int(childIndexString) else {
+            throw CommandError(description: "invalid child index '\(childIndexString)' in \(id)")
+        }
+
+        let children = accessibilityArray(element, kAXChildrenAttribute)
+        guard children.indices.contains(childIndex) else {
+            throw CommandError(description: "child index \(childIndex) is out of range in \(id)")
+        }
+        return children[childIndex]
+    }
+
     private func normalizedElementID(_ id: String) throws -> String {
-        if id.first == "w" {
+        if id.first == "w" || id.first == "m" {
             return id
         }
 
         let parts = id.split(separator: ".").map(String.init)
-        if parts.count >= 2, parts[0].first == "a", parts[1].first == "w" {
+        if parts.count >= 2,
+           parts[0].first == "a",
+           (parts[1].first == "w" || parts[1].first == "m") {
             return parts.dropFirst().joined(separator: ".")
         }
 
-        throw CommandError(description: "element id must look like w0.1.2 or a0.w0.1.2")
+        throw CommandError(description: "element id must look like w0.1.2, m0.1.2, a0.w0.1.2, or a0.m0.1.2")
     }
 
     private func buildNode(_ element: AXUIElement, id: String, depth: Int, maxChildren: Int) -> ElementNode {

@@ -425,10 +425,11 @@ This is still not literally every piece of data on the machine. macOS exposes UI
 
 ## Perform An Action
 
-Use an element ID from `state`:
+Use an element ID from `state`, `state element`, or `state menu`:
 
 ```sh
 .build/debug/Ln1 perform --element w0.3.1 --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 perform --element m0.1 --action AXShowMenu --reason "Open the File menu"
 ```
 
 `perform` applies a conservative action policy before touching Accessibility APIs. By default, only actions classified as `low` risk are allowed. To explicitly permit broader known or unclassified action categories:
@@ -444,6 +445,7 @@ For IDs from `state --all`, pass the app PID from that same app record:
 
 ```sh
 .build/debug/Ln1 perform --pid 456 --element a0.w0.3.1 --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 perform --pid 456 --element a0.m0.1 --action AXShowMenu --reason "Open the File menu"
 ```
 
 To target a specific app:
@@ -451,6 +453,8 @@ To target a specific app:
 ```sh
 .build/debug/Ln1 state --pid 123
 .build/debug/Ln1 perform --pid 123 --element w0.3.1 --action AXPress --reason "Open the details panel"
+.build/debug/Ln1 state menu --pid 123
+.build/debug/Ln1 perform --pid 123 --element m0.1 --action AXShowMenu --reason "Open the File menu"
 ```
 
 To guard against a stale element path, pass the `stableIdentity.id` from a recent `state` observation and a minimum identity confidence:
