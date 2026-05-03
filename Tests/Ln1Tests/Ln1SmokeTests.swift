@@ -837,6 +837,45 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetActivatable" })
     }
 
+    func testAppsPlanPreflightsLaunchWithoutOpeningApp() throws {
+        guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") != nil else {
+            throw XCTSkip("Finder application bundle was not available from LaunchServices.")
+        }
+
+        let result = try runLn1([
+            "apps",
+            "plan",
+            "--operation", "launch",
+            "--bundle-id", "com.apple.finder",
+            "--activate", "false",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        let target = try XCTUnwrap(object["target"] as? [String: Any])
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "launch")
+        XCTAssertEqual(object["action"] as? String, "apps.launch")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["actionMutates"] as? Bool, true)
+        XCTAssertEqual(object["requiredAllowRisk"] as? String, "medium")
+        XCTAssertEqual(object["canExecute"] as? Bool, true)
+        XCTAssertEqual(object["activate"] as? Bool, false)
+        XCTAssertEqual(target["bundleIdentifier"] as? String, "com.apple.finder")
+        XCTAssertNotNil(target["path"] as? String)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "medium")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertTrue(checks.contains {
+            $0["name"] as? String == "apps.launchTarget"
+                && $0["code"] as? String == "launch_target_found"
+                && $0["ok"] as? Bool == true
+        })
+    }
+
     func testAppsWaitActiveReturnsMatchedFrontmostAppMetadata() throws {
         let apps = try runLn1(["apps", "--all"])
 
@@ -8752,6 +8791,35 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(verification["ok"] as? Bool, true)
         XCTAssertEqual(verification["code"] as? String, "value_verified")
         XCTAssertEqual(identityVerification["code"] as? String, "identity_verified")
+    }
+
+    func testSchemaDocumentsAppLaunchPlanResults() throws {
+        let result = try runLn1(["schema"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let appsLaunchPlan = try XCTUnwrap(object["appsLaunchPlan"] as? [String: Any])
+        let resultObject = try XCTUnwrap(appsLaunchPlan["result"] as? [String: Any])
+        let policy = try XCTUnwrap(resultObject["policy"] as? [String: Any])
+        let target = try XCTUnwrap(resultObject["target"] as? [String: Any])
+        let checks = try XCTUnwrap(resultObject["checks"] as? [[String: Any]])
+
+        XCTAssertTrue((appsLaunchPlan["command"] as? String)?.contains("--operation launch") == true)
+        XCTAssertTrue((appsLaunchPlan["command"] as? String)?.contains("--allow-risk medium") == true)
+        XCTAssertEqual(resultObject["operation"] as? String, "launch")
+        XCTAssertEqual(resultObject["action"] as? String, "apps.launch")
+        XCTAssertEqual(resultObject["risk"] as? String, "medium")
+        XCTAssertEqual(resultObject["actionMutates"] as? Bool, true)
+        XCTAssertEqual(resultObject["activate"] as? Bool, false)
+        XCTAssertEqual(resultObject["canExecute"] as? Bool, true)
+        XCTAssertEqual(resultObject["requiredAllowRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(target["bundleIdentifier"] as? String, "com.apple.TextEdit")
+        XCTAssertNotNil(target["path"] as? String)
+        XCTAssertTrue(checks.contains {
+            $0["name"] as? String == "apps.launchTarget"
+                && $0["code"] as? String == "launch_target_found"
+        })
     }
 
     func testSchemaDocumentsAppLaunchResults() throws {

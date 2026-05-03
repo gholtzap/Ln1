@@ -310,13 +310,14 @@ If you are running from a non-interactive shell and want every process macOS exp
 .build/debug/Ln1 apps --all
 ```
 
-To preview a focus change without mutating the desktop:
+To preview a focus change or app launch without mutating the desktop:
 
 ```sh
 .build/debug/Ln1 apps plan --operation activate --pid 123 --allow-risk medium
+.build/debug/Ln1 apps plan --operation launch --bundle-id com.apple.TextEdit --activate false --allow-risk medium
 ```
 
-`apps plan` returns the target app, current active app, activation checks, policy decision, and whether the action can execute. This gives an assistant a structured, explainable way to decide whether a focus change is safe before acting.
+`apps plan` returns the target app or app bundle, current active app, preflight checks, policy decision, and whether the action can execute. This gives an assistant a structured, explainable way to decide whether a focus change or app launch is safe before acting.
 
 To bring one regular GUI app forward:
 

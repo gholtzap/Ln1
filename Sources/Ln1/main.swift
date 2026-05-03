@@ -169,6 +169,24 @@ struct AppActivationPlan: Codable {
     let message: String
 }
 
+struct AppLaunchPlan: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let action: String
+    let risk: String
+    let actionMutates: Bool
+    let policy: AuditPolicyDecision
+    let target: AppLaunchTargetSummary
+    let activeBefore: AppRecord?
+    let runningApp: AppRecord?
+    let activate: Bool
+    let checks: [AppPreflightCheck]
+    let canExecute: Bool
+    let requiredAllowRisk: String
+    let message: String
+}
+
 struct AppLaunchResult: Codable {
     let ok: Bool
     let action: String
@@ -2411,6 +2429,16 @@ final class Ln1CLI {
                 ? "launched app is running and frontmost"
                 : "launched app is running"
         )
+    }
+
+    private func runningApp(for target: AppLaunchTargetSummary) -> NSRunningApplication? {
+        NSWorkspace.shared.runningApplications.first { app in
+            if let bundleIdentifier = target.bundleIdentifier,
+               app.bundleIdentifier == bundleIdentifier {
+                return true
+            }
+            return app.bundleURL?.standardizedFileURL.path == target.path
+        }
     }
 
     private func openApplication(at url: URL, activate: Bool) throws -> NSRunningApplication {
@@ -9999,7 +10027,7 @@ final class Ln1CLI {
             let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
             try writeJSON(appSummaries(includeAll: includeAll, activePid: activePid))
         case "plan":
-            try writeJSON(appActivationPlan())
+            try appsPlan()
         case "activate":
             try writeJSON(activateApp())
         case "launch":
@@ -10008,6 +10036,18 @@ final class Ln1CLI {
             try writeJSON(appActiveWaitState())
         default:
             throw CommandError(description: "unknown apps mode '\(mode!)'")
+        }
+    }
+
+    private func appsPlan() throws {
+        let operation = option("--operation") ?? "activate"
+        switch operation {
+        case "activate":
+            try writeJSON(appActivationPlan(operation: operation))
+        case "launch":
+            try writeJSON(appLaunchPlan(operation: operation))
+        default:
+            throw CommandError(description: "unsupported apps plan operation '\(operation)'. Use activate or launch.")
         }
     }
 
@@ -10110,12 +10150,7 @@ final class Ln1CLI {
         )
     }
 
-    private func appActivationPlan() throws -> AppActivationPlan {
-        let operation = option("--operation") ?? "activate"
-        guard operation == "activate" else {
-            throw CommandError(description: "unsupported apps plan operation '\(operation)'. Use activate.")
-        }
-
+    private func appActivationPlan(operation: String = "activate") throws -> AppActivationPlan {
         let target = try targetRunningApplicationForAppCommand()
         let action = "apps.activate"
         let risk = appActionRisk(for: action)
@@ -10141,6 +10176,45 @@ final class Ln1CLI {
             message: canExecute
                 ? "Activation preflight passed for \(appDisplayName(targetRecord))."
                 : "Activation preflight did not pass for \(appDisplayName(targetRecord))."
+        )
+    }
+
+    private func appLaunchPlan(operation: String = "launch") throws -> AppLaunchPlan {
+        let target = try appLaunchTargetForAppCommand()
+        let action = "apps.launch"
+        let risk = appActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let activeBefore = activeAppRecord()
+        let existingApp = runningApp(for: target.summary).map(appRecord)
+        let activate = option("--activate").map(parseBool) ?? true
+        let checks = [
+            AppPreflightCheck(
+                name: "apps.launchTarget",
+                ok: true,
+                code: "launch_target_found",
+                message: "Launch target app bundle is installed at \(target.summary.path)."
+            )
+        ]
+        let canExecute = policy.allowed
+
+        return AppLaunchPlan(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: operation,
+            action: action,
+            risk: risk,
+            actionMutates: true,
+            policy: policy,
+            target: target.summary,
+            activeBefore: activeBefore,
+            runningApp: existingApp,
+            activate: activate,
+            checks: checks,
+            canExecute: canExecute,
+            requiredAllowRisk: risk,
+            message: canExecute
+                ? "Launch preflight passed for \(target.summary.name ?? target.summary.bundleIdentifier ?? target.summary.path)."
+                : "Launch preflight did not pass for \(target.summary.name ?? target.summary.bundleIdentifier ?? target.summary.path)."
         )
     }
 
@@ -20272,6 +20346,38 @@ final class Ln1CLI {
               ]
             }
           },
+          "appsLaunchPlan": {
+            "command": "Ln1 apps plan --operation launch --bundle-id com.apple.TextEdit --activate false --allow-risk medium",
+            "result": {
+              "operation": "launch",
+              "action": "apps.launch",
+              "risk": "medium",
+              "actionMutates": true,
+              "policy": {
+                "allowedRisk": "medium",
+                "actionRisk": "medium",
+                "allowed": true
+              },
+              "target": {
+                "name": "TextEdit",
+                "bundleIdentifier": "com.apple.TextEdit",
+                "path": "/System/Applications/TextEdit.app"
+              },
+              "activeBefore": { "name": "Terminal", "bundleIdentifier": "com.apple.Terminal", "pid": 123 },
+              "runningApp": null,
+              "activate": false,
+              "checks": [
+                {
+                  "name": "apps.launchTarget",
+                  "ok": true,
+                  "code": "launch_target_found",
+                  "message": "Launch target app bundle is installed at /System/Applications/TextEdit.app."
+                }
+              ],
+              "canExecute": true,
+              "requiredAllowRisk": "medium"
+            }
+          },
           "appsLaunch": {
             "command": "Ln1 apps launch --bundle-id com.apple.TextEdit --activate true --allow-risk medium --reason 'Open editor'",
             "result": {
@@ -21445,7 +21551,7 @@ final class Ln1CLI {
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
-          Ln1 apps plan --operation activate (--pid PID|--bundle-id BUNDLE_ID|--current) [--allow-risk low|medium|high|unknown]
+          Ln1 apps plan --operation activate|launch (--pid PID|--bundle-id BUNDLE_ID|--current|--path APP_BUNDLE) [--activate true|false] [--allow-risk low|medium|high|unknown]
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 apps launch (--bundle-id BUNDLE_ID|--path APP_BUNDLE) --allow-risk medium [--activate true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 apps wait-active (--pid PID|--bundle-id BUNDLE_ID|--current) [--timeout-ms N] [--interval-ms N]
@@ -21520,7 +21626,7 @@ final class Ln1CLI {
           - Run `Ln1 trust` before Accessibility-backed `state`, `perform`, or `set-value` commands.
           - `policy` describes known action risk levels and mutation behavior.
           - `system context` reports bounded host, OS, shell, working directory, and runtime metadata.
-          - `apps plan` previews app activation with policy and target checks without changing focus.
+          - `apps plan` previews app activation or launch with policy and target checks without changing focus or opening apps.
           - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
           - `apps launch` opens an installed `.app` by bundle ID or path after medium-risk approval and verifies running/frontmost state.
           - `apps wait-active` waits for the frontmost app to match a target without changing focus.
