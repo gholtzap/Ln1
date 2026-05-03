@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `apps quit`, `open`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `apps hide`, `apps quit`, `open`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -74,7 +74,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-frontmost-app`, `inspect-apps`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-processes`, `start-task`, `record-task`, `finish-task`, `show-task`, `inspect-process`, `inspect-element`, `wait-process`, `wait-active-window`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `open-file`, `open-url`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-frontmost-app`, `inspect-apps`, `inspect-installed-apps`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-windows`, `inspect-processes`, `start-task`, `record-task`, `finish-task`, `show-task`, `inspect-process`, `inspect-element`, `wait-process`, `wait-active-window`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `launch-app`, `hide-app`, `quit-app`, `open-file`, `open-url`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -105,6 +105,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation wait-active-app --pid 123 --wait-timeout-ms 5000
 .build/debug/Ln1 workflow preflight --operation activate-app --pid 123 --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation launch-app --bundle-id com.apple.TextEdit --allow-risk medium
+.build/debug/Ln1 workflow preflight --operation hide-app --pid 123 --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation quit-app --pid 123 --allow-risk high
 .build/debug/Ln1 workflow preflight --operation open-file --path ~/Downloads/report.pdf --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation open-url --url https://example.com/report --allow-risk medium
@@ -182,11 +183,13 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 .build/debug/Ln1 workflow run --operation create-directory --path ~/Desktop/Archive --allow-risk medium --dry-run false --execute-mutating true --reason "Prepare archive folder"
 ```
 
-Use dry-run first for mutating browser actions, Accessibility value changes, app focus or launch actions, workspace open handoffs, and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` and `set-element-value` target the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
+Use dry-run first for mutating browser actions, Accessibility value changes, app focus, launch, hide, quit, workspace open handoffs, and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` and `set-element-value` target the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
 
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
 
 `launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log. After a successful launch, `workflow resume` suggests an active-app inspection dry-run.
+
+`hide-app` is a mutating workflow operation for moving one running regular GUI app out of view without closing it. It wraps `apps hide` with medium-risk approval, verifies the target becomes hidden within a bounded timeout, records policy and verification evidence in the audit log, and `workflow resume` suggests a running-app inspection dry-run.
 
 `quit-app` is a high-risk mutating workflow operation for closing one running regular GUI app by PID, bundle identifier, or current target. It wraps `apps quit`, refuses to quit the current Ln1 process, verifies that the target process exits within a bounded timeout, records policy and verification evidence in the audit log, and `workflow resume` suggests a running-app inspection dry-run.
 
@@ -194,7 +197,7 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 
 `inspect-frontmost-app` is a non-mutating workflow operation for the current frontmost app. It runs `apps active`, captures app name, bundle identifier, and PID without requiring Accessibility permission, and `workflow resume` suggests a dry-run process inspection for that PID.
 
-`inspect-apps` is a non-mutating workflow operation for bounded running app inventory. It runs `apps list`, forwards `--all` and `--limit`, captures app names, bundle identifiers, PIDs, active flags, truncation, and the active app in the workflow transcript, and `workflow resume` suggests a dry-run active app or process inspection.
+`inspect-apps` is a non-mutating workflow operation for bounded running app inventory. It runs `apps list`, forwards `--all` and `--limit`, captures app names, bundle identifiers, PIDs, active and hidden flags, truncation, and the active app in the workflow transcript, and `workflow resume` suggests a dry-run active app or process inspection.
 
 `inspect-installed-apps` is a non-mutating workflow operation for installed app bundle discovery. It wraps `apps installed`, captures app names, bundle identifiers, versions, executable paths, and bundle paths in the workflow transcript, and `workflow resume` can suggest a `launch-app` dry-run for the first discovered bundle identifier.
 
@@ -336,7 +339,7 @@ To resume after an interruption, ask for a recommendation from the latest transc
 .build/debug/Ln1 workflow resume --allow-risk medium
 ```
 
-`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array. For completed app activation or launch workflows, it suggests a dry-run active-app inspection. For completed browser tab listings, it can suggest a dry-run DOM inspection for the first tab; for completed DOM inspections, it can suggest fill, select, check, or click commands from the first actionable selector.
+`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array. For completed app activation or launch workflows, it suggests a dry-run active-app inspection; for completed app hide or quit workflows, it suggests running-app inspection. For completed browser tab listings, it can suggest a dry-run DOM inspection for the first tab; for completed DOM inspections, it can suggest fill, select, check, or click commands from the first actionable selector.
 
 ## Inspect Running Apps
 
@@ -376,10 +379,11 @@ To preview a focus change or app launch without mutating the desktop:
 ```sh
 .build/debug/Ln1 apps plan --operation activate --pid 123 --allow-risk medium
 .build/debug/Ln1 apps plan --operation launch --bundle-id com.apple.TextEdit --activate false --allow-risk medium
+.build/debug/Ln1 apps plan --operation hide --pid 123 --allow-risk medium
 .build/debug/Ln1 apps plan --operation quit --pid 123 --allow-risk high
 ```
 
-`apps plan` returns the target app or app bundle, current active app, preflight checks, policy decision, and whether the action can execute. This gives an assistant a structured, explainable way to decide whether a focus change or app launch is safe before acting.
+`apps plan` returns the target app or app bundle, current active app, preflight checks, policy decision, and whether the action can execute. This gives an assistant a structured, explainable way to decide whether a focus, visibility, launch, or quit action is safe before acting.
 
 To bring one regular GUI app forward:
 
@@ -397,6 +401,15 @@ Launch an installed GUI app by bundle identifier or `.app` path:
 ```
 
 `apps.launch` is a medium-risk mutating app action. `--activate` defaults to `true`; when activation is requested, Ln1 verifies the launched app is also frontmost. Each launch audit records the requested bundle/path target, policy decision, verification result, and outcome.
+
+Hide one running regular GUI app without closing it:
+
+```sh
+.build/debug/Ln1 apps hide --pid 123 --allow-risk medium --reason "Clear the desktop"
+.build/debug/Ln1 apps hide --bundle-id com.example.App --timeout-ms 2000 --allow-risk medium --reason "Move completed app out of view"
+```
+
+`apps.hide` is a medium-risk mutating app action because it changes visible desktop state and can affect subsequent observations. It accepts `--pid`, `--bundle-id`, or `--current`, requires a regular GUI app target, verifies that the target becomes hidden, and writes an audit record with policy, target, verification, and outcome metadata.
 
 Ask one regular GUI app to quit and verify the process exits:
 
