@@ -20,6 +20,9 @@ final class Ln1SmokeTests: XCTestCase {
 
         XCTAssertEqual(object["defaultAllowedRisk"] as? String, "low")
         XCTAssertEqual(riskLevels, ["low", "medium", "high", "unknown"])
+        XCTAssertEqual(actionByName["accessibility.inspectMenu"]?["domain"] as? String, "accessibility")
+        XCTAssertEqual(actionByName["accessibility.inspectMenu"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["accessibility.inspectMenu"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["accessibility.inspectElement"]?["domain"] as? String, "accessibility")
         XCTAssertEqual(actionByName["accessibility.inspectElement"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["accessibility.inspectElement"]?["mutates"] as? Bool, false)
@@ -1551,6 +1554,60 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
+    func testWorkflowRunExecutesNonMutatingMenuInspectAndCapturesJSON() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let apps = try runLn1(["apps", "--all"])
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-menu-inspect-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-menu",
+            "--pid", "\(pid)",
+            "--depth", "1",
+            "--max-children", "5",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let app = try XCTUnwrap(outputJSON["app"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-menu")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "state", "menu",
+            "--pid", "\(pid)",
+            "--depth", "1",
+            "--max-children", "5"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertEqual(app["pid"] as? Int, pid)
+        XCTAssertEqual(outputJSON["depth"] as? Int, 1)
+        XCTAssertEqual(outputJSON["maxChildren"] as? Int, 5)
+        XCTAssertNotNil(outputJSON["message"] as? String)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
     func testWorkflowPreflightWaitActiveAppBuildsAppWaitCommand() throws {
         let apps = try runLn1(["apps", "--all"])
 
@@ -2018,6 +2075,72 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowResumeSuggestsStateInspectionAfterMenuInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-menu-inspect-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-menu-transcript",
+            "operation": "inspect-menu",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "state", "menu",
+                    "--pid", "123",
+                    "--depth", "1",
+                    "--max-children", "5"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "platform": "macOS",
+                    "app": [
+                        "pid": 123,
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App"
+                    ],
+                    "menuBar": [
+                        "id": "m0",
+                        "children": [
+                            [
+                                "id": "m0.0",
+                                "role": "AXMenuBarItem",
+                                "title": "File"
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-menu",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-menu")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "state",
+            "--depth", "3",
+            "--max-children", "80",
+            "--pid", "123"
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("menu inspection") == true)
+    }
+
     func testWorkflowResumeSuggestsActiveInspectionAfterActiveAppWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-active-app-wait-resume-\(UUID().uuidString)")
@@ -2145,6 +2268,69 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertFalse(prerequisites.isEmpty)
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "accessibility" })
         XCTAssertNotNil(object["nextCommand"] as? String)
+    }
+
+    func testWorkflowPreflightInspectMenuRejectsMissingAppTarget() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-menu",
+            "--pid", "-1",
+            "--depth", "1",
+            "--max-children", "5"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-menu")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, false)
+        XCTAssertTrue(blockers.contains("workflow.appTarget"))
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "fail" })
+    }
+
+    func testWorkflowPreflightInspectMenuBuildsStateMenuCommand() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let apps = try runLn1(["apps", "--all"])
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-menu",
+            "--pid", "\(pid)",
+            "--depth", "1",
+            "--max-children", "5"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-menu")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "state", "menu",
+            "--pid", "\(pid)",
+            "--depth", "1",
+            "--max-children", "5"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "accessibility" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
     }
 
     func testWorkflowPreflightInspectClipboardReturnsMetadataCommand() throws {

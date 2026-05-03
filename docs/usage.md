@@ -68,14 +68,16 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 
 ```sh
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
+.build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
 ```sh
 .build/debug/Ln1 workflow preflight --operation inspect-system
+.build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 .build/debug/Ln1 workflow preflight --operation inspect-displays
 .build/debug/Ln1 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
 .build/debug/Ln1 workflow preflight --operation inspect-process --pid 123
@@ -160,6 +162,8 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` targets the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
 
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
+
+`inspect-menu` is a non-mutating workflow operation for one app menu bar by `--pid` or the current frontmost app. It runs `state menu`, captures bounded menu item roles, titles, actions, and stable identities in the workflow transcript, and `workflow resume` suggests a fresh app UI state inspection before choosing a trusted action.
 
 `inspect-system` is a non-mutating workflow operation for host and runtime metadata. It runs `system context`, captures bounded OS, shell, working-directory, timezone, locale, memory, uptime, and processor evidence in the workflow transcript, and `workflow resume` suggests a fresh `observe` snapshot.
 
@@ -246,6 +250,8 @@ After a successful `wait-browser-element-text` transcript, `workflow resume` sug
 After a successful `wait-element` transcript, `workflow resume` suggests a guarded `perform` press when the matched Accessibility element is enabled and pressable, otherwise it suggests a fresh bounded `state` inspection.
 
 After a successful `inspect-element` transcript, `workflow resume` suggests a guarded `perform` press when the inspected Accessibility element is enabled and pressable, otherwise it suggests a bounded element re-inspection.
+
+After a successful `inspect-menu` transcript, `workflow resume` suggests a fresh bounded app UI state inspection so the next trusted action is grounded in current window state.
 
 After a successful `wait-browser-value` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched field state.
 
