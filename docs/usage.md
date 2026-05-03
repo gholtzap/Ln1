@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `apps activate`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `browser text`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; app listing/planning, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Observe The Current Computer State
 
@@ -242,6 +242,22 @@ If you are running from a non-interactive shell and want every process macOS exp
 .build/debug/Ln1 apps --all
 ```
 
+To preview a focus change without mutating the desktop:
+
+```sh
+.build/debug/Ln1 apps plan --operation activate --pid 123 --allow-risk medium
+```
+
+`apps plan` returns the target app, current active app, activation checks, policy decision, and whether the action can execute. This gives an assistant a structured, explainable way to decide whether a focus change is safe before acting.
+
+To bring one regular GUI app forward:
+
+```sh
+.build/debug/Ln1 apps activate --pid 123 --allow-risk medium --reason "Inspect the target app"
+```
+
+`apps.activate` is a medium-risk mutating app action because it changes the active app and can affect subsequent keyboard input. It accepts `--pid`, `--bundle-id`, or `--current`, verifies the requested app becomes frontmost, and writes an audit record with the target app, policy decision, verification result, and outcome.
+
 ## Inspect Visible Desktop Windows
 
 ```sh
@@ -356,7 +372,7 @@ Filter audit records before applying the limit:
 .build/debug/Ln1 audit --command files.move --code moved --limit 10
 ```
 
-`--command` matches audit command names such as `perform`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_dom`.
+`--command` matches audit command names such as `perform`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_dom`.
 
 ## Track Task Memory
 

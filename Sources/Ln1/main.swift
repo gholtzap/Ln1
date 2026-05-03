@@ -59,6 +59,42 @@ struct AppSummary: Codable {
     let active: Bool
 }
 
+struct AppPreflightCheck: Codable {
+    let name: String
+    let ok: Bool
+    let code: String
+    let message: String
+}
+
+struct AppActivationPlan: Codable {
+    let generatedAt: String
+    let platform: String
+    let operation: String
+    let action: String
+    let risk: String
+    let actionMutates: Bool
+    let policy: AuditPolicyDecision
+    let target: AppRecord
+    let activeBefore: AppRecord?
+    let checks: [AppPreflightCheck]
+    let canExecute: Bool
+    let requiredAllowRisk: String
+    let message: String
+}
+
+struct AppActivationResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let target: AppRecord
+    let activeBefore: AppRecord?
+    let activeAfter: AppRecord?
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct ObservationAction: Codable {
     let name: String
     let command: String
@@ -1942,6 +1978,105 @@ final class Ln1CLI {
         }
 
         return records
+    }
+
+    private func targetRunningApplicationForAppCommand() throws -> NSRunningApplication {
+        if flag("--current") {
+            return .current
+        }
+
+        if let pidValue = option("--pid") {
+            guard let pid = pid_t(pidValue),
+                  let app = NSRunningApplication(processIdentifier: pid),
+                  !app.isTerminated else {
+                throw CommandError(description: "no running app found for --pid \(pidValue)")
+            }
+            return app
+        }
+
+        if let bundleIdentifier = option("--bundle-id") {
+            let matches = NSWorkspace.shared.runningApplications
+                .filter { !$0.isTerminated && $0.bundleIdentifier == bundleIdentifier }
+                .sorted { lhs, rhs in
+                    let lhsRegular = lhs.activationPolicy == .regular
+                    let rhsRegular = rhs.activationPolicy == .regular
+                    if lhsRegular != rhsRegular {
+                        return lhsRegular && !rhsRegular
+                    }
+                    return lhs.processIdentifier < rhs.processIdentifier
+                }
+            guard let app = matches.first else {
+                throw CommandError(description: "no running app found for --bundle-id \(bundleIdentifier)")
+            }
+            return app
+        }
+
+        throw CommandError(description: "apps plan/activate requires --pid PID, --bundle-id BUNDLE_ID, or --current")
+    }
+
+    private func appActivationChecks(target: NSRunningApplication) -> [AppPreflightCheck] {
+        [
+            AppPreflightCheck(
+                name: "apps.targetRunning",
+                ok: !target.isTerminated,
+                code: target.isTerminated ? "terminated" : "running",
+                message: target.isTerminated
+                    ? "target app is terminated"
+                    : "target app is running"
+            ),
+            AppPreflightCheck(
+                name: "apps.targetActivatable",
+                ok: target.activationPolicy == .regular,
+                code: target.activationPolicy == .regular ? "regular" : "not_regular",
+                message: target.activationPolicy == .regular
+                    ? "target app has regular activation policy"
+                    : "target app is not a regular GUI application"
+            )
+        ]
+    }
+
+    private func verifyAppActivation(
+        target: NSRunningApplication,
+        requested: Bool,
+        activeAfter: AppRecord?
+    ) -> FileOperationVerification {
+        guard requested else {
+            return FileOperationVerification(
+                ok: false,
+                code: "activation_request_failed",
+                message: "macOS did not accept the app activation request"
+            )
+        }
+
+        guard activeAfter?.pid == target.processIdentifier else {
+            return FileOperationVerification(
+                ok: false,
+                code: "active_app_mismatch",
+                message: "frontmost app did not match the requested app after activation"
+            )
+        }
+
+        return FileOperationVerification(
+            ok: true,
+            code: "active_app_matched",
+            message: "frontmost app matches the requested app"
+        )
+    }
+
+    private func activeAppRecord() -> AppRecord? {
+        NSWorkspace.shared.frontmostApplication.map(appRecord(for:))
+    }
+
+    private func appRecord(for app: NSRunningApplication) -> AppRecord {
+        AppRecord(
+            name: app.localizedName,
+            bundleIdentifier: app.bundleIdentifier,
+            pid: app.processIdentifier
+        )
+    }
+
+    private func appDisplayName(_ app: AppRecord) -> String {
+        app.name ?? app.bundleIdentifier ?? "pid \(app.pid)"
     }
 
     private func policy() throws {
@@ -7437,7 +7572,7 @@ final class Ln1CLI {
             ObservationAction(
                 name: "apps.list",
                 command: "Ln1 apps",
-                risk: "low",
+                risk: appActionRisk(for: "apps.list"),
                 mutates: false,
                 reason: "List running GUI apps and identify the active process."
             ),
@@ -7495,9 +7630,146 @@ final class Ln1CLI {
     }
 
     private func apps() throws {
-        let includeAll = flag("--all")
-        let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        try writeJSON(appSummaries(includeAll: includeAll, activePid: activePid))
+        let mode = arguments.dropFirst().first
+        switch mode {
+        case nil:
+            let includeAll = flag("--all")
+            let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            try writeJSON(appSummaries(includeAll: includeAll, activePid: activePid))
+        case "--help", "-h", "help":
+            printHelp()
+        case let option? where option.hasPrefix("--"):
+            let includeAll = flag("--all")
+            let activePid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            try writeJSON(appSummaries(includeAll: includeAll, activePid: activePid))
+        case "plan":
+            try writeJSON(appActivationPlan())
+        case "activate":
+            try writeJSON(activateApp())
+        default:
+            throw CommandError(description: "unknown apps mode '\(mode!)'")
+        }
+    }
+
+    private func appActivationPlan() throws -> AppActivationPlan {
+        let operation = option("--operation") ?? "activate"
+        guard operation == "activate" else {
+            throw CommandError(description: "unsupported apps plan operation '\(operation)'. Use activate.")
+        }
+
+        let target = try targetRunningApplicationForAppCommand()
+        let action = "apps.activate"
+        let risk = appActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let activeBefore = activeAppRecord()
+        let checks = appActivationChecks(target: target)
+        let canExecute = policy.allowed && checks.allSatisfy(\.ok)
+        let targetRecord = appRecord(for: target)
+
+        return AppActivationPlan(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            operation: operation,
+            action: action,
+            risk: risk,
+            actionMutates: true,
+            policy: policy,
+            target: targetRecord,
+            activeBefore: activeBefore,
+            checks: checks,
+            canExecute: canExecute,
+            requiredAllowRisk: risk,
+            message: canExecute
+                ? "Activation preflight passed for \(appDisplayName(targetRecord))."
+                : "Activation preflight did not pass for \(appDisplayName(targetRecord))."
+        )
+    }
+
+    private func activateApp() throws -> AppActivationResult {
+        let target = try targetRunningApplicationForAppCommand()
+        let action = "apps.activate"
+        let risk = appActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let targetRecord = appRecord(for: target)
+        let activeBefore = activeAppRecord()
+        let checks = appActivationChecks(target: target)
+        var activeAfter = activeBefore
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "apps.activate",
+                risk: risk,
+                reason: option("--reason"),
+                app: targetRecord,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let failedCheck = checks.first(where: { !$0.ok }) {
+                let message = failedCheck.message
+                verification = FileOperationVerification(ok: false, code: failedCheck.code, message: message)
+                try writeAudit(ok: false, code: "preflight_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let requested = target.activate(options: [])
+            Thread.sleep(forTimeInterval: 0.10)
+            activeAfter = activeAppRecord()
+            verification = verifyAppActivation(target: target, requested: requested, activeAfter: activeAfter)
+
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "app activation verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Activated \(appDisplayName(targetRecord))."
+            try writeAudit(ok: true, code: "activated", message: message)
+
+            return AppActivationResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                target: targetRecord,
+                activeBefore: activeBefore,
+                activeAfter: activeAfter,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
     }
 
     private func state() throws {
@@ -16555,6 +16827,17 @@ final class Ln1CLI {
         }
     }
 
+    private func appActionRisk(for action: String) -> String {
+        switch action {
+        case "apps.list", "apps.plan":
+            return "low"
+        case "apps.activate":
+            return "medium"
+        default:
+            return "unknown"
+        }
+    }
+
     private func taskMemoryActionRisk(for action: String) -> String {
         switch action {
         case "task.memoryStart", "task.memoryRecord", "task.memoryFinish", "task.memoryShow":
@@ -16594,6 +16877,9 @@ final class Ln1CLI {
             PolicyActionRecord(name: kAXShowMenuAction as String, domain: "accessibility", risk: "low", mutates: false),
             PolicyActionRecord(name: kAXConfirmAction as String, domain: "accessibility", risk: "medium", mutates: true),
             PolicyActionRecord(name: kAXPickAction as String, domain: "accessibility", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "apps.list", domain: "apps", risk: appActionRisk(for: "apps.list"), mutates: false),
+            PolicyActionRecord(name: "apps.plan", domain: "apps", risk: appActionRisk(for: "apps.plan"), mutates: false),
+            PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
@@ -18015,6 +18301,8 @@ final class Ln1CLI {
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
+          Ln1 apps plan --operation activate (--pid PID|--bundle-id BUNDLE_ID|--current) [--allow-risk low|medium|high|unknown]
+          Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
@@ -18076,6 +18364,8 @@ final class Ln1CLI {
         Notes:
           - Run `Ln1 trust` before Accessibility-backed `state` or `perform` commands.
           - `policy` describes known action risk levels and mutation behavior.
+          - `apps plan` previews app activation with policy and target checks without changing focus.
+          - `apps activate` brings one regular GUI app forward after medium-risk approval and writes an audit record.
           - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state --all` walks every running GUI app macOS exposes to this process.

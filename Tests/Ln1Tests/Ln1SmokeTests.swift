@@ -19,6 +19,15 @@ final class Ln1SmokeTests: XCTestCase {
 
         XCTAssertEqual(object["defaultAllowedRisk"] as? String, "low")
         XCTAssertEqual(riskLevels, ["low", "medium", "high", "unknown"])
+        XCTAssertEqual(actionByName["apps.list"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.list"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["apps.list"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["apps.plan"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.plan"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["apps.plan"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["apps.activate"]?["domain"] as? String, "apps")
+        XCTAssertEqual(actionByName["apps.activate"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["apps.activate"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
@@ -223,6 +232,88 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.state" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "clipboard.wait" })
+    }
+
+    func testAppsPlanPreflightsActivationWithoutChangingFocus() throws {
+        let apps = try runLn1(["apps"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        let first = try XCTUnwrap(records.first)
+        let pid = try XCTUnwrap(first["pid"] as? Int)
+
+        let result = try runLn1([
+            "apps",
+            "plan",
+            "--operation", "activate",
+            "--pid", "\(pid)"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        let target = try XCTUnwrap(object["target"] as? [String: Any])
+        let checks = try XCTUnwrap(object["checks"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "activate")
+        XCTAssertEqual(object["action"] as? String, "apps.activate")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["actionMutates"] as? Bool, true)
+        XCTAssertEqual(object["requiredAllowRisk"] as? String, "medium")
+        XCTAssertEqual(object["canExecute"] as? Bool, false)
+        XCTAssertEqual(target["pid"] as? Int, pid)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetRunning" })
+        XCTAssertTrue(checks.contains { $0["name"] as? String == "apps.targetActivatable" })
+    }
+
+    func testAppsActivatePolicyDenialIsAuditedWithoutChangingFocus() throws {
+        let apps = try runLn1(["apps"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        let first = try XCTUnwrap(records.first)
+        let pid = try XCTUnwrap(first["pid"] as? Int)
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-app-activate-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let rejected = try runLn1([
+            "apps",
+            "activate",
+            "--pid", "\(pid)",
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let app = try XCTUnwrap(entry["app"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "apps.activate")
+        XCTAssertEqual(entry["action"] as? String, "apps.activate")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(app["pid"] as? Int, pid)
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
     }
 
     func testDoctorReturnsReadinessChecksWithRemediation() throws {
@@ -10675,6 +10766,11 @@ final class Ln1SmokeTests: XCTestCase {
         let data = try XCTUnwrap(string.data(using: .utf8))
         let object = try JSONSerialization.jsonObject(with: data)
         return try XCTUnwrap(object as? [String: Any])
+    }
+
+    private func decodeJSON(_ string: String) throws -> Any {
+        let data = try XCTUnwrap(string.data(using: .utf8))
+        return try JSONSerialization.jsonObject(with: data)
     }
 
     private func writeJSONObjectLine(_ object: [String: Any], to url: URL) throws {
