@@ -1850,6 +1850,74 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightSetElementValueBuildsGuardedCommand() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let apps = try runLn1(["apps", "--all"])
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let target = records.first(where: { $0["active"] as? Bool != true && $0["pid"] is Int })
+            ?? records.first(where: { $0["pid"] is Int }),
+              let pid = target["pid"] as? Int else {
+            throw XCTSkip("No running app record was available from macOS.")
+        }
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-set-value-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let missingValue = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "set-element-value",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(missingValue.status, 0, missingValue.stderr)
+        let missingObject = try decodeJSONObject(missingValue.stdout)
+        XCTAssertEqual(missingObject["canProceed"] as? Bool, false)
+        XCTAssertTrue((missingObject["blockers"] as? [String])?.contains("workflow.value") == true)
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "set-element-value",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--value", "prepared value",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "set-element-value")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertTrue(blockers.isEmpty)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "set-value",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--value", "prepared value",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowResumeSuggestsActivationAfterProcessInspectForGUIApp() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-process-resume-\(UUID().uuidString)")
@@ -2186,6 +2254,78 @@ final class Ln1SmokeTests: XCTestCase {
             "--action", kAXPressAction as String,
             "--allow-risk", "low",
             "--reason", "Describe intent"
+        ])
+    }
+
+    func testWorkflowResumeSuggestsSetElementValueAfterElementInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-element-value-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-element-value-transcript",
+            "operation": "inspect-element",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "state", "element",
+                    "--pid", "123",
+                    "--element", "w0.1"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "app": [
+                        "pid": 123,
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App"
+                    ],
+                    "element": [
+                        "id": "w0.1",
+                        "stableIdentity": [
+                            "id": "accessibilityElement:abc123",
+                            "kind": "accessibilityElement",
+                            "confidence": "high",
+                            "label": "AXTextField",
+                            "components": [:],
+                            "reasons": []
+                        ],
+                        "enabled": true,
+                        "actions": [],
+                        "settableAttributes": [kAXValueAttribute as String],
+                        "valueSettable": true
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-element",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-element")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "set-element-value",
+            "--pid", "123",
+            "--element", "w0.1",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--value", "Replace value",
+            "--dry-run", "true"
         ])
     }
 

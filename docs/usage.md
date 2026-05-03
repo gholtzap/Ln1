@@ -71,7 +71,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `review-audit`, `inspect-active-app`, `inspect-menu`, `inspect-system`, `inspect-displays`, `inspect-process`, `inspect-element`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `set-element-value`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `read-clipboard`, `write-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -81,6 +81,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 .build/debug/Ln1 workflow preflight --operation inspect-displays
 .build/debug/Ln1 workflow preflight --operation control-active-app --element w0.1 --expect-identity accessibilityElement:abc123
+.build/debug/Ln1 workflow preflight --operation set-element-value --element w0.4 --expect-identity accessibilityElement:abc123 --value "New title"
 .build/debug/Ln1 workflow preflight --operation inspect-process --pid 123
 .build/debug/Ln1 workflow preflight --operation inspect-element --pid 123 --element w0.3.1 --expect-identity accessibilityElement:abc123
 .build/debug/Ln1 workflow preflight --operation wait-process --pid 123 --exists false --wait-timeout-ms 5000
@@ -162,9 +163,11 @@ Mutating workflow execution is opt-in and still goes through the underlying type
 .build/debug/Ln1 workflow run --operation create-directory --path ~/Desktop/Archive --allow-risk medium --dry-run false --execute-mutating true --reason "Prepare archive folder"
 ```
 
-Use dry-run first for mutating browser actions and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` targets the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
+Use dry-run first for mutating browser actions, Accessibility value changes, and file operations, then run with `--execute-mutating true` and a non-placeholder `--reason` once the command, target, policy, and audit path are correct. `control-active-app` and `set-element-value` target the frontmost app by default, or the app selected by `--pid`, `--bundle-id`, or `--current`. After a successful verified `write-file`, `append-file`, `create-directory`, `duplicate-file`, `move-file`, or `rollback-file-move` workflow, `workflow resume` suggests a `files stat` check for the verified destination or restored source so the next step is grounded in current metadata.
 
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
+
+`set-element-value` is a mutating workflow operation for setting one Accessibility element's `AXValue`. It requires `--element` and `--value`, accepts the same stable identity guard as `perform`, wraps `set-value` with explicit medium-risk approval, and only executes through `workflow run --dry-run false --execute-mutating true --reason TEXT`. After `inspect-element` or `wait-element` finds a settable value element, `workflow resume` suggests a dry-run `set-element-value` plan.
 
 `review-audit` is a non-mutating workflow operation for bounded audit-log review by exact audit ID, command, outcome code, and limit. It wraps `audit` so audit evidence can be captured in the workflow transcript. After reviewing a successful `files.move` audit record, `workflow resume` suggests a rollback-file-move preflight using that audit ID.
 
@@ -176,13 +179,13 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 
 `inspect-process` is a non-mutating workflow operation for one process by `--pid` or `--current`. It runs `processes inspect`, captures structured process metadata in the workflow transcript, and `workflow resume` can suggest a dry-run app activation when the inspected process belongs to a GUI app.
 
-`inspect-element` is a non-mutating workflow operation for one Accessibility element by path. It runs `state element`, captures the bounded element subtree plus stable identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the inspected element is enabled and pressable, otherwise a bounded element re-inspection.
+`inspect-element` is a non-mutating workflow operation for one Accessibility element by path. It runs `state element`, captures the bounded element subtree plus stable identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the inspected element is enabled and pressable, a guarded `set-element-value` dry-run when `AXValue` is settable, or a bounded element re-inspection.
 
 `wait-process` is a non-mutating workflow operation for bounded PID existence waiting. It runs `processes wait`, captures structured verification in the workflow transcript, and `workflow resume` suggests process inspection when the PID is confirmed present or a fresh process list when it is confirmed absent.
 
 `wait-window` is a non-mutating workflow operation for bounded desktop window existence waiting. It runs `desktop wait-window`, captures target filters and matching WindowServer metadata in the workflow transcript, and `workflow resume` suggests owner-process or active-app inspection when a window appears, or a fresh desktop window list when a match disappears.
 
-`wait-element` is a non-mutating workflow operation for bounded Accessibility element existence and readiness waiting. It runs `state wait-element`, captures current element identity, title/value/enabled matching, and identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the matched element is enabled and pressable, otherwise a fresh state inspection.
+`wait-element` is a non-mutating workflow operation for bounded Accessibility element existence and readiness waiting. It runs `state wait-element`, captures current element identity, title/value/enabled matching, and identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the matched element is enabled and pressable, a guarded `set-element-value` dry-run when `AXValue` is settable, or a fresh state inspection.
 
 `wait-active-app` is a non-mutating workflow operation for bounded app focus verification. It runs `apps wait-active`, captures target/current frontmost app evidence, and `workflow resume` suggests active-app inspection when the target becomes frontmost.
 
@@ -256,9 +259,9 @@ After a successful `wait-browser-text` transcript, `workflow resume` suggests a 
 
 After a successful `wait-browser-element-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched element state.
 
-After a successful `wait-element` transcript, `workflow resume` suggests a guarded `perform` press when the matched Accessibility element is enabled and pressable, otherwise it suggests a fresh bounded `state` inspection.
+After a successful `wait-element` transcript, `workflow resume` suggests a guarded `perform` press when the matched Accessibility element is enabled and pressable, a guarded `set-element-value` dry-run when `AXValue` is settable, or a fresh bounded `state` inspection.
 
-After a successful `inspect-element` transcript, `workflow resume` suggests a guarded `perform` press when the inspected Accessibility element is enabled and pressable, otherwise it suggests a bounded element re-inspection.
+After a successful `inspect-element` transcript, `workflow resume` suggests a guarded `perform` press when the inspected Accessibility element is enabled and pressable, a guarded `set-element-value` dry-run when `AXValue` is settable, or a bounded element re-inspection.
 
 After a successful `inspect-menu` transcript, `workflow resume` suggests a fresh bounded app UI state inspection so the next trusted action is grounded in current window state.
 
