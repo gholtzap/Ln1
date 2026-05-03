@@ -560,6 +560,7 @@ struct DesktopWindowsState: Codable {
     let activePID: Int32?
     let includeDesktop: Bool
     let includeAllLayers: Bool
+    let filter: DesktopWindowWaitTarget?
     let limit: Int
     let count: Int
     let truncated: Bool
@@ -3228,6 +3229,21 @@ final class Ln1CLI {
         var arguments = ["Ln1", "desktop", "windows"]
         if let limit = option("--limit") {
             arguments += ["--limit", limit]
+        }
+        if let id = option("--id") {
+            arguments += ["--id", id]
+        }
+        if let ownerPID = option("--owner-pid") {
+            arguments += ["--owner-pid", ownerPID]
+        }
+        if let bundleIdentifier = option("--bundle-id") {
+            arguments += ["--bundle-id", bundleIdentifier]
+        }
+        if let title = option("--title") {
+            arguments += ["--title", title]
+        }
+        if let match = option("--match") {
+            arguments += ["--match", match]
         }
         if flag("--include-desktop") {
             arguments.append("--include-desktop")
@@ -21825,11 +21841,11 @@ final class Ln1CLI {
           Ln1 policy
           Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow run --operation activate-app|launch-app|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
           Ln1 apps [--all]
@@ -21842,7 +21858,7 @@ final class Ln1CLI {
           Ln1 processes inspect (--pid PID|--current)
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop displays
-          Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
+          Ln1 desktop windows [--limit N] [--id ID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--title TEXT] [--match exact|prefix|contains] [--include-desktop] [--all-layers]
           Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 state menu [--pid PID] [--depth N] [--max-children N]
@@ -21916,7 +21932,7 @@ final class Ln1CLI {
           - `apps wait-active` waits for the frontmost app to match a target without changing focus.
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.
-          - `desktop windows` lists visible desktop windows from macOS window metadata without requiring screenshots.
+          - `desktop windows` lists or filters visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state menu` inspects the target app menu bar as a bounded Accessibility tree.
@@ -22571,6 +22587,33 @@ final class Ln1CLI {
         )
     }
 
+    private func desktopWindowFilterTarget() throws -> DesktopWindowWaitTarget? {
+        let id = option("--id")
+        let ownerPID = try option("--owner-pid").map { rawValue -> Int32 in
+            guard let pid = Int32(rawValue), pid > 0 else {
+                throw CommandError(description: "desktop windows --owner-pid must be a positive integer")
+            }
+            return pid
+        }
+        let bundleIdentifier = option("--bundle-id")
+        let title = option("--title")
+        let titleMatch = option("--match") ?? "contains"
+        guard ["exact", "prefix", "contains"].contains(titleMatch) else {
+            throw CommandError(description: "desktop windows --match must be exact, prefix, or contains")
+        }
+        guard id != nil || ownerPID != nil || bundleIdentifier != nil || title != nil else {
+            return nil
+        }
+
+        return DesktopWindowWaitTarget(
+            id: id,
+            ownerPID: ownerPID,
+            bundleIdentifier: bundleIdentifier,
+            title: title,
+            titleMatch: titleMatch
+        )
+    }
+
     private func waitForDesktopWindow(
         target: DesktopWindowWaitTarget,
         expectedExists: Bool,
@@ -22667,6 +22710,7 @@ final class Ln1CLI {
     private func desktopWindows(limitOverride: Int? = nil) throws -> DesktopWindowsState {
         let includeDesktop = flag("--include-desktop")
         let includeAllLayers = flag("--all-layers")
+        let filter = try desktopWindowFilterTarget()
         let limit = limitOverride ?? max(0, option("--limit").flatMap(Int.init) ?? 200)
         let activePID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let bundleIdentifierByPID = Dictionary(
@@ -22688,6 +22732,7 @@ final class Ln1CLI {
                 activePID: activePID,
                 includeDesktop: includeDesktop,
                 includeAllLayers: includeAllLayers,
+                filter: filter,
                 limit: limit,
                 count: 0,
                 truncated: false,
@@ -22736,6 +22781,12 @@ final class Ln1CLI {
                 sharingState: intValue(window[kCGWindowSharingState as String])
             )
         }
+        .filter { record in
+            guard let filter else {
+                return true
+            }
+            return desktopWindow(record, matches: filter)
+        }
         .sorted { left, right in
             if left.active != right.active {
                 return left.active && !right.active
@@ -22757,11 +22808,14 @@ final class Ln1CLI {
             platform: "macOS",
             available: true,
             message: records.isEmpty
-                ? "No matching visible desktop windows were reported."
+                ? (filter == nil
+                    ? "No matching visible desktop windows were reported."
+                    : "No visible desktop windows matched the target filters.")
                 : "Read visible desktop window metadata.",
             activePID: activePID,
             includeDesktop: includeDesktop,
             includeAllLayers: includeAllLayers,
+            filter: filter,
             limit: limit,
             count: limitedRecords.count,
             truncated: records.count > limitedRecords.count,

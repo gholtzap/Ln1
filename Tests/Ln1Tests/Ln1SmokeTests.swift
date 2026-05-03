@@ -269,6 +269,8 @@ final class Ln1SmokeTests: XCTestCase {
             "preflight",
             "--operation", "inspect-windows",
             "--limit", "12",
+            "--title", "Example",
+            "--match", "contains",
             "--include-desktop",
             "--all-layers"
         ])
@@ -283,6 +285,8 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(object["nextArguments"] as? [String], [
             "Ln1", "desktop", "windows",
             "--limit", "12",
+            "--title", "Example",
+            "--match", "contains",
             "--include-desktop",
             "--all-layers"
         ])
@@ -627,6 +631,31 @@ final class Ln1SmokeTests: XCTestCase {
                 XCTAssertNotNil(bounds["height"] as? Double)
             }
         }
+    }
+
+    func testDesktopWindowsCanFilterByTitleWithoutScreenshots() throws {
+        let title = "Ln1-missing-window-\(UUID().uuidString)"
+        let result = try runLn1([
+            "desktop",
+            "windows",
+            "--title", title,
+            "--match", "exact",
+            "--limit", "10"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let filter = try XCTUnwrap(object["filter"] as? [String: Any])
+        let windows = try XCTUnwrap(object["windows"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["limit"] as? Int, 10)
+        XCTAssertEqual(object["count"] as? Int, windows.count)
+        XCTAssertEqual(filter["title"] as? String, title)
+        XCTAssertEqual(filter["titleMatch"] as? String, "exact")
+        XCTAssertNil(filter["ownerPID"])
+        XCTAssertNil(filter["bundleIdentifier"])
+        XCTAssertTrue(windows.isEmpty)
     }
 
     func testDesktopDisplaysReturnsStructuredDisplayTopology() throws {

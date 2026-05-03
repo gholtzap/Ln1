@@ -184,7 +184,7 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 
 `inspect-displays` is a non-mutating workflow operation for display topology. It runs `desktop displays`, captures connected display IDs, coordinate bounds, pixel dimensions, scale, rotation, and display flags in the workflow transcript, and `workflow resume` suggests a fresh `observe` snapshot.
 
-`inspect-windows` is a non-mutating workflow operation for visible desktop window inventory. It runs `desktop windows`, captures WindowServer owner, title, bounds, layer, and stable identity metadata in the workflow transcript, and `workflow resume` suggests active-app or owner-process inspection when the inventory points to a concrete next target.
+`inspect-windows` is a non-mutating workflow operation for visible desktop window inventory. It runs `desktop windows`, forwards window filters such as `--owner-pid`, `--bundle-id`, `--title`, and `--match`, captures WindowServer owner, title, bounds, layer, and stable identity metadata in the workflow transcript, and `workflow resume` suggests active-app or owner-process inspection when the inventory points to a concrete next target.
 
 `inspect-process` is a non-mutating workflow operation for one process by `--pid` or `--current`. It runs `processes inspect`, captures structured process metadata in the workflow transcript, and `workflow resume` can suggest a dry-run app activation when the inspected process belongs to a GUI app.
 
@@ -400,9 +400,13 @@ Wait for a process to exist or disappear:
 
 ```sh
 .build/debug/Ln1 desktop windows --limit 50
+.build/debug/Ln1 desktop windows --bundle-id com.apple.TextEdit --limit 20
+.build/debug/Ln1 desktop windows --title "Export" --match contains --limit 20
 ```
 
 The output is structured JSON from macOS window metadata: availability, window ID, owner app name and PID, bundle identifier when available, active-owner flag, title when macOS exposes it, layer, bounds, onscreen state, alpha, memory usage, and sharing state. This is a low-risk desktop inspection action that does not require screenshots or Accessibility access. If the current process cannot read WindowServer metadata, the command still returns a structured unavailable result instead of falling back to screenshots.
+
+Filter desktop window inventory by transient window ID, stable identity ID, owner PID, bundle identifier, or title with `--match exact|prefix|contains`. The result includes the applied structured `filter` so later workflow steps can verify which target constraints produced the inventory.
 
 Each window includes both a transient WindowServer `id` and a semantic `stableIdentity`. The stable identity is a digest built from durable-ish fields such as owner bundle identifier, title, layer, and coarse bounds when the title is unavailable. It also reports a confidence level, user-readable label, identity components, and reasons so callers can avoid acting when a repeated observation only matches a low-confidence window reference.
 
