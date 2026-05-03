@@ -1477,6 +1477,7 @@ struct ActionAuditRecord: Codable {
 
 struct AuditEntries: Codable {
     let path: String
+    let id: String?
     let command: String?
     let code: String?
     let limit: Int
@@ -10184,16 +10185,19 @@ final class Ln1CLI {
     private func audit() throws {
         let auditURL = try auditLogURL()
         let limit = option("--limit").flatMap(Int.init) ?? 20
+        let id = option("--id")
         let command = option("--command")
         let code = option("--code")
         let records = try readAuditRecords(
             from: auditURL,
             limit: max(0, limit),
+            id: id,
             command: command,
             code: code
         )
         try writeJSON(AuditEntries(
             path: auditURL.path,
+            id: id,
             command: command,
             code: code,
             limit: max(0, limit),
@@ -18706,6 +18710,7 @@ final class Ln1CLI {
     private func readAuditRecords(
         from url: URL,
         limit: Int,
+        id: String? = nil,
         command: String? = nil,
         code: String? = nil
     ) throws -> [ActionAuditRecord] {
@@ -18726,6 +18731,9 @@ final class Ln1CLI {
                 return try decoder.decode(ActionAuditRecord.self, from: data)
             }
             .filter { record in
+                if let id, record.id != id {
+                    return false
+                }
                 if let command, record.command != command {
                     return false
                 }
@@ -19628,7 +19636,7 @@ final class Ln1CLI {
             }
           },
           "audit": {
-            "command": "Ln1 audit --command files.move --code moved --limit 20",
+            "command": "Ln1 audit --id UUID --command files.move --code moved --limit 20",
             "entry": {
               "id": "UUID",
               "timestamp": "ISO-8601 timestamp",
@@ -20588,7 +20596,7 @@ final class Ln1CLI {
           Ln1 state element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--depth N] [--max-children N]
           Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|m0.1|a0.w0.1.2|a0.m0.1 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
-          Ln1 audit [--limit N] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
+          Ln1 audit [--limit N] [--id AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           Ln1 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
           Ln1 task record --task-id ID --kind observation|decision|action|verification|note --summary TEXT --allow-risk medium [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]
           Ln1 task finish --task-id ID [--status completed|blocked|cancelled] --allow-risk medium [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH]

@@ -12790,6 +12790,70 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(codeOutcome["code"] as? String, "policy_denied")
     }
 
+    func testAuditCommandFiltersByIDBeforeLimit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-audit-id-filter-\(UUID().uuidString)")
+        let firstCreated = directory.appendingPathComponent("first")
+        let secondCreated = directory.appendingPathComponent("second")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let first = try runLn1([
+            "files",
+            "mkdir",
+            "--path", firstCreated.path,
+            "--allow-risk", "medium",
+            "--reason", "first allowed mkdir",
+            "--audit-log", auditLog.path
+        ])
+        XCTAssertEqual(first.status, 0, first.stderr)
+        let firstObject = try decodeJSONObject(first.stdout)
+        let firstAuditID = try XCTUnwrap(firstObject["auditID"] as? String)
+
+        let second = try runLn1([
+            "files",
+            "mkdir",
+            "--path", secondCreated.path,
+            "--allow-risk", "medium",
+            "--reason", "second allowed mkdir",
+            "--audit-log", auditLog.path
+        ])
+        XCTAssertEqual(second.status, 0, second.stderr)
+
+        let idFiltered = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--id", firstAuditID,
+            "--limit", "5"
+        ])
+
+        XCTAssertEqual(idFiltered.status, 0, idFiltered.stderr)
+        let object = try decodeJSONObject(idFiltered.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(object["id"] as? String, firstAuditID)
+        XCTAssertEqual(object["limit"] as? Int, 5)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entry["id"] as? String, firstAuditID)
+        XCTAssertEqual(entry["command"] as? String, "files.mkdir")
+        XCTAssertEqual(outcome["code"] as? String, "created_directory")
+
+        let missing = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--id", "missing-audit-id",
+            "--limit", "5"
+        ])
+
+        XCTAssertEqual(missing.status, 0, missing.stderr)
+        let missingObject = try decodeJSONObject(missing.stdout)
+        XCTAssertEqual(missingObject["id"] as? String, "missing-audit-id")
+        XCTAssertEqual((missingObject["entries"] as? [Any])?.count, 0)
+    }
+
     func testClipboardStateReturnsMetadataWithoutTextContents() throws {
         let pasteboardName = "Ln1-test-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))

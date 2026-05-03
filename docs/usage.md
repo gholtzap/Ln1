@@ -505,9 +505,10 @@ Filter audit records before applying the limit:
 
 ```sh
 .build/debug/Ln1 audit --command files.move --code moved --limit 10
+.build/debug/Ln1 audit --id 5B3D2E12-1D75-4C9E-B6DA-FD1F3C9E6A57
 ```
 
-`--command` matches audit command names such as `perform`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, or `read_dom`.
+`--id` matches an exact audit record ID. `--command` matches audit command names such as `perform`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `clipboard.write-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `read_clipboard_text`, `wrote_clipboard_text`, or `read_dom`.
 
 ## Track Task Memory
 
