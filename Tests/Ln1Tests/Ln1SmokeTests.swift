@@ -1098,6 +1098,85 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowTarget" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightWaitElementRequiresElementPath() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "wait-element",
+            "--wait-timeout-ms", "500"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+        let blockers = try XCTUnwrap(object["blockers"] as? [String])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-element")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, false)
+        XCTAssertTrue(blockers.contains("workflow.element"))
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.element" && $0["status"] as? String == "fail" })
+    }
+
+    func testWorkflowPreflightWaitElementBuildsStateWaitCommand() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let apps = try runLn1(["apps", "--all"])
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "wait-element",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--title", "Export Complete",
+            "--match", "contains",
+            "--enabled", "true",
+            "--exists", "true",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50",
+            "--depth", "1",
+            "--max-children", "4"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-element")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "state", "wait-element",
+            "--pid", "\(pid)",
+            "--element", "w0",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--title", "Export Complete",
+            "--match", "contains",
+            "--exists", "true",
+            "--enabled", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50",
+            "--depth", "1",
+            "--max-children", "4"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.element" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowRunExecutesNonMutatingProcessWaitAndCapturesJSON() throws {
         let workflowLog = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-process-wait-\(UUID().uuidString).jsonl")
@@ -1177,6 +1256,75 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
         XCTAssertNotNil(verification["ok"] as? Bool)
         XCTAssertNotNil(verification["matched"] as? Bool)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesNonMutatingElementWaitAndCapturesJSON() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        guard let firstWindow = windows.first,
+              let elementID = firstWindow["id"] as? String else {
+            throw XCTSkip("No Accessibility window was available for the frontmost app.")
+        }
+
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-element-wait-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "wait-element",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--exists", "true",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50",
+            "--depth", "0",
+            "--max-children", "0",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+        let current = try XCTUnwrap(verification["current"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-element")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "state", "wait-element",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--match", "contains",
+            "--exists", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertEqual(current["id"] as? String, elementID)
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
@@ -1454,6 +1602,83 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(object["nextArguments"] as? [String], [
             "Ln1", "desktop", "windows",
             "--limit", "50"
+        ])
+    }
+
+    func testWorkflowResumeSuggestsGuardedPressAfterElementWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-element-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-element-transcript",
+            "operation": "wait-element",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "state", "wait-element",
+                    "--pid", "123",
+                    "--element", "w0.1",
+                    "--exists", "true"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "app": [
+                        "pid": 123,
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App"
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "accessibility_element_matched",
+                        "expectedExists": true,
+                        "matched": true,
+                        "current": [
+                            "id": "w0.1",
+                            "stableIdentity": [
+                                "id": "accessibilityElement:abc123",
+                                "kind": "accessibilityElement",
+                                "confidence": "high",
+                                "label": "AXButton: Save",
+                                "components": [:],
+                                "reasons": []
+                            ],
+                            "enabled": true,
+                            "actions": [kAXPressAction as String]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-element",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-element")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "perform",
+            "--pid", "123",
+            "--element", "w0.1",
+            "--expect-identity", "accessibilityElement:abc123",
+            "--min-identity-confidence", "medium",
+            "--action", kAXPressAction as String,
+            "--allow-risk", "low",
+            "--reason", "Describe intent"
         ])
     }
 

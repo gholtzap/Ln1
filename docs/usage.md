@@ -62,7 +62,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 workflow preflight --operation inspect-active-app
 ```
 
-Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `inspect-system`, `inspect-displays`, `inspect-process`, `wait-process`, `wait-window`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
+Workflow preflight turns an intended task into prerequisites, blockers, risk, mutation status, and the safest next command. Supported operations are `inspect-active-app`, `inspect-system`, `inspect-displays`, `inspect-process`, `wait-process`, `wait-window`, `wait-element`, `wait-active-app`, `activate-app`, `control-active-app`, `read-browser`, `fill-browser`, `select-browser`, `check-browser`, `focus-browser`, `press-browser-key`, `click-browser`, `navigate-browser`, `wait-browser-url`, `wait-browser-selector`, `wait-browser-count`, `wait-browser-text`, `wait-browser-element-text`, `wait-browser-value`, `wait-browser-ready`, `wait-browser-title`, `wait-browser-checked`, `wait-browser-enabled`, `wait-browser-focus`, `wait-browser-attribute`, `wait-clipboard`, `inspect-clipboard`, `inspect-file`, `read-file`, `tail-file`, `read-file-lines`, `read-file-json`, `read-file-plist`, `write-file`, `append-file`, `list-files`, `search-files`, `create-directory`, `duplicate-file`, `move-file`, `rollback-file-move`, `checksum-file`, `compare-files`, `watch-file`, and `wait-file`.
 
 Examples:
 
@@ -73,6 +73,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation inspect-process --pid 123
 .build/debug/Ln1 workflow preflight --operation wait-process --pid 123 --exists false --wait-timeout-ms 5000
 .build/debug/Ln1 workflow preflight --operation wait-window --title "Export Complete" --exists true --wait-timeout-ms 30000
+.build/debug/Ln1 workflow preflight --operation wait-element --pid 123 --element w0.2 --title "Export Complete" --match contains --wait-timeout-ms 30000
 .build/debug/Ln1 workflow preflight --operation wait-active-app --pid 123 --wait-timeout-ms 5000
 .build/debug/Ln1 workflow preflight --operation activate-app --pid 123 --allow-risk medium
 .build/debug/Ln1 workflow preflight --operation read-browser --endpoint http://127.0.0.1:9222
@@ -161,6 +162,8 @@ Use dry-run first for mutating browser actions and file operations, then run wit
 
 `wait-window` is a non-mutating workflow operation for bounded desktop window existence waiting. It runs `desktop wait-window`, captures target filters and matching WindowServer metadata in the workflow transcript, and `workflow resume` suggests owner-process or active-app inspection when a window appears, or a fresh desktop window list when a match disappears.
 
+`wait-element` is a non-mutating workflow operation for bounded Accessibility element existence and readiness waiting. It runs `state wait-element`, captures current element identity, title/value/enabled matching, and identity verification in the workflow transcript, and `workflow resume` suggests a guarded `perform` press when the matched element is enabled and pressable, otherwise a fresh state inspection.
+
 `wait-active-app` is a non-mutating workflow operation for bounded app focus verification. It runs `apps wait-active`, captures target/current frontmost app evidence, and `workflow resume` suggests active-app inspection when the target becomes frontmost.
 
 `wait-file` is a non-mutating workflow operation for bounded state waiting. The workflow runner's `--run-timeout-ms` can be shorter than the underlying `--wait-timeout-ms` when the outer control loop needs a hard deadline. Pass `--size-bytes N` and/or `--digest SHA256` when the file must exist with specific metadata before the workflow should continue.
@@ -228,6 +231,8 @@ After a successful `wait-browser-count` transcript, `workflow resume` suggests a
 After a successful `wait-browser-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched page state.
 
 After a successful `wait-browser-element-text` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched element state.
+
+After a successful `wait-element` transcript, `workflow resume` suggests a guarded `perform` press when the matched Accessibility element is enabled and pressable, otherwise it suggests a fresh bounded `state` inspection.
 
 After a successful `wait-browser-value` transcript, `workflow resume` suggests a dry-run `read-browser` DOM inspection for the matched field state.
 
