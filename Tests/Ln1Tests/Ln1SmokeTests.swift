@@ -1352,6 +1352,7 @@ final class Ln1SmokeTests: XCTestCase {
             let stableIdentity = try XCTUnwrap(first["stableIdentity"] as? [String: Any])
             XCTAssertNotNil(first["id"] as? String)
             XCTAssertEqual(first["role"] as? String, "AXWindow")
+            XCTAssertNotNil(first["minimized"] as? Bool)
             XCTAssertEqual(stableIdentity["kind"] as? String, "accessibilityElement")
         }
     }
@@ -1401,6 +1402,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(identityVerification["actualID"] as? String)
         XCTAssertNotNil(element["settableAttributes"] as? [String])
         XCTAssertNotNil(element["valueSettable"] as? Bool)
+        XCTAssertNotNil(element["minimized"] as? Bool)
     }
 
     func testStateWaitElementReturnsStructuredVerificationForCurrentWindow() throws {

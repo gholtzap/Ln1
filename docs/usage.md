@@ -63,7 +63,7 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 .build/debug/Ln1 state find --title "Save" --action AXPress --include-menu --limit 20
 ```
 
-`state menu` returns the target app's macOS Accessibility menu bar as a bounded tree with stable element identities, roles, titles, enabled state, actions, and child paths such as `m0.1.2`. Pass `--pid PID` to inspect a specific running app instead of the frontmost app. This is read-only and useful before selecting a trusted menu action or deciding whether a menu command is present.
+`state menu` returns the target app's macOS Accessibility menu bar as a bounded tree with stable element identities, roles, titles, enabled state, minimized state when exposed by Accessibility, actions, and child paths such as `m0.1.2`. Pass `--pid PID` to inspect a specific running app instead of the frontmost app. This is read-only and useful before selecting a trusted menu action or deciding whether a menu command is present.
 
 `state find` searches the target app's Accessibility windows, and optionally menu bar, by semantic attributes such as role, title, value, help text, action, and enabled state. It returns bounded candidate element IDs with stable identities so the next step can inspect or act on a concrete element without manually scanning a full tree.
 
@@ -535,7 +535,7 @@ Wait for a desktop window to appear or disappear without relying on a fixed slee
 .build/debug/Ln1 state --depth 4 --max-children 120
 ```
 
-The output is JSON with app metadata, windows, elements, frames, values, available actions, settable Accessibility attributes, and a `valueSettable` shortcut.
+The output is JSON with app metadata, windows, elements, frames, values, available actions, settable Accessibility attributes, `minimized` state when an element exposes `AXMinimized`, and a `valueSettable` shortcut.
 
 Each Accessibility node includes the path-style `id` used by `perform` plus a semantic `stableIdentity`. The stable identity summarizes owner, role, title or help text, actions, and coarse frame when available, then reports a digest, confidence, readable label, components, and reasons. Use the confidence, reasons, `actions`, and `settableAttributes` to decide whether a repeated observation still refers to the same control and whether it supports press-style or value-setting operations before acting.
 

@@ -31,6 +31,7 @@ struct ElementNode: Codable {
     let value: String?
     let help: String?
     let enabled: Bool?
+    let minimized: Bool?
     let frame: Rect?
     let actions: [String]
     let settableAttributes: [String]
@@ -26261,6 +26262,7 @@ final class Ln1CLI {
         let value = stringLikeAttribute(element, kAXValueAttribute)
         let help = stringAttribute(element, kAXHelpAttribute)
         let enabled = boolAttribute(element, kAXEnabledAttribute)
+        let minimized = boolAttribute(element, kAXMinimizedAttribute)
         let elementFrame = frame(element)
         let actions = actionNames(element)
         let writableAttributes = settableAttributes(element)
@@ -26302,6 +26304,7 @@ final class Ln1CLI {
             value: value,
             help: help,
             enabled: enabled,
+            minimized: minimized,
             frame: elementFrame,
             actions: actions,
             settableAttributes: writableAttributes,
