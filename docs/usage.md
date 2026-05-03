@@ -168,7 +168,7 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 
 `activate-app` is a mutating workflow operation for bringing one regular GUI app forward by `--pid`, `--bundle-id`, or `--current`. Use `workflow run --operation activate-app --dry-run true` to inspect the exact `apps activate` command, then execute with `--dry-run false --execute-mutating true --reason TEXT` after confirming the target. After a successful activation, `workflow resume` suggests an active-app inspection dry-run.
 
-`launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log.
+`launch-app` is a mutating workflow operation for opening an installed `.app` by bundle identifier or app bundle path. It wraps `apps launch` with medium-risk approval, verifies that the app is running and, by default, frontmost, and records the launch target in the audit log. After a successful launch, `workflow resume` suggests an active-app inspection dry-run.
 
 `set-element-value` is a mutating workflow operation for setting one Accessibility element's `AXValue`. It requires `--element` and `--value`, accepts the same stable identity guard as `perform`, wraps `set-value` with explicit medium-risk approval, and only executes through `workflow run --dry-run false --execute-mutating true --reason TEXT`. After `inspect-element` or `wait-element` finds a settable value element, `workflow resume` suggests a dry-run `set-element-value` plan. After a successful value update, `workflow resume` suggests a dry-run element inspection so the next action is grounded in current structured UI state.
 
@@ -296,7 +296,7 @@ To resume after an interruption, ask for a recommendation from the latest transc
 .build/debug/Ln1 workflow resume --allow-risk medium
 ```
 
-`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array. For completed browser tab listings, it can suggest a dry-run DOM inspection for the first tab; for completed DOM inspections, it can suggest fill, select, check, or click commands from the first actionable selector.
+`workflow resume` reports whether the latest matching workflow is `completed`, `blocked`, `timed_out`, `failed`, `ready`, or `empty`, and returns a conservative next command or argument array. For completed app activation or launch workflows, it suggests a dry-run active-app inspection. For completed browser tab listings, it can suggest a dry-run DOM inspection for the first tab; for completed DOM inspections, it can suggest fill, select, check, or click commands from the first actionable selector.
 
 ## Inspect Running Apps
 

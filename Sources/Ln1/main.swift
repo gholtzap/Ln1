@@ -7958,16 +7958,17 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
-        if latestOperation == "activate-app" {
+        if latestOperation == "activate-app" || latestOperation == "launch-app" {
             let arguments = [
                 "Ln1", "workflow", "run",
                 "--operation", "inspect-active-app",
                 "--dry-run", "true",
                 "--workflow-log", workflowURL.path
             ]
+            let action = latestOperation == "launch-app" ? "launch" : "activation"
             return (
                 arguments,
-                "Latest app activation completed and verified; dry-run active app inspection before choosing the next UI action."
+                "Latest app \(action) completed and verified; dry-run active app inspection before choosing the next UI action."
             )
         }
 

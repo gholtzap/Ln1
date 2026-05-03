@@ -1168,6 +1168,95 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowResumeSuggestsActiveInspectionAfterLaunchApp() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-app-launch-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "launch-app-transcript",
+            "transcriptPath": workflowLog.path,
+            "generatedAt": "2026-05-03T00:00:00Z",
+            "platform": "macOS",
+            "operation": "launch-app",
+            "mode": "execute",
+            "dryRun": false,
+            "ready": true,
+            "wouldExecute": true,
+            "executed": true,
+            "risk": "medium",
+            "mutates": true,
+            "blockers": [],
+            "command": [
+                "argv": [
+                    "Ln1", "apps", "launch",
+                    "--bundle-id", "com.example.App",
+                    "--activate", "true",
+                    "--allow-risk", "medium",
+                    "--reason", "Open app"
+                ]
+            ],
+            "execution": [
+                "argv": [
+                    "Ln1", "apps", "launch",
+                    "--bundle-id", "com.example.App",
+                    "--activate", "true",
+                    "--allow-risk", "medium",
+                    "--reason", "Open app"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "action": "apps.launch",
+                    "target": [
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App",
+                        "path": "/Applications/Example.app"
+                    ],
+                    "app": [
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App",
+                        "pid": 123
+                    ],
+                    "activate": true,
+                    "verification": [
+                        "ok": true,
+                        "code": "launched_active_app"
+                    ]
+                ]
+            ],
+            "preflight": [
+                "operation": "launch-app",
+                "nextArguments": []
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "launch-app",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "launch-app")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-active-app",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("app launch completed") == true)
+    }
+
     func testProcessesListReturnsBoundedStructuredProcessMetadata() throws {
         let result = try runLn1([
             "processes",
