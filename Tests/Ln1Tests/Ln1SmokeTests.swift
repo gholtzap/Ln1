@@ -866,6 +866,91 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
+    func testWorkflowPreflightWaitActiveAppBuildsAppWaitCommand() throws {
+        let apps = try runLn1(["apps", "--all"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "wait-active-app",
+            "--pid", "\(pid)",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-active-app")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "apps", "wait-active",
+            "--pid", "\(pid)",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.appTarget" && $0["status"] as? String == "pass" })
+    }
+
+    func testWorkflowRunExecutesNonMutatingActiveAppWaitAndCapturesJSON() throws {
+        let apps = try runLn1(["apps", "--all"])
+
+        XCTAssertEqual(apps.status, 0, apps.stderr)
+        let records = try XCTUnwrap(try decodeJSON(apps.stdout) as? [[String: Any]])
+        guard let active = records.first(where: { $0["active"] as? Bool == true }),
+              let pid = active["pid"] as? Int else {
+            throw XCTSkip("No active app record was available from macOS.")
+        }
+
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-active-app-wait-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "wait-active-app",
+            "--pid", "\(pid)",
+            "--wait-timeout-ms", "500",
+            "--interval-ms", "50",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let verification = try XCTUnwrap(outputJSON["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "wait-active-app")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "apps", "wait-active",
+            "--pid", "\(pid)",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertNotNil(verification["current"] as? [String: Any])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
     func testWorkflowResumeSuggestsActivationAfterProcessInspectForGUIApp() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-process-resume-\(UUID().uuidString)")
@@ -999,6 +1084,68 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "workflow", "run",
             "--operation", "inspect-process",
             "--pid", "123",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
+        ])
+    }
+
+    func testWorkflowResumeSuggestsActiveInspectionAfterActiveAppWait() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-active-app-wait-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "wait-active-app-transcript",
+            "operation": "wait-active-app",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "apps", "wait-active",
+                    "--pid", "123"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "verification": [
+                        "ok": true,
+                        "code": "active_app_matched",
+                        "matched": true,
+                        "target": [
+                            "pid": 123,
+                            "name": "Example",
+                            "bundleIdentifier": "com.example.App"
+                        ],
+                        "current": [
+                            "pid": 123,
+                            "name": "Example",
+                            "bundleIdentifier": "com.example.App"
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "wait-active-app",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "wait-active-app")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-active-app",
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
         ])
