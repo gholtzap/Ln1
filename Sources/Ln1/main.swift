@@ -3029,6 +3029,14 @@ final class Ln1CLI {
             return workflowPreflightInspectWindows()
         case "inspect-processes":
             return workflowPreflightInspectProcesses()
+        case "start-task":
+            return try workflowPreflightStartTask()
+        case "record-task":
+            return try workflowPreflightRecordTask()
+        case "finish-task":
+            return try workflowPreflightFinishTask()
+        case "show-task":
+            return try workflowPreflightShowTask()
         case "inspect-process":
             return workflowPreflightInspectProcess()
         case "inspect-element":
@@ -3134,7 +3142,7 @@ final class Ln1CLI {
         case "wait-file":
             return workflowPreflightWaitFile()
         default:
-            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-installed-apps, inspect-menu, inspect-system, inspect-displays, inspect-windows, inspect-processes, inspect-process, inspect-element, wait-process, wait-window, wait-element, wait-active-app, activate-app, launch-app, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
+            throw CommandError(description: "unsupported workflow operation '\(operation)'. Use review-audit, inspect-active-app, inspect-installed-apps, inspect-menu, inspect-system, inspect-displays, inspect-windows, inspect-processes, start-task, record-task, finish-task, show-task, inspect-process, inspect-element, wait-process, wait-window, wait-element, wait-active-app, activate-app, launch-app, control-active-app, set-element-value, read-browser, fill-browser, select-browser, check-browser, focus-browser, press-browser-key, click-browser, navigate-browser, wait-browser-url, wait-browser-selector, wait-browser-count, wait-browser-text, wait-browser-element-text, wait-browser-value, wait-browser-ready, wait-browser-title, wait-browser-checked, wait-browser-enabled, wait-browser-focus, wait-browser-attribute, wait-clipboard, inspect-clipboard, read-clipboard, write-clipboard, inspect-file, read-file, tail-file, read-file-lines, read-file-json, read-file-plist, write-file, append-file, list-files, search-files, create-directory, duplicate-file, move-file, rollback-file-move, checksum-file, compare-files, watch-file, or wait-file.")
         }
     }
 
@@ -3283,6 +3291,298 @@ final class Ln1CLI {
             nextCommand: workflowDisplayCommand(arguments),
             nextArguments: arguments
         )
+    }
+
+    private func workflowPreflightStartTask() throws -> WorkflowPreflight {
+        var prerequisites = [workflowPolicyCheck(risk: "medium")]
+        let title = option("--title")
+        if title == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskTitle",
+                status: "fail",
+                required: true,
+                message: "No task title was provided for start-task.",
+                remediation: "Pass `--title TEXT` for the task memory record."
+            ))
+        }
+        workflowAppendTaskSensitivityCheck(to: &prerequisites)
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let title {
+            var arguments = [
+                "Ln1", "task", "start",
+                "--title", title,
+                "--allow-risk", "medium"
+            ]
+            workflowAppendTaskCommonArguments(to: &arguments, includeTaskID: true, includeSummary: true)
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "start-task",
+            risk: "medium",
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightRecordTask() throws -> WorkflowPreflight {
+        var prerequisites = [workflowPolicyCheck(risk: "medium")]
+        let taskID = workflowValidateTaskID(operation: "record-task", prerequisites: &prerequisites)
+        let kind = option("--kind")
+        if let kind {
+            do {
+                _ = try taskMemoryKind(kind)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.taskKind",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--kind observation`, `decision`, `action`, `verification`, or `note`."
+                ))
+            }
+        } else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskKind",
+                status: "fail",
+                required: true,
+                message: "No task event kind was provided for record-task.",
+                remediation: "Pass `--kind observation`, `decision`, `action`, `verification`, or `note`."
+            ))
+        }
+        let summary = option("--summary")
+        if summary == nil {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskSummary",
+                status: "fail",
+                required: true,
+                message: "No task summary was provided for record-task.",
+                remediation: "Pass `--summary TEXT` for the task memory event."
+            ))
+        }
+        try workflowAppendTaskExistsCheck(taskID: taskID, prerequisites: &prerequisites)
+        workflowAppendTaskSensitivityCheck(to: &prerequisites)
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let taskID, let kind, let summary {
+            var arguments = [
+                "Ln1", "task", "record",
+                "--task-id", taskID,
+                "--kind", kind,
+                "--summary", summary,
+                "--allow-risk", "medium"
+            ]
+            workflowAppendTaskCommonArguments(to: &arguments, includeTaskID: false, includeSummary: false)
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "record-task",
+            risk: "medium",
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightFinishTask() throws -> WorkflowPreflight {
+        var prerequisites = [workflowPolicyCheck(risk: "medium")]
+        let taskID = workflowValidateTaskID(operation: "finish-task", prerequisites: &prerequisites)
+        let status = option("--status")
+        if let status {
+            do {
+                _ = try taskFinishStatus(status)
+            } catch {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.taskStatus",
+                    status: "fail",
+                    required: true,
+                    message: (error as? CommandError)?.description ?? error.localizedDescription,
+                    remediation: "Use `--status completed`, `blocked`, or `cancelled`."
+                ))
+            }
+        }
+        try workflowAppendTaskExistsCheck(taskID: taskID, prerequisites: &prerequisites)
+        workflowAppendTaskSensitivityCheck(to: &prerequisites)
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let taskID {
+            var arguments = [
+                "Ln1", "task", "finish",
+                "--task-id", taskID,
+                "--status", status ?? "completed",
+                "--allow-risk", "medium"
+            ]
+            workflowAppendTaskCommonArguments(to: &arguments, includeTaskID: false, includeSummary: true)
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "finish-task",
+            risk: "medium",
+            mutates: true,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPreflightShowTask() throws -> WorkflowPreflight {
+        var prerequisites = [workflowPolicyCheck(risk: "medium")]
+        let taskID = workflowValidateTaskID(operation: "show-task", prerequisites: &prerequisites)
+        var limit = 50
+        if let rawLimit = option("--limit") {
+            if let parsed = Int(rawLimit) {
+                limit = max(0, parsed)
+            } else {
+                prerequisites.append(DoctorCheck(
+                    name: "workflow.taskLimit",
+                    status: "fail",
+                    required: true,
+                    message: "--limit must be an integer.",
+                    remediation: "Pass a non-negative integer with `--limit N`."
+                ))
+            }
+        }
+        try workflowAppendTaskExistsCheck(taskID: taskID, prerequisites: &prerequisites)
+
+        let blockers = workflowBlockers(from: prerequisites)
+        let nextArguments: [String]?
+        if blockers.isEmpty, let taskID {
+            var arguments = [
+                "Ln1", "task", "show",
+                "--task-id", taskID,
+                "--allow-risk", "medium",
+                "--limit", String(limit)
+            ]
+            if let memoryLog = option("--memory-log") {
+                arguments += ["--memory-log", memoryLog]
+            }
+            nextArguments = arguments
+        } else {
+            nextArguments = nil
+        }
+
+        return workflowPreflightResult(
+            operation: "show-task",
+            risk: "medium",
+            mutates: false,
+            prerequisites: prerequisites,
+            blockers: blockers,
+            nextCommand: nextArguments.map(workflowDisplayCommand) ?? workflowRemediationCommand(for: prerequisites),
+            nextArguments: nextArguments
+        )
+    }
+
+    private func workflowPolicyCheck(risk: String) -> DoctorCheck {
+        let policy = policyDecision(actionRisk: risk)
+        return DoctorCheck(
+            name: "workflow.policy",
+            status: policy.allowed ? "pass" : "fail",
+            required: true,
+            message: policy.message,
+            remediation: policy.allowed ? nil : "Pass `--allow-risk \(risk)` after reviewing the workflow target."
+        )
+    }
+
+    private func workflowValidateTaskID(
+        operation: String,
+        prerequisites: inout [DoctorCheck]
+    ) -> String? {
+        guard let taskID = option("--task-id") else {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskID",
+                status: "fail",
+                required: true,
+                message: "No task ID was provided for \(operation).",
+                remediation: "Pass `--task-id ID` from `Ln1 task start` or a previous workflow transcript."
+            ))
+            return nil
+        }
+        return taskID
+    }
+
+    private func workflowAppendTaskExistsCheck(
+        taskID: String?,
+        prerequisites: inout [DoctorCheck]
+    ) throws {
+        guard let taskID else {
+            return
+        }
+        let memoryURL = try taskMemoryURL()
+        do {
+            try requireTaskExists(taskID: taskID, in: memoryURL)
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskMemory",
+                status: "pass",
+                required: true,
+                message: "Task memory exists for id \(taskID).",
+                remediation: nil
+            ))
+        } catch {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskMemory",
+                status: "fail",
+                required: true,
+                message: (error as? CommandError)?.description ?? error.localizedDescription,
+                remediation: "Run `Ln1 workflow run --operation start-task --dry-run false --execute-mutating true --reason TEXT` first, or pass the correct `--memory-log`."
+            ))
+        }
+    }
+
+    private func workflowAppendTaskSensitivityCheck(to prerequisites: inout [DoctorCheck]) {
+        guard let sensitivity = option("--sensitivity") else {
+            return
+        }
+        do {
+            _ = try taskMemorySensitivity(sensitivity)
+        } catch {
+            prerequisites.append(DoctorCheck(
+                name: "workflow.taskSensitivity",
+                status: "fail",
+                required: true,
+                message: (error as? CommandError)?.description ?? error.localizedDescription,
+                remediation: "Use `--sensitivity public`, `private`, or `sensitive`."
+            ))
+        }
+    }
+
+    private func workflowAppendTaskCommonArguments(
+        to arguments: inout [String],
+        includeTaskID: Bool,
+        includeSummary: Bool
+    ) {
+        if includeTaskID, let taskID = option("--task-id") {
+            arguments += ["--task-id", taskID]
+        }
+        if includeSummary, let summary = option("--summary") {
+            arguments += ["--summary", summary]
+        }
+        if let sensitivity = option("--sensitivity") {
+            arguments += ["--sensitivity", sensitivity]
+        }
+        if let relatedAuditID = option("--related-audit-id") {
+            arguments += ["--related-audit-id", relatedAuditID]
+        }
+        if let memoryLog = option("--memory-log") {
+            arguments += ["--memory-log", memoryLog]
+        }
     }
 
     private func workflowPreflightInspectInstalledApps() -> WorkflowPreflight {
@@ -8178,6 +8478,18 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "start-task" {
+            return workflowTaskStartRecommendation(
+                outputJSON: outputJSON,
+                workflowURL: workflowURL
+            )
+        }
+        if latestOperation == "record-task" || latestOperation == "finish-task" {
+            return workflowTaskMemoryRecommendation(
+                outputJSON: outputJSON,
+                workflowURL: workflowURL
+            )
+        }
         if latestOperation == "wait-active-app" {
             return workflowActiveAppWaitRecommendation(
                 outputJSON: outputJSON,
@@ -8292,6 +8604,61 @@ final class Ln1CLI {
         return (
             arguments: arguments,
             message: "Latest audit review found a successful file move; dry-run rollback preflight before deciding whether to restore it."
+        )
+    }
+
+    private func workflowTaskStartRecommendation(
+        outputJSON: [String: Any],
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let taskID = outputJSON["taskID"] as? String else {
+            return nil
+        }
+
+        var arguments = [
+            "Ln1", "workflow", "run",
+            "--operation", "record-task",
+            "--task-id", taskID,
+            "--kind", "observation",
+            "--summary", "Describe next observation",
+            "--allow-risk", "medium",
+            "--dry-run", "true",
+            "--workflow-log", workflowURL.path
+        ]
+        if let memoryLog = outputJSON["path"] as? String {
+            arguments += ["--memory-log", memoryLog]
+        }
+
+        return (
+            arguments,
+            "Latest task memory start completed; dry-run recording the next observation against the concrete task ID."
+        )
+    }
+
+    private func workflowTaskMemoryRecommendation(
+        outputJSON: [String: Any],
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        guard let taskID = outputJSON["taskID"] as? String else {
+            return nil
+        }
+
+        var arguments = [
+            "Ln1", "workflow", "run",
+            "--operation", "show-task",
+            "--task-id", taskID,
+            "--allow-risk", "medium",
+            "--limit", "20",
+            "--dry-run", "true",
+            "--workflow-log", workflowURL.path
+        ]
+        if let memoryLog = outputJSON["path"] as? String {
+            arguments += ["--memory-log", memoryLog]
+        }
+
+        return (
+            arguments,
+            "Latest task memory update completed; dry-run reading the task memory so the next step is grounded in persisted context."
         )
     }
 
@@ -21891,10 +22258,10 @@ final class Ln1CLI {
           Ln1 policy
           Ln1 system [context|info]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
-          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
-          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
-          Ln1 workflow run --operation activate-app|launch-app|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow next --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
+          Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|show-task|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|read-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|list-files|search-files|checksum-file|compare-files|watch-file|wait-file --dry-run false [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--memory-log PATH] [--endpoint URL_OR_PATH] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--path PATH] [--to PATH] [--query TEXT] [--exists true|false] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--case-sensitive] [--watch-timeout-ms N] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--expect-url URL_OR_TEXT] [--selector CSS_SELECTOR] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--value VALUE] [--attribute NAME] [--title TITLE] [--checked true|false] [--enabled true|false] [--focused true|false] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
+          Ln1 workflow run --operation start-task|record-task|finish-task|activate-app|launch-app|control-active-app|set-element-value|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|write-clipboard|write-file|append-file|create-directory|duplicate-file|move-file|rollback-file-move --dry-run false --execute-mutating true --reason TEXT [--pid PID] [--bundle-id BUNDLE_ID] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--id TARGET_ID] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--text TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--overwrite] [--create] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow run --operation review-audit|inspect-active-app|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-windows|inspect-processes|inspect-process|inspect-element|wait-process|wait-window|wait-element|wait-active-app|activate-app|launch-app|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
@@ -22045,6 +22412,7 @@ final class Ln1CLI {
           - Workflow inspect-menu inspects one app menu bar before choosing a trusted UI action.
           - Workflow inspect-windows captures visible desktop window inventory before choosing an app or process target.
           - Workflow inspect-processes captures bounded process inventory before choosing a PID-specific action.
+          - Workflow start-task, record-task, finish-task, and show-task preflight task-scoped memory persistence and reads.
           - Workflow inspect-element inspects one Accessibility element before choosing a guarded UI action.
           - Workflow set-element-value preflights a guarded AXValue update and executes it only through mutating workflow approval.
           - Workflow read-clipboard reads bounded clipboard text through workflow preflight, transcript capture, and audit logging.

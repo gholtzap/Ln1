@@ -9416,6 +9416,235 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: memoryLog.path))
     }
 
+    func testWorkflowPreflightStartTaskBuildsTaskStartCommand() throws {
+        let memoryLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-task-preflight-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: memoryLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "start-task",
+            "--title", "Verify report",
+            "--summary", "Track report download and checksum",
+            "--task-id", "task-1",
+            "--sensitivity", "private",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "start-task")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "task", "start",
+            "--title", "Verify report",
+            "--allow-risk", "medium",
+            "--task-id", "task-1",
+            "--summary", "Track report download and checksum",
+            "--sensitivity", "private",
+            "--memory-log", memoryLog.path
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
+    }
+
+    func testWorkflowPreflightRecordAndShowTaskUseTaskMemory() throws {
+        let memoryLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-task-record-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: memoryLog) }
+
+        let start = try runLn1([
+            "task",
+            "start",
+            "--title", "Verify report",
+            "--task-id", "task-record",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+        XCTAssertEqual(start.status, 0, start.stderr)
+
+        let record = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "record-task",
+            "--task-id", "task-record",
+            "--kind", "verification",
+            "--summary", "checksum matched",
+            "--sensitivity", "public",
+            "--related-audit-id", "audit-1",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(record.status, 0, record.stderr)
+        let recordObject = try decodeJSONObject(record.stdout)
+        let recordPrerequisites = try XCTUnwrap(recordObject["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(recordObject["operation"] as? String, "record-task")
+        XCTAssertEqual(recordObject["risk"] as? String, "medium")
+        XCTAssertEqual(recordObject["mutates"] as? Bool, true)
+        XCTAssertEqual(recordObject["canProceed"] as? Bool, true)
+        XCTAssertEqual(recordObject["nextArguments"] as? [String], [
+            "Ln1", "task", "record",
+            "--task-id", "task-record",
+            "--kind", "verification",
+            "--summary", "checksum matched",
+            "--allow-risk", "medium",
+            "--sensitivity", "public",
+            "--related-audit-id", "audit-1",
+            "--memory-log", memoryLog.path
+        ])
+        XCTAssertTrue(recordPrerequisites.contains { $0["name"] as? String == "workflow.taskMemory" && $0["status"] as? String == "pass" })
+
+        let show = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "show-task",
+            "--task-id", "task-record",
+            "--limit", "10",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path
+        ])
+
+        XCTAssertEqual(show.status, 0, show.stderr)
+        let showObject = try decodeJSONObject(show.stdout)
+
+        XCTAssertEqual(showObject["operation"] as? String, "show-task")
+        XCTAssertEqual(showObject["risk"] as? String, "medium")
+        XCTAssertEqual(showObject["mutates"] as? Bool, false)
+        XCTAssertEqual(showObject["canProceed"] as? Bool, true)
+        XCTAssertEqual(showObject["nextArguments"] as? [String], [
+            "Ln1", "task", "show",
+            "--task-id", "task-record",
+            "--allow-risk", "medium",
+            "--limit", "10",
+            "--memory-log", memoryLog.path
+        ])
+    }
+
+    func testWorkflowRunExecutesMutatingTaskStartAndCapturesJSON() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-task-run-\(UUID().uuidString)")
+        let memoryLog = directory.appendingPathComponent("task-memory.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "start-task",
+            "--title", "Verify report",
+            "--task-id", "task-run",
+            "--summary", "Track report download",
+            "--allow-risk", "medium",
+            "--memory-log", memoryLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false",
+            "--execute-mutating", "true",
+            "--reason", "Track task context"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+        let events = try XCTUnwrap(outputJSON["events"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "start-task")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "task", "start",
+            "--title", "Verify report",
+            "--allow-risk", "medium",
+            "--task-id", "task-run",
+            "--summary", "Track report download",
+            "--memory-log", memoryLog.path,
+            "--reason", "Track task context"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["taskID"] as? String, "task-run")
+        XCTAssertEqual(outputJSON["status"] as? String, "active")
+        XCTAssertEqual(outputJSON["path"] as? String, memoryLog.path)
+        XCTAssertEqual(events.first?["kind"] as? String, "task.started")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: memoryLog.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowResumeSuggestsTaskRecordAfterTaskStart() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-task-resume-\(UUID().uuidString)")
+        let memoryLog = directory.appendingPathComponent("task-memory.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "task-start-transcript",
+            "operation": "start-task",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "task", "start",
+                    "--title", "Verify report",
+                    "--task-id", "task-resume",
+                    "--allow-risk", "medium",
+                    "--memory-log", memoryLog.path
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "path": memoryLog.path,
+                    "taskID": "task-resume",
+                    "status": "active",
+                    "eventCount": 1,
+                    "events": [
+                        [
+                            "kind": "task.started",
+                            "taskID": "task-resume"
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "start-task",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "start-task")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "record-task",
+            "--task-id", "task-resume",
+            "--kind", "observation",
+            "--summary", "Describe next observation",
+            "--allow-risk", "medium",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path,
+            "--memory-log", memoryLog.path
+        ])
+    }
+
     func testBrowserTabsReturnsStructuredDevToolsPageTargets() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-browser-\(UUID().uuidString)")
