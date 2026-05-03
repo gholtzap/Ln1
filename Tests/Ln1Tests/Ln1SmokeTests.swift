@@ -2204,6 +2204,86 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("menu inspection") == true)
     }
 
+    func testWorkflowResumeSuggestsGuardedMenuActionAfterMenuInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-menu-action-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-menu-action-transcript",
+            "operation": "inspect-menu",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "state", "menu",
+                    "--pid", "123",
+                    "--depth", "1",
+                    "--max-children", "5"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "platform": "macOS",
+                    "app": [
+                        "pid": 123,
+                        "name": "Example",
+                        "bundleIdentifier": "com.example.App"
+                    ],
+                    "menuBar": [
+                        "id": "m0",
+                        "children": [
+                            [
+                                "id": "m0.0",
+                                "stableIdentity": [
+                                    "id": "accessibilityElement:menu123",
+                                    "kind": "accessibilityElement",
+                                    "confidence": "high",
+                                    "label": "AXMenuBarItem: File",
+                                    "components": [:],
+                                    "reasons": []
+                                ],
+                                "role": "AXMenuBarItem",
+                                "title": "File",
+                                "enabled": true,
+                                "actions": [kAXShowMenuAction as String]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-menu",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-menu")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "perform",
+            "--pid", "123",
+            "--element", "m0.0",
+            "--expect-identity", "accessibilityElement:menu123",
+            "--min-identity-confidence", "medium",
+            "--action", kAXShowMenuAction as String,
+            "--allow-risk", "low",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("guarded menu action") == true)
+    }
+
     func testWorkflowResumeSuggestsActiveInspectionAfterActiveAppWait() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-active-app-wait-resume-\(UUID().uuidString)")

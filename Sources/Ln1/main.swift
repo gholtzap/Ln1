@@ -8715,6 +8715,39 @@ final class Ln1CLI {
         let menuBar = outputJSON["menuBar"] as? [String: Any]
         let hasMenuChildren = (menuBar?["children"] as? [[String: Any]])?.isEmpty == false
 
+        if let menuBar,
+           let candidate = workflowAccessibilityActionCandidate(
+                in: menuBar,
+                preferredActions: [
+                    kAXShowMenuAction as String,
+                    kAXPressAction as String
+                ]
+           ),
+           let elementID = candidate.element["id"] as? String {
+            let stableIdentity = candidate.element["stableIdentity"] as? [String: Any]
+            let expectedIdentity = stableIdentity?["id"] as? String
+            var arguments = ["Ln1", "perform"]
+            if let pid {
+                arguments += ["--pid", String(pid)]
+            }
+            arguments += ["--element", elementID]
+            if let expectedIdentity {
+                arguments += [
+                    "--expect-identity", expectedIdentity,
+                    "--min-identity-confidence", "medium"
+                ]
+            }
+            arguments += [
+                "--action", candidate.action,
+                "--allow-risk", "low",
+                "--reason", "Describe intent"
+            ]
+            return (
+                arguments: arguments,
+                message: "Latest Accessibility menu inspection found an enabled actionable menu element; perform a guarded menu action after replacing the reason."
+            )
+        }
+
         var arguments = ["Ln1", "state", "--depth", "3", "--max-children", "80"]
         if let pid {
             arguments += ["--pid", String(pid)]
@@ -8725,6 +8758,31 @@ final class Ln1CLI {
                 ? "Latest Accessibility menu inspection found menu items; inspect the target app UI state before choosing a trusted action."
                 : "Latest Accessibility menu inspection completed without menu items; inspect the target app UI state before choosing the next action."
         )
+    }
+
+    private func workflowAccessibilityActionCandidate(
+        in element: [String: Any],
+        preferredActions: [String]
+    ) -> (element: [String: Any], action: String)? {
+        let enabled = element["enabled"] as? Bool
+        let actions = element["actions"] as? [String] ?? []
+        if enabled != false {
+            for action in preferredActions where actions.contains(action) {
+                return (element: element, action: action)
+            }
+        }
+
+        let children = element["children"] as? [[String: Any]] ?? []
+        for child in children {
+            if let candidate = workflowAccessibilityActionCandidate(
+                in: child,
+                preferredActions: preferredActions
+            ) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     private func workflowActiveAppWaitRecommendation(
