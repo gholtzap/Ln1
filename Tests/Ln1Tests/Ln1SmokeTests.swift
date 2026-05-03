@@ -34,6 +34,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["processes.inspect"]?["domain"] as? String, "processes")
         XCTAssertEqual(actionByName["processes.inspect"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["processes.inspect"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["processes.wait"]?["domain"] as? String, "processes")
+        XCTAssertEqual(actionByName["processes.wait"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["processes.wait"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
@@ -530,6 +533,49 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(process["pid"] as? Int)
         XCTAssertNotNil(process["activeApp"] as? Bool)
         XCTAssertTrue(process["name"] is String || process["executablePath"] is String)
+    }
+
+    func testProcessesWaitReturnsMatchedExistingProcessMetadata() throws {
+        let result = try runLn1([
+            "processes",
+            "wait",
+            "--pid", "\(ProcessInfo.processInfo.processIdentifier)",
+            "--exists", "true",
+            "--timeout-ms", "500",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["timeoutMilliseconds"] as? Int, 500)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "process_matched")
+        XCTAssertEqual(verification["expectedExists"] as? Bool, true)
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+        XCTAssertNotNil(verification["current"] as? [String: Any])
+    }
+
+    func testProcessesWaitTimesOutForExistingProcessToDisappear() throws {
+        let result = try runLn1([
+            "processes",
+            "wait",
+            "--pid", "\(ProcessInfo.processInfo.processIdentifier)",
+            "--exists", "false",
+            "--timeout-ms", "100",
+            "--interval-ms", "50"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(verification["ok"] as? Bool, false)
+        XCTAssertEqual(verification["code"] as? String, "process_timeout")
+        XCTAssertEqual(verification["expectedExists"] as? Bool, false)
+        XCTAssertEqual(verification["matched"] as? Bool, false)
     }
 
     func testWorkflowPreflightInspectProcessBuildsProcessInspectCommand() throws {

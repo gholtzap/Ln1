@@ -123,6 +123,25 @@ struct ProcessInspectState: Codable {
     let message: String
 }
 
+struct ProcessWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let pid: Int32
+    let expectedExists: Bool
+    let current: ProcessRecord?
+    let matched: Bool
+}
+
+struct ProcessWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: ProcessWaitVerification
+    let message: String
+}
+
 struct ObservationAction: Codable {
     let name: String
     let command: String
@@ -2191,6 +2210,36 @@ final class Ln1CLI {
             return lhsGUI && !rhsGUI
         }
         return lhs.pid < rhs.pid
+    }
+
+    private func waitForProcess(
+        pid: pid_t,
+        expectedExists: Bool,
+        timeoutMilliseconds: Int,
+        intervalMilliseconds: Int
+    ) -> ProcessWaitVerification {
+        let deadline = Date().addingTimeInterval(Double(timeoutMilliseconds) / 1_000.0)
+        var current = processRecord(for: pid)
+
+        while (current != nil) != expectedExists, Date() < deadline {
+            let remainingMilliseconds = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let sleepMilliseconds = min(intervalMilliseconds, max(10, remainingMilliseconds))
+            Thread.sleep(forTimeInterval: Double(sleepMilliseconds) / 1_000.0)
+            current = processRecord(for: pid)
+        }
+
+        let matched = (current != nil) == expectedExists
+        return ProcessWaitVerification(
+            ok: matched,
+            code: matched ? "process_matched" : "process_timeout",
+            message: matched
+                ? "process existence matched expected state"
+                : "process existence did not match expected state before timeout",
+            pid: pid,
+            expectedExists: expectedExists,
+            current: current,
+            matched: matched
+        )
     }
 
     private func stringFromNullTerminatedBuffer(_ buffer: [CChar]) -> String? {
@@ -8005,6 +8054,8 @@ final class Ln1CLI {
             try writeJSON(processListState())
         case "inspect":
             try writeJSON(processInspectState())
+        case "wait":
+            try writeJSON(processWaitState())
         case "--help", "-h", "help":
             printHelp()
         default:
@@ -8061,6 +8112,33 @@ final class Ln1CLI {
             found: true,
             process: record,
             message: "Read process metadata for pid \(pid)."
+        )
+    }
+
+    private func processWaitState() throws -> ProcessWaitResult {
+        guard let rawPID = option("--pid"), let pid = pid_t(rawPID), pid > 0 else {
+            throw CommandError(description: "processes wait requires --pid PID")
+        }
+
+        let expectedExists = option("--exists").map(parseBool) ?? true
+        let timeoutMilliseconds = max(0, option("--timeout-ms").flatMap(Int.init) ?? 5_000)
+        let intervalMilliseconds = max(10, option("--interval-ms").flatMap(Int.init) ?? 100)
+        let verification = waitForProcess(
+            pid: pid,
+            expectedExists: expectedExists,
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds
+        )
+
+        return ProcessWaitResult(
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            timeoutMilliseconds: timeoutMilliseconds,
+            intervalMilliseconds: intervalMilliseconds,
+            verification: verification,
+            message: verification.ok
+                ? "Process matched the expected existence state."
+                : "Timed out waiting for process existence state."
         )
     }
 
@@ -17253,7 +17331,7 @@ final class Ln1CLI {
 
     private func processActionRisk(for action: String) -> String {
         switch action {
-        case "processes.list", "processes.inspect":
+        case "processes.list", "processes.inspect", "processes.wait":
             return "low"
         default:
             return "unknown"
@@ -17304,6 +17382,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "apps.activate", domain: "apps", risk: appActionRisk(for: "apps.activate"), mutates: true),
             PolicyActionRecord(name: "processes.list", domain: "processes", risk: processActionRisk(for: "processes.list"), mutates: false),
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
+            PolicyActionRecord(name: "processes.wait", domain: "processes", risk: processActionRisk(for: "processes.wait"), mutates: false),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
@@ -18729,6 +18808,7 @@ final class Ln1CLI {
           Ln1 apps activate (--pid PID|--bundle-id BUNDLE_ID|--current) --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 processes [list] [--limit N] [--name TEXT]
           Ln1 processes inspect (--pid PID|--current)
+          Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop windows [--limit N] [--include-desktop] [--all-layers]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|a0.w0.1.2 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]

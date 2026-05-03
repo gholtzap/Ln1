@@ -285,6 +285,14 @@ Inspect one process without listing the whole table:
 .build/debug/Ln1 processes inspect --current
 ```
 
+Wait for a process to exist or disappear:
+
+```sh
+.build/debug/Ln1 processes wait --pid 123 --exists false --timeout-ms 5000
+```
+
+`processes.wait` returns a structured verification result with the expected existence state, whether it matched before the timeout, and current process metadata when the PID is still visible.
+
 ## Inspect Visible Desktop Windows
 
 ```sh
