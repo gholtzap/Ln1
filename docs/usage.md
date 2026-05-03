@@ -83,6 +83,7 @@ Examples:
 .build/debug/Ln1 workflow preflight --operation inspect-installed-apps --name TextEdit --limit 20
 .build/debug/Ln1 workflow preflight --operation inspect-menu --pid 123 --depth 2 --max-children 80
 .build/debug/Ln1 workflow preflight --operation inspect-displays
+.build/debug/Ln1 workflow preflight --operation inspect-active-window
 .build/debug/Ln1 workflow preflight --operation inspect-windows --limit 50
 .build/debug/Ln1 workflow preflight --operation inspect-processes --name Safari --limit 20
 .build/debug/Ln1 workflow preflight --operation start-task --title "Verify report" --summary "Track report download and checksum" --allow-risk medium
@@ -194,6 +195,8 @@ Use dry-run first for mutating browser actions, Accessibility value changes, app
 `inspect-system` is a non-mutating workflow operation for host and runtime metadata. It runs `system context`, captures bounded OS, shell, working-directory, timezone, locale, memory, uptime, and processor evidence in the workflow transcript, and `workflow resume` suggests a fresh `observe` snapshot.
 
 `inspect-displays` is a non-mutating workflow operation for display topology. It runs `desktop displays`, captures connected display IDs, coordinate bounds, pixel dimensions, scale, rotation, and display flags in the workflow transcript, and `workflow resume` suggests a fresh `observe` snapshot.
+
+`inspect-active-window` is a non-mutating workflow operation for the current frontmost visible desktop window. It runs `desktop active-window`, captures WindowServer owner, title, bounds, layer, active-owner flag, and stable identity metadata without requiring screenshots or Accessibility permission, and `workflow resume` suggests a dry-run process inspection for the owning PID.
 
 `inspect-windows` is a non-mutating workflow operation for visible desktop window inventory. It runs `desktop windows`, forwards window filters such as `--owner-pid`, `--bundle-id`, `--title`, and `--match`, captures WindowServer owner, title, bounds, layer, and stable identity metadata in the workflow transcript, and `workflow resume` suggests active-app or owner-process inspection when the inventory points to a concrete next target.
 
@@ -426,12 +429,13 @@ Wait for a process to exist or disappear:
 ## Inspect Visible Desktop Windows
 
 ```sh
+.build/debug/Ln1 desktop active-window
 .build/debug/Ln1 desktop windows --limit 50
 .build/debug/Ln1 desktop windows --bundle-id com.apple.TextEdit --limit 20
 .build/debug/Ln1 desktop windows --title "Export" --match contains --limit 20
 ```
 
-The output is structured JSON from macOS window metadata: availability, window ID, owner app name and PID, bundle identifier when available, active-owner flag, title when macOS exposes it, layer, bounds, onscreen state, alpha, memory usage, and sharing state. This is a low-risk desktop inspection action that does not require screenshots or Accessibility access. If the current process cannot read WindowServer metadata, the command still returns a structured unavailable result instead of falling back to screenshots.
+The output is structured JSON from macOS window metadata: availability, window ID, owner app name and PID, bundle identifier when available, active-owner flag, title when macOS exposes it, layer, bounds, onscreen state, alpha, memory usage, and sharing state. `desktop active-window` returns only the frontmost visible normal-layer window plus current frontmost app metadata; `desktop windows` returns a bounded inventory. These are low-risk desktop inspection actions that do not require screenshots or Accessibility access. If the current process cannot read WindowServer metadata, the command still returns a structured unavailable result instead of falling back to screenshots.
 
 Filter desktop window inventory by transient window ID, stable identity ID, owner PID, bundle identifier, or title with `--match exact|prefix|contains`. The result includes the applied structured `filter` so later workflow steps can verify which target constraints produced the inventory.
 

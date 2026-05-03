@@ -71,6 +71,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["desktop.activeWindow"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.activeWindow"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["desktop.activeWindow"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["desktop.waitWindow"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.waitWindow"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.waitWindow"]?["mutates"] as? Bool, false)
@@ -266,6 +269,25 @@ final class Ln1SmokeTests: XCTestCase {
         ])
     }
 
+    func testWorkflowPreflightInspectActiveWindowBuildsDesktopActiveWindowCommand() throws {
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "inspect-active-window"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-active-window")
+        XCTAssertEqual(object["risk"] as? String, "low")
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "desktop", "active-window"
+        ])
+    }
+
     func testWorkflowPreflightInspectWindowsBuildsDesktopWindowsCommand() throws {
         let result = try runLn1([
             "workflow",
@@ -422,6 +444,39 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
         XCTAssertNotNil(outputJSON["available"] as? Bool)
         XCTAssertNotNil(outputJSON["displays"] as? [[String: Any]])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+    }
+
+    func testWorkflowRunExecutesNonMutatingActiveWindowInspectAndCapturesJSON() throws {
+        let workflowLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-active-window-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: workflowLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "inspect-active-window",
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "false"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
+        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "inspect-active-window")
+        XCTAssertEqual(object["mode"] as? String, "execute")
+        XCTAssertEqual(object["executed"] as? Bool, true)
+        XCTAssertEqual(object["mutates"] as? Bool, false)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "desktop", "active-window"
+        ])
+        XCTAssertEqual(execution["exitCode"] as? Int, 0)
+        XCTAssertEqual(outputJSON["platform"] as? String, "macOS")
+        XCTAssertNotNil(outputJSON["available"] as? Bool)
+        XCTAssertNotNil(outputJSON["found"] as? Bool)
         XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
     }
 
@@ -591,6 +646,64 @@ final class Ln1SmokeTests: XCTestCase {
             "Ln1", "observe",
             "--app-limit", "20",
             "--window-limit", "20"
+        ])
+    }
+
+    func testWorkflowResumeSuggestsProcessInspectionAfterActiveWindowInspect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-active-window-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "inspect-active-window-transcript",
+            "operation": "inspect-active-window",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "desktop", "active-window"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "platform": "macOS",
+                    "available": true,
+                    "found": true,
+                    "window": [
+                        "id": "window:100",
+                        "ownerPID": 456,
+                        "ownerName": "Example",
+                        "ownerBundleIdentifier": "com.example.App",
+                        "active": true,
+                        "title": "Example Window"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let result = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "inspect-active-window",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "inspect-active-window")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "workflow", "run",
+            "--operation", "inspect-process",
+            "--pid", "456",
+            "--dry-run", "true",
+            "--workflow-log", workflowLog.path
         ])
     }
 
@@ -785,6 +898,33 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNil(filter["ownerPID"])
         XCTAssertNil(filter["bundleIdentifier"])
         XCTAssertTrue(windows.isEmpty)
+    }
+
+    func testDesktopActiveWindowReturnsFrontmostWindowMetadata() throws {
+        let result = try runLn1([
+            "desktop",
+            "active-window"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertNotNil(object["available"] as? Bool)
+        XCTAssertNotNil(object["found"] as? Bool)
+        XCTAssertNotNil(object["message"] as? String)
+
+        if object["found"] as? Bool == true {
+            let window = try XCTUnwrap(object["window"] as? [String: Any])
+            let stableIdentity = try XCTUnwrap(window["stableIdentity"] as? [String: Any])
+            XCTAssertNotNil(window["id"] as? String)
+            XCTAssertNotNil(window["windowNumber"] as? Int)
+            XCTAssertNotNil(window["ownerPID"] as? Int)
+            XCTAssertNotNil(window["active"] as? Bool)
+            XCTAssertEqual(window["layer"] as? Int, 0)
+            XCTAssertEqual(stableIdentity["kind"] as? String, "desktopWindow")
+            XCTAssertNotNil(stableIdentity["id"] as? String)
+        }
     }
 
     func testDesktopDisplaysReturnsStructuredDisplayTopology() throws {
@@ -1079,6 +1219,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(blockers)
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "system.context" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listWindows" })
+        XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.activeWindow" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.waitWindow" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "desktop.listDisplays" })
         XCTAssertTrue(suggestedActions.contains { $0["name"] as? String == "apps.list" })
