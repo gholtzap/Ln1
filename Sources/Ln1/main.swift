@@ -1121,6 +1121,9 @@ struct BrowserAuditSummary: Codable {
     var keyName: String? = nil
     var keyModifiers: [String]? = nil
     var keyModifierMask: Int? = nil
+    var screenshotFormat: String? = nil
+    var screenshotByteCount: Int? = nil
+    var screenshotDigest: String? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -1135,6 +1138,23 @@ struct BrowserTextResult: Codable {
     let textDigest: String
     let truncated: Bool
     let maxCharacters: Int
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserScreenshotResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let format: String
+    let byteCount: Int
+    let digest: String
+    let imageWidth: Double?
+    let imageHeight: Double?
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -2197,7 +2217,12 @@ private struct CDPEvaluateResponse: Decodable {
 
 private struct CDPCommandResponse: Decodable {
     let id: Int?
+    let result: CDPCommandResult?
     let error: CDPError?
+}
+
+private struct CDPCommandResult: Decodable {
+    let data: String?
 }
 
 private struct BrowserKeyDefinition {
@@ -15474,6 +15499,9 @@ final class Ln1CLI {
             let id = try requiredOption("--id")
             let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 16_384)
             try writeJSON(browserText(id: id, maxCharacters: maxCharacters))
+        case "screenshot":
+            let id = try requiredOption("--id")
+            try writeJSON(browserScreenshot(id: id))
         case "dom":
             let id = try requiredOption("--id")
             let maxElements = max(0, option("--max-elements").flatMap(Int.init) ?? 200)
@@ -17472,6 +17500,11 @@ final class Ln1CLI {
                     mutates: false
                 ),
                 BrowserAction(
+                    name: "browser.captureScreenshot",
+                    risk: browserActionRisk(for: "browser.captureScreenshot"),
+                    mutates: false
+                ),
+                BrowserAction(
                     name: "browser.readDOM",
                     risk: browserActionRisk(for: "browser.readDOM"),
                     mutates: false
@@ -17684,6 +17717,138 @@ final class Ln1CLI {
                 textDigest: digest,
                 truncated: truncated,
                 maxCharacters: maxCharacters,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserScreenshot(id: String) throws -> BrowserScreenshotResult {
+        let action = "browser.captureScreenshot"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let format = try browserScreenshotFormat(option("--format") ?? "png")
+        let quality = option("--quality").flatMap(Int.init)
+        let fromSurface = option("--from-surface").map(parseBool) ?? true
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            screenshotFormat: format
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.screenshot",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                screenshotFormat: format
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let bytes = try captureBrowserScreenshot(
+                format: format,
+                quality: quality,
+                fromSurface: fromSurface,
+                at: webSocketURL
+            )
+            let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+            let image = NSImage(data: bytes)
+            let width = image.map { Double($0.size.width) }
+            let height = image.map { Double($0.size.height) }
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                screenshotFormat: format,
+                screenshotByteCount: bytes.count,
+                screenshotDigest: digest
+            )
+
+            let message = "Captured browser screenshot metadata from tab \(id)."
+            try writeAudit(ok: true, code: "captured_screenshot", message: message)
+
+            return BrowserScreenshotResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                format: format,
+                byteCount: bytes.count,
+                digest: digest,
+                imageWidth: width,
+                imageHeight: height,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -19470,6 +19635,38 @@ final class Ln1CLI {
         } catch {
             throw CommandError(description: "Chrome DevTools DOM snapshot was not valid JSON: \(error.localizedDescription)")
         }
+    }
+
+    private func captureBrowserScreenshot(
+        format: String,
+        quality: Int?,
+        fromSurface: Bool,
+        at webSocketURL: URL
+    ) throws -> Data {
+        var params: [String: Any] = [
+            "format": format,
+            "fromSurface": fromSurface
+        ]
+        if format == "jpeg", let quality {
+            params["quality"] = min(100, max(0, quality))
+        }
+        let response = try sendCDPCommand(
+            method: "Page.captureScreenshot",
+            params: params,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Page.captureScreenshot failed with \(error.code): \(error.message)")
+        }
+        guard let data = response.result?.data else {
+            throw CommandError(description: "Chrome DevTools Page.captureScreenshot response did not include screenshot data")
+        }
+        guard let bytes = Data(base64Encoded: data) else {
+            throw CommandError(description: "Chrome DevTools Page.captureScreenshot returned invalid base64 data")
+        }
+        return bytes
     }
 
     private func fillBrowserFormField(
@@ -21786,6 +21983,18 @@ final class Ln1CLI {
         }
     }
 
+    private func browserScreenshotFormat(_ rawFormat: String) throws -> String {
+        let format = rawFormat.lowercased()
+        switch format {
+        case "png", "jpeg":
+            return format
+        case "jpg":
+            return "jpeg"
+        default:
+            throw CommandError(description: "browser screenshot format must be png or jpeg")
+        }
+    }
+
     private func browserReadyState(_ rawState: String) throws -> String {
         switch rawState {
         case "loading", "interactive", "complete":
@@ -22087,6 +22296,11 @@ final class Ln1CLI {
         at webSocketURL: URL,
         timeout: TimeInterval
     ) throws -> CDPCommandResponse {
+        if webSocketURL.isFileURL {
+            let data = try Data(contentsOf: webSocketURL)
+            return try JSONDecoder().decode(CDPCommandResponse.self, from: data)
+        }
+
         guard ["ws", "wss"].contains(webSocketURL.scheme?.lowercased() ?? "") else {
             throw CommandError(description: "unsupported DevTools debugger URL scheme '\(webSocketURL.scheme ?? "")'. Use ws or wss.")
         }
@@ -23981,7 +24195,7 @@ final class Ln1CLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
-        case "browser.readText", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
+        case "browser.readText", "browser.captureScreenshot", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -24163,6 +24377,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "browser.captureScreenshot", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.selectOption", domain: "browser", risk: "medium", mutates: true),
@@ -25786,6 +26001,7 @@ final class Ln1CLI {
           Ln1 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser screenshot --id TARGET_ID --allow-risk medium [--format png|jpeg] [--quality N] [--from-surface true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
@@ -25872,6 +26088,7 @@ final class Ln1CLI {
           - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
+          - `browser screenshot` captures page image metadata through Chrome DevTools only after medium-risk policy approval and audits byte count/digest without storing image bytes.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
           - `browser select` chooses one select option through Chrome DevTools only after medium-risk policy approval, verifies the selection, and audits selector plus option length/digest without storing option text.

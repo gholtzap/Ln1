@@ -184,6 +184,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.readText"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readText"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.captureScreenshot"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.captureScreenshot"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.captureScreenshot"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.readDOM"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readDOM"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readDOM"]?["mutates"] as? Bool, false)
@@ -12748,6 +12751,11 @@ final class Ln1SmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == false
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.captureScreenshot"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.readDOM"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == false
@@ -12981,6 +12989,127 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "read_text")
+    }
+
+    func testBrowserScreenshotCapturesMetadataWithPolicyAndAuditsSummaryOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-screenshot-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("capture-screenshot.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "id": 1,
+          "result": {
+            "data": "\(pngBase64)"
+          }
+        }
+        """.write(to: cdpResponse, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Canvas Page",
+            "url": "https://example.com/canvas",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "screenshot",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "screenshot",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--format", "png",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "capture canvas state"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let digest = try XCTUnwrap(object["digest"] as? String)
+
+        XCTAssertEqual(object["action"] as? String, "browser.captureScreenshot")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["format"] as? String, "png")
+        XCTAssertGreaterThan(object["byteCount"] as? Int ?? 0, 0)
+        XCTAssertEqual(digest.count, 64)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertNil(object["data"])
+        XCTAssertNil(object["image"])
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.screenshot",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.captureScreenshot")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["id"] as? String, "page-1")
+        XCTAssertEqual(deniedBrowserTab["screenshotFormat"] as? String, "png")
+        XCTAssertNil(deniedBrowserTab["screenshotByteCount"])
+        XCTAssertNil(deniedBrowserTab["screenshotDigest"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.screenshot",
+            "--code", "captured_screenshot",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.screenshot")
+        XCTAssertEqual(entry["action"] as? String, "browser.captureScreenshot")
+        XCTAssertEqual(entry["reason"] as? String, "capture canvas state")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Canvas Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/canvas")
+        XCTAssertEqual(browserTab["screenshotFormat"] as? String, "png")
+        XCTAssertEqual(browserTab["screenshotByteCount"] as? Int, object["byteCount"] as? Int)
+        XCTAssertEqual(browserTab["screenshotDigest"] as? String, digest)
+        XCTAssertNil(browserTab["data"])
+        XCTAssertNil(browserTab["image"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "captured_screenshot")
     }
 
     func testBrowserDOMReadsStructuredPageStateWithPolicyAndAuditsSummaryOnly() throws {
