@@ -558,6 +558,15 @@ Wait for a desktop window to appear or disappear without relying on a fixed slee
 
 `desktop.setWindowFrame` is a medium-risk mutating desktop action for target-specific window arrangement. It targets one Accessibility window from `Ln1 state` using `--pid`, `--bundle-id`, or `--current` plus `--element wN`, requires finite `--x`, `--y`, `--width`, and `--height` values, can guard against stale targets with `--expect-identity` and `--min-identity-confidence`, sets `AXPosition` and `AXSize`, verifies the resulting frame, and writes app/window/policy/identity/verification metadata to the audit log.
 
+## Global Pointer Input
+
+```sh
+.build/debug/Ln1 input pointer
+.build/debug/Ln1 input move --x 200 --y 160 --allow-risk medium --dry-run true
+```
+
+`input.pointer` is a low-risk read of the current global pointer coordinates. `input.movePointer` is a medium-risk mutating input action outside Accessibility and browser-specific control paths. It validates finite target coordinates, supports dry-run planning, writes an audit record, and verifies the resulting pointer position within a configurable tolerance when executed.
+
 ## Emit Structured State
 
 ```sh

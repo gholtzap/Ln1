@@ -113,6 +113,12 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["desktop.setWindowFrame"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.setWindowFrame"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["desktop.setWindowFrame"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["input.pointer"]?["domain"] as? String, "input")
+        XCTAssertEqual(actionByName["input.pointer"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["input.pointer"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["input.movePointer"]?["domain"] as? String, "input")
+        XCTAssertEqual(actionByName["input.movePointer"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["input.movePointer"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.watch"]?["risk"] as? String, "low")
@@ -1381,6 +1387,78 @@ final class Ln1SmokeTests: XCTestCase {
                 XCTAssertLessThanOrEqual(try XCTUnwrap(first["sampleByteCount"] as? Int), 4096)
             }
         }
+    }
+
+    func testInputPointerReturnsGlobalPointerMetadata() throws {
+        let result = try runLn1([
+            "input",
+            "pointer"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["action"] as? String, "input.pointer")
+        XCTAssertNotNil(object["available"] as? Bool)
+        XCTAssertNotNil(object["message"] as? String)
+
+        if object["available"] as? Bool == true {
+            let position = try XCTUnwrap(object["position"] as? [String: Any])
+            XCTAssertNotNil(position["x"] as? Double)
+            XCTAssertNotNil(position["y"] as? Double)
+        }
+    }
+
+    func testInputMoveDryRunValidatesAndAuditsWithoutMovingPointer() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-input-move-dry-run-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "input",
+            "move",
+            "--x", "12",
+            "--y", "34",
+            "--allow-risk", "medium",
+            "--dry-run", "true",
+            "--reason", "plan pointer move",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let target = try XCTUnwrap(object["to"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "input.movePointer")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(target["x"] as? Double, 12)
+        XCTAssertEqual(target["y"] as? Double, 34)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "dry_run")
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "input.move")
+        XCTAssertEqual(entry["action"] as? String, "input.movePointer")
+        XCTAssertEqual(entry["risk"] as? String, "medium")
+        XCTAssertEqual(entry["reason"] as? String, "plan pointer move")
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "dry_run")
     }
 
     func testDesktopWaitWindowReturnsStructuredExistenceVerification() throws {

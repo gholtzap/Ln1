@@ -2326,6 +2326,8 @@ final class Ln1CLI {
             try processes()
         case "desktop":
             try desktop()
+        case "input":
+            try input()
         case "state":
             try state()
         case "perform":
@@ -2417,6 +2419,125 @@ final class Ln1CLI {
             targetDisplayID: displayID,
             maxSampleBytes: maxSampleBytes
         )
+    }
+
+    private func input() throws {
+        let mode = arguments.dropFirst().first ?? "pointer"
+
+        switch mode {
+        case "pointer", "position":
+            try writeJSON(pointerInputState())
+        case "move":
+            try writeJSON(inputMovePointer())
+        default:
+            throw CommandError(description: "unknown input mode '\(mode)'")
+        }
+    }
+
+    private func inputMovePointer() throws -> InputMoveResult {
+        let action = "input.movePointer"
+        let risk = inputActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let target = InputPoint(
+            x: try requiredDoubleOption("--x"),
+            y: try requiredDoubleOption("--y")
+        )
+        let from = currentPointerInputPoint()
+        let dryRun = option("--dry-run").map(parseBool) ?? false
+        let tolerance = max(0, option("--tolerance").flatMap(Double.init) ?? 2.0)
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "input.move",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            if dryRun {
+                verification = FileOperationVerification(
+                    ok: true,
+                    code: "dry_run",
+                    message: "pointer move was validated without moving the cursor"
+                )
+                let message = "Validated pointer move to (\(target.x), \(target.y)) without moving the cursor."
+                try writeAudit(ok: true, code: "dry_run", message: message)
+                return InputMoveResult(
+                    ok: true,
+                    action: action,
+                    risk: risk,
+                    dryRun: true,
+                    from: from,
+                    to: target,
+                    verification: verification!,
+                    auditID: auditID,
+                    auditLogPath: auditURL.path,
+                    message: message
+                )
+            }
+
+            let result = warpPointerInput(to: target)
+            guard result == .success else {
+                let message = "CGWarpMouseCursorPosition failed with \(result)"
+                verification = FileOperationVerification(ok: false, code: "move_failed", message: message)
+                try writeAudit(ok: false, code: "move_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            verification = pointerInputVerification(target: target, tolerance: tolerance)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "pointer move verification failed"
+                try writeAudit(ok: false, code: verification?.code ?? "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Moved pointer to (\(target.x), \(target.y))."
+            try writeAudit(ok: true, code: "pointer_moved", message: message)
+            return InputMoveResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                dryRun: false,
+                from: from,
+                to: target,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
     }
 
     private func trust() throws {
@@ -23445,6 +23566,17 @@ final class Ln1CLI {
         }
     }
 
+    private func inputActionRisk(for action: String) -> String {
+        switch action {
+        case "input.pointer":
+            return "low"
+        case "input.movePointer":
+            return "medium"
+        default:
+            return "unknown"
+        }
+    }
+
     private func systemActionRisk(for action: String) -> String {
         switch action {
         case "system.context":
@@ -23564,6 +23696,8 @@ final class Ln1CLI {
             PolicyActionRecord(name: "desktop.restoreWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.restoreWindow"), mutates: true),
             PolicyActionRecord(name: "desktop.raiseWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.raiseWindow"), mutates: true),
             PolicyActionRecord(name: "desktop.setWindowFrame", domain: "desktop", risk: desktopActionRisk(for: "desktop.setWindowFrame"), mutates: true),
+            PolicyActionRecord(name: "input.pointer", domain: "input", risk: inputActionRisk(for: "input.pointer"), mutates: false),
+            PolicyActionRecord(name: "input.movePointer", domain: "input", risk: inputActionRisk(for: "input.movePointer"), mutates: true),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
@@ -25167,6 +25301,8 @@ final class Ln1CLI {
           Ln1 desktop wait-active-window [--id ID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--title TEXT] [--match exact|prefix|contains] [--changed-from WINDOW_ID_OR_STABLE_ID] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop windows [--limit N] [--id ID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--title TEXT] [--match exact|prefix|contains] [--include-desktop] [--all-layers]
           Ln1 desktop wait-window (--id ID|--owner-pid PID|--bundle-id BUNDLE_ID|--title TEXT) [--match exact|prefix|contains] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--limit N] [--include-desktop] [--all-layers]
+          Ln1 input pointer
+          Ln1 input move --x N --y N --allow-risk medium [--dry-run true|false] [--tolerance N] [--reason TEXT] [--audit-log PATH]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 state menu [--pid PID] [--depth N] [--max-children N]
           Ln1 state find [--pid PID] [--role ROLE] [--subrole SUBROLE] [--title TEXT] [--value TEXT] [--help-text TEXT] [--action ACTION] [--enabled true|false] [--match exact|contains] [--include-menu] [--depth N] [--max-children N] [--result-depth N] [--result-max-children N] [--limit N]
@@ -25256,6 +25392,7 @@ final class Ln1CLI {
           - `desktop wait-active-window` waits for the frontmost visible window to match target metadata or change identity.
           - `desktop windows` lists or filters visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
+          - `input pointer` and `input move` provide a global pointer layer outside AX and browser targets, with policy/audit/verification for movement.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state menu` inspects the target app menu bar as a bounded Accessibility tree.
           - `state find` searches Accessibility elements by semantic attributes and returns bounded candidate IDs.
@@ -27761,6 +27898,14 @@ final class Ln1CLI {
             throw CommandError(description: "missing required option \(name)")
         }
         return value
+    }
+
+    private func requiredDoubleOption(_ name: String) throws -> Double {
+        let value = try requiredOption(name)
+        guard let number = Double(value), number.isFinite else {
+            throw CommandError(description: "option \(name) must be a finite number")
+        }
+        return number
     }
 
     private func parseBool(_ value: String) -> Bool {
