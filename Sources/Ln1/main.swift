@@ -2312,6 +2312,8 @@ final class Ln1CLI {
             try policy()
         case "system":
             try system()
+        case "benchmarks":
+            try benchmarks()
         case "observe":
             try observe()
         case "workflow":
@@ -2358,6 +2360,18 @@ final class Ln1CLI {
             printHelp()
         default:
             throw CommandError(description: "unknown system mode '\(mode)'")
+        }
+    }
+
+    private func benchmarks() throws {
+        let mode = arguments.dropFirst().first ?? "matrix"
+        switch mode {
+        case "matrix":
+            try writeJSON(realAppBenchmarkMatrix())
+        case "--help", "-h", "help":
+            printHelp()
+        default:
+            throw CommandError(description: "unknown benchmarks mode '\(mode)'")
         }
     }
 
@@ -23421,6 +23435,15 @@ final class Ln1CLI {
         }
     }
 
+    private func benchmarkActionRisk(for action: String) -> String {
+        switch action {
+        case "benchmarks.matrix":
+            return "low"
+        default:
+            return "unknown"
+        }
+    }
+
     private func workspaceActionRisk(for action: String) -> String {
         switch action {
         case "workspace.open":
@@ -23510,6 +23533,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "processes.inspect", domain: "processes", risk: processActionRisk(for: "processes.inspect"), mutates: false),
             PolicyActionRecord(name: "processes.wait", domain: "processes", risk: processActionRisk(for: "processes.wait"), mutates: false),
             PolicyActionRecord(name: "system.context", domain: "system", risk: systemActionRisk(for: "system.context"), mutates: false),
+            PolicyActionRecord(name: "benchmarks.matrix", domain: "benchmarks", risk: benchmarkActionRisk(for: "benchmarks.matrix"), mutates: false),
             PolicyActionRecord(name: "workspace.open", domain: "workspace", risk: workspaceActionRisk(for: "workspace.open"), mutates: true),
             PolicyActionRecord(name: "desktop.listDisplays", domain: "desktop", risk: desktopActionRisk(for: "desktop.listDisplays"), mutates: false),
             PolicyActionRecord(name: "desktop.activeWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.activeWindow"), mutates: false),
@@ -25089,6 +25113,7 @@ final class Ln1CLI {
           Ln1 doctor [--timeout-ms N] [--endpoint URL_OR_PATH] [--audit-log PATH] [--pasteboard NAME]
           Ln1 policy
           Ln1 system [context|info]
+          Ln1 benchmarks [matrix]
           Ln1 observe [--app-limit N] [--window-limit N] [--all] [--include-desktop] [--all-layers]
           Ln1 workflow preflight --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|minimize-active-window|restore-window|raise-window|set-window-frame|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--x N] [--y N] [--width N] [--height N] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
           Ln1 workflow next --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|start-task|record-task|finish-task|show-task|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|minimize-active-window|restore-window|raise-window|set-window-frame|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--task-id ID] [--kind observation|decision|action|verification|note] [--status completed|blocked|cancelled] [--summary TEXT] [--sensitivity public|private|sensitive] [--related-audit-id ID] [--memory-log PATH] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--x N] [--y N] [--width N] [--height N] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete]
@@ -25187,6 +25212,7 @@ final class Ln1CLI {
           - Run `Ln1 trust` before Accessibility-backed `state`, `perform`, or `set-value` commands.
           - `policy` describes known action risk levels and mutation behavior.
           - `system context` reports bounded host, OS, shell, working directory, and runtime metadata.
+          - `benchmarks matrix` returns the planned real-app coverage matrix for repeatable verification.
           - `apps active` returns frontmost app metadata without requiring Accessibility permission.
           - `apps list` returns bounded running app metadata in a transcript-friendly object shape.
           - `apps installed` lists installed app bundle identifiers and paths for launch planning.

@@ -48,6 +48,14 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 
 `system.context` returns bounded host and runtime metadata: OS version, architecture, processor and memory totals, uptime, host and user names, home and current working directories, shell path, time zone, locale, and the current Ln1 process identity. It does not dump arbitrary environment variables.
 
+## Inspect Real-App Benchmarks
+
+```sh
+.build/debug/Ln1 benchmarks matrix
+```
+
+`benchmarks.matrix` returns a read-only real-app coverage matrix for repeatable verification. It includes Finder, browsers, Electron apps, Microsoft Office, Xcode, Terminal, System Settings, permission dialogs, file pickers, sheets, and modals, along with the required capabilities and success criteria each scenario should prove.
+
 ## Observe The Current Computer State
 
 ```sh

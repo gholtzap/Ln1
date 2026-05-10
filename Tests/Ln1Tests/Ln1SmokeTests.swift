@@ -77,6 +77,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["system.context"]?["domain"] as? String, "system")
         XCTAssertEqual(actionByName["system.context"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["system.context"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["benchmarks.matrix"]?["domain"] as? String, "benchmarks")
+        XCTAssertEqual(actionByName["benchmarks.matrix"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["benchmarks.matrix"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["workspace.open"]?["domain"] as? String, "workspace")
         XCTAssertEqual(actionByName["workspace.open"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["workspace.open"]?["mutates"] as? Bool, true)
@@ -259,6 +262,39 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(object["timeZoneIdentifier"] as? String)
         XCTAssertNotNil(object["localeIdentifier"] as? String)
         XCTAssertNil(object["environment"])
+    }
+
+    func testBenchmarksMatrixReturnsRealAppCoverageTargets() throws {
+        let result = try runLn1(["benchmarks", "matrix"])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let scenarios = try XCTUnwrap(object["scenarios"] as? [[String: Any]])
+        let apps = Set(scenarios.compactMap { $0["app"] as? String })
+        let allSurfaces = scenarios
+            .compactMap { $0["surfaces"] as? [String] }
+            .flatMap { $0 }
+        let allCapabilities = scenarios
+            .compactMap { $0["requiredCapabilities"] as? [String] }
+            .flatMap { $0 }
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["status"] as? String, "planned")
+        XCTAssertEqual(object["scenarioCount"] as? Int, scenarios.count)
+        XCTAssertTrue(apps.contains("Finder"))
+        XCTAssertTrue(apps.contains("Browser"))
+        XCTAssertTrue(apps.contains("Electron apps"))
+        XCTAssertTrue(apps.contains("Microsoft Office"))
+        XCTAssertTrue(apps.contains("Xcode"))
+        XCTAssertTrue(apps.contains("Terminal"))
+        XCTAssertTrue(apps.contains("System Settings"))
+        XCTAssertTrue(apps.contains("Cross-app modal and sheet flows"))
+        XCTAssertTrue(allSurfaces.contains("permission dialogs"))
+        XCTAssertTrue(allSurfaces.contains("file pickers"))
+        XCTAssertTrue(allSurfaces.contains("sheets"))
+        XCTAssertTrue(allSurfaces.contains("modals"))
+        XCTAssertTrue(allCapabilities.contains("visual fallback"))
+        XCTAssertTrue(allCapabilities.contains("keyboard input"))
     }
 
     func testWorkflowPreflightInspectSystemBuildsSystemContextCommand() throws {
