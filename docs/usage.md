@@ -504,9 +504,12 @@ Wait for a process to exist or disappear:
 
 ```sh
 .build/debug/Ln1 desktop displays
+.build/debug/Ln1 desktop screenshot --allow-risk medium --max-sample-bytes 1048576
 ```
 
 `desktop.listDisplays` returns connected display metadata from CoreGraphics and AppKit: display ID, user-facing name when available, main/active/online/built-in flags, mirror-set state, coordinate bounds, pixel dimensions, backing scale, rotation, and color space name. This is a low-risk desktop inspection action that does not require screenshots or Accessibility access.
+
+`desktop.screenshot` is a medium-risk visual fallback read because it can inspect visible screen pixels. It returns display image availability, dimensions, byte counts, and a SHA-256 digest over a bounded byte sample instead of dumping raw pixels. If macOS blocks capture, the command returns structured display metadata with `captured: false` so the caller can report that Screen Recording permission is needed.
 
 ## Inspect Visible Desktop Windows
 

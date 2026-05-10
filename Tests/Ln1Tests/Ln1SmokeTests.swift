@@ -89,6 +89,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["desktop.listWindows"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.listWindows"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["desktop.screenshot"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.screenshot"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["desktop.screenshot"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["desktop.activeWindow"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.activeWindow"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["desktop.activeWindow"]?["mutates"] as? Bool, false)
@@ -1338,6 +1341,45 @@ final class Ln1SmokeTests: XCTestCase {
             XCTAssertNotNil(bounds["y"] as? Double)
             XCTAssertNotNil(bounds["width"] as? Double)
             XCTAssertNotNil(bounds["height"] as? Double)
+        }
+    }
+
+    func testDesktopScreenshotReturnsBoundedVisualSnapshotMetadata() throws {
+        let result = try runLn1([
+            "desktop",
+            "screenshot",
+            "--allow-risk", "medium",
+            "--max-sample-bytes", "4096"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let displays = try XCTUnwrap(object["displays"] as? [[String: Any]])
+
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["action"] as? String, "desktop.screenshot")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["maxSampleBytes"] as? Int, 4096)
+        XCTAssertEqual(object["displayCount"] as? Int, displays.count)
+        let message = try XCTUnwrap(object["message"] as? String)
+        if displays.isEmpty {
+            XCTAssertTrue(message.contains("No online displays"), message)
+        }
+
+        if let first = displays.first {
+            XCTAssertNotNil(first["id"] as? String)
+            XCTAssertNotNil(first["displayID"] as? Int)
+            XCTAssertNotNil(first["pixelWidth"] as? Int)
+            XCTAssertNotNil(first["pixelHeight"] as? Int)
+            XCTAssertNotNil(first["captured"] as? Bool)
+            XCTAssertNotNil(first["sampleByteCount"] as? Int)
+
+            if first["captured"] as? Bool == true {
+                XCTAssertNotNil(first["imageWidth"] as? Int)
+                XCTAssertNotNil(first["imageHeight"] as? Int)
+                XCTAssertNotNil(first["sampleDigest"] as? String)
+                XCTAssertLessThanOrEqual(try XCTUnwrap(first["sampleByteCount"] as? Int), 4096)
+            }
         }
     }
 

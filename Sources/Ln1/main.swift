@@ -2383,6 +2383,8 @@ final class Ln1CLI {
             try writeJSON(desktopDisplays())
         case "active-window":
             try writeJSON(desktopActiveWindow())
+        case "screenshot":
+            try writeJSON(desktopScreenshot())
         case "minimize-active-window":
             try writeJSON(desktopMinimizeActiveWindow())
         case "restore-window":
@@ -2400,6 +2402,21 @@ final class Ln1CLI {
         default:
             throw CommandError(description: "unknown desktop mode '\(mode)'")
         }
+    }
+
+    private func desktopScreenshot() throws -> VisualSnapshotState {
+        let action = "desktop.screenshot"
+        let risk = desktopActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        guard policy.allowed else {
+            throw CommandError(description: policy.message)
+        }
+        let displayID = option("--display-id").flatMap(UInt32.init)
+        let maxSampleBytes = max(0, option("--max-sample-bytes").flatMap(Int.init) ?? 1_048_576)
+        return desktopVisualSnapshot(
+            targetDisplayID: displayID,
+            maxSampleBytes: maxSampleBytes
+        )
     }
 
     private func trust() throws {
@@ -23419,6 +23436,8 @@ final class Ln1CLI {
         switch action {
         case "desktop.activeWindow", "desktop.listDisplays", "desktop.listWindows", "desktop.waitActiveWindow", "desktop.waitWindow":
             return "low"
+        case "desktop.screenshot":
+            return "medium"
         case "desktop.minimizeActiveWindow", "desktop.restoreWindow", "desktop.raiseWindow", "desktop.setWindowFrame":
             return "medium"
         default:
@@ -23537,6 +23556,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "workspace.open", domain: "workspace", risk: workspaceActionRisk(for: "workspace.open"), mutates: true),
             PolicyActionRecord(name: "desktop.listDisplays", domain: "desktop", risk: desktopActionRisk(for: "desktop.listDisplays"), mutates: false),
             PolicyActionRecord(name: "desktop.activeWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.activeWindow"), mutates: false),
+            PolicyActionRecord(name: "desktop.screenshot", domain: "desktop", risk: desktopActionRisk(for: "desktop.screenshot"), mutates: false),
             PolicyActionRecord(name: "desktop.listWindows", domain: "desktop", risk: desktopActionRisk(for: "desktop.listWindows"), mutates: false),
             PolicyActionRecord(name: "desktop.waitActiveWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.waitActiveWindow"), mutates: false),
             PolicyActionRecord(name: "desktop.waitWindow", domain: "desktop", risk: desktopActionRisk(for: "desktop.waitWindow"), mutates: false),
@@ -25139,6 +25159,7 @@ final class Ln1CLI {
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop displays
           Ln1 desktop active-window
+          Ln1 desktop screenshot --allow-risk medium [--display-id ID] [--max-sample-bytes N]
           Ln1 desktop minimize-active-window --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 desktop restore-window (--pid PID|--bundle-id BUNDLE_ID|--current) --element WINDOW_ID --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 desktop raise-window (--pid PID|--bundle-id BUNDLE_ID|--current) --element WINDOW_ID --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
@@ -25227,6 +25248,7 @@ final class Ln1CLI {
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.
           - `desktop active-window` returns the frontmost visible window with stable identity metadata without screenshots.
+          - `desktop screenshot` captures display image metadata and a bounded SHA-256 byte-sample digest after medium-risk approval.
           - `desktop minimize-active-window` minimizes the frontmost Accessibility window after medium-risk approval and verifies AXMinimized.
           - `desktop restore-window` restores one target app Accessibility window after medium-risk approval and verifies AXMinimized is false.
           - `desktop raise-window` raises one target app Accessibility window after medium-risk approval and verifies it is focused in the frontmost app.
