@@ -565,9 +565,11 @@ Wait for a desktop window to appear or disappear without relying on a fixed slee
 .build/debug/Ln1 input move --x 200 --y 160 --allow-risk medium --dry-run true
 .build/debug/Ln1 input drag --from-x 200 --from-y 160 --to-x 420 --to-y 160 --allow-risk medium --dry-run true
 .build/debug/Ln1 input scroll --dy -600 --allow-risk medium --dry-run true
+.build/debug/Ln1 input key --key k --modifiers command,shift --allow-risk medium --dry-run true
+.build/debug/Ln1 input type --text "hello" --allow-risk medium --dry-run true
 ```
 
-`input.pointer` is a low-risk read of the current global pointer coordinates. `input.movePointer`, `input.dragPointer`, and `input.scrollWheel` are medium-risk mutating input actions outside Accessibility and browser-specific control paths. They validate finite coordinates or bounded scroll deltas, support dry-run planning, write audit records, and verify pointer position when the action has a target coordinate.
+`input.pointer` is a low-risk read of the current global pointer coordinates. `input.movePointer`, `input.dragPointer`, `input.scrollWheel`, `input.pressKey`, and `input.typeText` are medium-risk mutating input actions outside Accessibility and browser-specific control paths. They validate finite coordinates, bounded scroll deltas, supported key names, or non-empty text; support dry-run planning; write audit records; and avoid storing typed text contents in command output or audit logs.
 
 ## Emit Structured State
 

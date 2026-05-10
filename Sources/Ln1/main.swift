@@ -2433,6 +2433,10 @@ final class Ln1CLI {
             try writeJSON(inputDragPointer())
         case "scroll":
             try writeJSON(inputScrollWheel())
+        case "key", "hotkey":
+            try writeJSON(inputPressKey())
+        case "type", "text":
+            try writeJSON(inputTypeText())
         default:
             throw CommandError(description: "unknown input mode '\(mode)'")
         }
@@ -2751,6 +2755,207 @@ final class Ln1CLI {
                 deltaX: deltaX,
                 deltaY: deltaY,
                 position: position,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func inputPressKey() throws -> InputKeyResult {
+        let action = "input.pressKey"
+        let risk = inputActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let key = try requiredOption("--key")
+        guard let keyCode = inputKeyCode(for: key) else {
+            throw CommandError(description: "unsupported input key '\(key)'")
+        }
+        let modifierSet = try browserModifierSet(option("--modifiers"))
+        let dryRun = option("--dry-run").map(parseBool) ?? false
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "input.key",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            if dryRun {
+                verification = FileOperationVerification(
+                    ok: true,
+                    code: "dry_run",
+                    message: "keyboard input was validated without posting input events"
+                )
+                let message = "Validated key input '\(key)' without posting input events."
+                try writeAudit(ok: true, code: "dry_run", message: message)
+                return InputKeyResult(
+                    ok: true,
+                    action: action,
+                    risk: risk,
+                    dryRun: true,
+                    key: key,
+                    keyCode: keyCode,
+                    modifiers: modifierSet,
+                    verification: verification!,
+                    auditID: auditID,
+                    auditLogPath: auditURL.path,
+                    message: message
+                )
+            }
+
+            guard postKeyInput(keyCode: keyCode, modifiers: modifierSet) else {
+                let message = "failed to create keyboard input event"
+                verification = FileOperationVerification(ok: false, code: "key_failed", message: message)
+                try writeAudit(ok: false, code: "key_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            verification = FileOperationVerification(ok: true, code: "key_posted", message: "keyboard input event was posted")
+            let message = "Posted key input '\(key)'."
+            try writeAudit(ok: true, code: "key_posted", message: message)
+            return InputKeyResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                dryRun: false,
+                key: key,
+                keyCode: keyCode,
+                modifiers: modifierSet,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func inputTypeText() throws -> InputTextResult {
+        let action = "input.typeText"
+        let risk = inputActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let text = try requiredOption("--text")
+        let dryRun = option("--dry-run").map(parseBool) ?? false
+        let textLength = text.count
+        let textDigest = sha256Digest(text)
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "input.type",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+            guard !text.isEmpty else {
+                let message = "input type requires non-empty --text"
+                try writeAudit(ok: false, code: "empty_text", message: message)
+                throw CommandError(description: message)
+            }
+
+            if dryRun {
+                verification = FileOperationVerification(
+                    ok: true,
+                    code: "dry_run",
+                    message: "text input was validated without posting input events"
+                )
+                let message = "Validated text input of \(textLength) characters without posting input events."
+                try writeAudit(ok: true, code: "dry_run", message: message)
+                return InputTextResult(
+                    ok: true,
+                    action: action,
+                    risk: risk,
+                    dryRun: true,
+                    textLength: textLength,
+                    textDigest: textDigest,
+                    verification: verification!,
+                    auditID: auditID,
+                    auditLogPath: auditURL.path,
+                    message: message
+                )
+            }
+
+            guard postTextInput(text) else {
+                let message = "failed to create text input events"
+                verification = FileOperationVerification(ok: false, code: "type_failed", message: message)
+                try writeAudit(ok: false, code: "type_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            verification = FileOperationVerification(ok: true, code: "text_posted", message: "text input events were posted")
+            let message = "Posted text input of \(textLength) characters."
+            try writeAudit(ok: true, code: "text_posted", message: message)
+            return InputTextResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                dryRun: false,
+                textLength: textLength,
+                textDigest: textDigest,
                 verification: verification!,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
@@ -23800,7 +24005,7 @@ final class Ln1CLI {
         switch action {
         case "input.pointer":
             return "low"
-        case "input.movePointer", "input.dragPointer", "input.scrollWheel":
+        case "input.movePointer", "input.dragPointer", "input.scrollWheel", "input.pressKey", "input.typeText":
             return "medium"
         default:
             return "unknown"
@@ -23930,6 +24135,8 @@ final class Ln1CLI {
             PolicyActionRecord(name: "input.movePointer", domain: "input", risk: inputActionRisk(for: "input.movePointer"), mutates: true),
             PolicyActionRecord(name: "input.dragPointer", domain: "input", risk: inputActionRisk(for: "input.dragPointer"), mutates: true),
             PolicyActionRecord(name: "input.scrollWheel", domain: "input", risk: inputActionRisk(for: "input.scrollWheel"), mutates: true),
+            PolicyActionRecord(name: "input.pressKey", domain: "input", risk: inputActionRisk(for: "input.pressKey"), mutates: true),
+            PolicyActionRecord(name: "input.typeText", domain: "input", risk: inputActionRisk(for: "input.typeText"), mutates: true),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.search", domain: "filesystem", risk: "low", mutates: false),
@@ -25537,6 +25744,8 @@ final class Ln1CLI {
           Ln1 input move --x N --y N --allow-risk medium [--dry-run true|false] [--tolerance N] [--reason TEXT] [--audit-log PATH]
           Ln1 input drag --from-x N --from-y N --to-x N --to-y N --allow-risk medium [--dry-run true|false] [--steps N] [--tolerance N] [--reason TEXT] [--audit-log PATH]
           Ln1 input scroll (--dx N|--dy N) --allow-risk medium [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
+          Ln1 input key --key KEY --allow-risk medium [--modifiers shift,control,alt,meta] [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
+          Ln1 input type --text TEXT --allow-risk medium [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 state menu [--pid PID] [--depth N] [--max-children N]
           Ln1 state find [--pid PID] [--role ROLE] [--subrole SUBROLE] [--title TEXT] [--value TEXT] [--help-text TEXT] [--action ACTION] [--enabled true|false] [--match exact|contains] [--include-menu] [--depth N] [--max-children N] [--result-depth N] [--result-max-children N] [--limit N]
@@ -25626,7 +25835,7 @@ final class Ln1CLI {
           - `desktop wait-active-window` waits for the frontmost visible window to match target metadata or change identity.
           - `desktop windows` lists or filters visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
-          - `input pointer`, `input move`, `input drag`, and `input scroll` provide a global pointer layer outside AX and browser targets, with policy/audit/verification for mutating input.
+          - `input pointer`, `input move`, `input drag`, `input scroll`, `input key`, and `input type` provide a global input layer outside AX and browser targets, with policy/audit/verification for mutating input.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state menu` inspects the target app menu bar as a bounded Accessibility tree.
           - `state find` searches Accessibility elements by semantic attributes and returns bounded candidate IDs.
