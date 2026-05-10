@@ -28,6 +28,34 @@ struct InputMoveResult: Codable {
     let message: String
 }
 
+struct InputDragResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let dryRun: Bool
+    let from: InputPoint
+    let to: InputPoint
+    let steps: Int
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct InputScrollResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let dryRun: Bool
+    let deltaX: Int32
+    let deltaY: Int32
+    let position: InputPoint?
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 func currentPointerInputPoint() -> InputPoint? {
     guard let point = CGEvent(source: nil)?.location else {
         return nil
@@ -51,6 +79,62 @@ func pointerInputState(generatedAt: String = ISO8601DateFormatter().string(from:
 
 func warpPointerInput(to point: InputPoint) -> CGError {
     CGWarpMouseCursorPosition(CGPoint(x: point.x, y: point.y))
+}
+
+func dragPointerInput(from start: InputPoint, to end: InputPoint, steps: Int) -> Bool {
+    let stepCount = max(1, steps)
+    guard let down = CGEvent(
+        mouseEventSource: nil,
+        mouseType: .leftMouseDown,
+        mouseCursorPosition: CGPoint(x: start.x, y: start.y),
+        mouseButton: .left
+    ) else {
+        return false
+    }
+    down.post(tap: .cghidEventTap)
+
+    for index in 1...stepCount {
+        let progress = Double(index) / Double(stepCount)
+        let point = CGPoint(
+            x: start.x + ((end.x - start.x) * progress),
+            y: start.y + ((end.y - start.y) * progress)
+        )
+        guard let drag = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseDragged,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        ) else {
+            return false
+        }
+        drag.post(tap: .cghidEventTap)
+    }
+
+    guard let up = CGEvent(
+        mouseEventSource: nil,
+        mouseType: .leftMouseUp,
+        mouseCursorPosition: CGPoint(x: end.x, y: end.y),
+        mouseButton: .left
+    ) else {
+        return false
+    }
+    up.post(tap: .cghidEventTap)
+    return true
+}
+
+func scrollPointerInput(deltaX: Int32, deltaY: Int32) -> Bool {
+    guard let event = CGEvent(
+        scrollWheelEvent2Source: nil,
+        units: .pixel,
+        wheelCount: 2,
+        wheel1: deltaY,
+        wheel2: deltaX,
+        wheel3: 0
+    ) else {
+        return false
+    }
+    event.post(tap: .cghidEventTap)
+    return true
 }
 
 func pointerInputVerification(target: InputPoint, tolerance: Double) -> FileOperationVerification {

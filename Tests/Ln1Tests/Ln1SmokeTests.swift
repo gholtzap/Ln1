@@ -119,6 +119,12 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["input.movePointer"]?["domain"] as? String, "input")
         XCTAssertEqual(actionByName["input.movePointer"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["input.movePointer"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["input.dragPointer"]?["domain"] as? String, "input")
+        XCTAssertEqual(actionByName["input.dragPointer"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["input.dragPointer"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["input.scrollWheel"]?["domain"] as? String, "input")
+        XCTAssertEqual(actionByName["input.scrollWheel"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["input.scrollWheel"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["filesystem.search"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["filesystem.search"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["filesystem.watch"]?["risk"] as? String, "low")
@@ -1457,6 +1463,106 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(entry["risk"] as? String, "medium")
         XCTAssertEqual(entry["reason"] as? String, "plan pointer move")
         XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "dry_run")
+    }
+
+    func testInputDragDryRunValidatesAndAuditsWithoutDraggingPointer() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-input-drag-dry-run-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "input",
+            "drag",
+            "--from-x", "10",
+            "--from-y", "20",
+            "--to-x", "30",
+            "--to-y", "40",
+            "--steps", "4",
+            "--allow-risk", "medium",
+            "--dry-run", "true",
+            "--reason", "plan pointer drag",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let start = try XCTUnwrap(object["from"] as? [String: Any])
+        let target = try XCTUnwrap(object["to"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "input.dragPointer")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["steps"] as? Int, 4)
+        XCTAssertEqual(start["x"] as? Double, 10)
+        XCTAssertEqual(start["y"] as? Double, 20)
+        XCTAssertEqual(target["x"] as? Double, 30)
+        XCTAssertEqual(target["y"] as? Double, 40)
+        XCTAssertEqual(verification["code"] as? String, "dry_run")
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "input.drag")
+        XCTAssertEqual(entry["action"] as? String, "input.dragPointer")
+        XCTAssertEqual(entry["reason"] as? String, "plan pointer drag")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "dry_run")
+    }
+
+    func testInputScrollDryRunValidatesAndAuditsWithoutScrolling() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-input-scroll-dry-run-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "input",
+            "scroll",
+            "--dx", "3",
+            "--dy", "-12",
+            "--allow-risk", "medium",
+            "--dry-run", "true",
+            "--reason", "plan scroll",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "input.scrollWheel")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["deltaX"] as? Int, 3)
+        XCTAssertEqual(object["deltaY"] as? Int, -12)
+        XCTAssertEqual(verification["code"] as? String, "dry_run")
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "input.scroll")
+        XCTAssertEqual(entry["action"] as? String, "input.scrollWheel")
+        XCTAssertEqual(entry["reason"] as? String, "plan scroll")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "dry_run")
     }
