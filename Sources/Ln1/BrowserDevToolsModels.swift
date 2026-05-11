@@ -1,5 +1,47 @@
 import Foundation
 
+struct BrowserAction: Codable {
+    let name: String
+    let risk: String
+    let mutates: Bool
+}
+
+struct BrowserTab: Codable {
+    let id: String
+    let type: String
+    let title: String?
+    let url: String?
+    let description: String?
+    let webSocketDebuggerURL: String?
+    let devtoolsFrontendURL: String?
+    let faviconURL: String?
+    let attached: Bool?
+    let actions: [BrowserAction]
+}
+
+struct BrowserTabsState: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let includeNonPageTargets: Bool
+    let count: Int
+    let tabs: [BrowserTab]
+}
+
+struct BrowserTabState: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+}
+
+struct BrowserKeyDefinition {
+    let key: String
+    let code: String
+    let windowsVirtualKeyCode: Int
+    let text: String?
+}
+
 struct DevToolsTarget: Decodable {
     let id: String
     let type: String?

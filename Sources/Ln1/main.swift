@@ -1089,41 +1089,6 @@ struct ClipboardWaitResult: Codable {
     let message: String
 }
 
-struct BrowserAction: Codable {
-    let name: String
-    let risk: String
-    let mutates: Bool
-}
-
-struct BrowserTab: Codable {
-    let id: String
-    let type: String
-    let title: String?
-    let url: String?
-    let description: String?
-    let webSocketDebuggerURL: String?
-    let devtoolsFrontendURL: String?
-    let faviconURL: String?
-    let attached: Bool?
-    let actions: [BrowserAction]
-}
-
-struct BrowserTabsState: Codable {
-    let generatedAt: String
-    let platform: String
-    let endpoint: String
-    let includeNonPageTargets: Bool
-    let count: Int
-    let tabs: [BrowserTab]
-}
-
-struct BrowserTabState: Codable {
-    let generatedAt: String
-    let platform: String
-    let endpoint: String
-    let tab: BrowserTab
-}
-
 struct BrowserTextWaitVerification: Codable {
     let ok: Bool
     let code: String
@@ -2194,13 +2159,6 @@ struct FileRollbackResult: Codable {
     let message: String
     let auditID: String
     let auditLogPath: String
-}
-
-private struct BrowserKeyDefinition {
-    let key: String
-    let code: String
-    let windowsVirtualKeyCode: Int
-    let text: String?
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
