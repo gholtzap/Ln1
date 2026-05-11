@@ -1152,6 +1152,8 @@ struct BrowserAuditSummary: Codable {
     var screenshotDigest: String? = nil
     var networkEntryCount: Int? = nil
     var networkDigest: String? = nil
+    var consoleEntryCount: Int? = nil
+    var consoleDigest: String? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -1226,6 +1228,45 @@ struct BrowserNetworkResult: Codable {
     let truncated: Bool
     let maxEntries: Int
     let entries: [BrowserNetworkEntry]
+    let digest: String
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserConsoleEntry: Codable {
+    let source: String
+    let level: String
+    let text: String
+    let textLength: Int
+    let textDigest: String
+    let truncated: Bool
+    let url: String?
+    let lineNumber: Int?
+    let timestamp: Double?
+}
+
+struct BrowserConsolePayload: Codable {
+    let entryCount: Int
+    let returnedCount: Int
+    let truncated: Bool
+    let entries: [BrowserConsoleEntry]
+}
+
+struct BrowserConsoleResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let entryCount: Int
+    let returnedCount: Int
+    let truncated: Bool
+    let maxEntries: Int
+    let maxMessageCharacters: Int
+    let sampleMilliseconds: Int
+    let entries: [BrowserConsoleEntry]
     let digest: String
     let auditID: String
     let auditLogPath: String
@@ -2402,6 +2443,33 @@ private final class DataResponseBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return value
+    }
+}
+
+private final class BrowserConsoleEntriesBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [BrowserConsoleEntry] = []
+    private var error: Error?
+
+    func append(_ entry: BrowserConsoleEntry) {
+        lock.lock()
+        entries.append(entry)
+        lock.unlock()
+    }
+
+    func setError(_ newError: Error) {
+        lock.lock()
+        error = newError
+        lock.unlock()
+    }
+
+    func snapshot() throws -> [BrowserConsoleEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let error {
+            throw error
+        }
+        return entries
     }
 }
 
@@ -15593,6 +15661,17 @@ final class Ln1CLI {
         case "screenshot":
             let id = try requiredOption("--id")
             try writeJSON(browserScreenshot(id: id))
+        case "console":
+            let id = try requiredOption("--id")
+            let maxEntries = max(0, option("--max-entries").flatMap(Int.init) ?? 100)
+            let maxMessageCharacters = max(0, option("--max-message-characters").flatMap(Int.init) ?? 1_000)
+            let sampleMilliseconds = max(0, option("--sample-ms").flatMap(Int.init) ?? 1_000)
+            try writeJSON(browserConsole(
+                id: id,
+                maxEntries: maxEntries,
+                maxMessageCharacters: maxMessageCharacters,
+                sampleMilliseconds: sampleMilliseconds
+            ))
         case "network":
             let id = try requiredOption("--id")
             let maxEntries = max(0, option("--max-entries").flatMap(Int.init) ?? 100)
@@ -17946,6 +18025,11 @@ final class Ln1CLI {
                     mutates: false
                 ),
                 BrowserAction(
+                    name: "browser.readConsole",
+                    risk: browserActionRisk(for: "browser.readConsole"),
+                    mutates: false
+                ),
+                BrowserAction(
                     name: "browser.readNetwork",
                     risk: browserActionRisk(for: "browser.readNetwork"),
                     mutates: false
@@ -18295,6 +18379,140 @@ final class Ln1CLI {
                 digest: digest,
                 imageWidth: width,
                 imageHeight: height,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserConsole(
+        id: String,
+        maxEntries: Int,
+        maxMessageCharacters: Int,
+        sampleMilliseconds: Int
+    ) throws -> BrowserConsoleResult {
+        let action = "browser.readConsole"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.console",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let payload = try readBrowserConsoleMessages(
+                from: webSocketURL,
+                maxEntries: maxEntries,
+                maxMessageCharacters: maxMessageCharacters,
+                sampleMilliseconds: sampleMilliseconds
+            )
+            let payloadData = try JSONEncoder().encode(payload)
+            let digest = sha256Digest(String(decoding: payloadData, as: UTF8.self))
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                consoleEntryCount: payload.entryCount,
+                consoleDigest: digest
+            )
+
+            let message = payload.truncated
+                ? "Read truncated browser console metadata from tab \(id)."
+                : "Read browser console metadata from tab \(id)."
+            try writeAudit(ok: true, code: "read_console", message: message)
+
+            return BrowserConsoleResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                entryCount: payload.entryCount,
+                returnedCount: payload.returnedCount,
+                truncated: payload.truncated,
+                maxEntries: maxEntries,
+                maxMessageCharacters: maxMessageCharacters,
+                sampleMilliseconds: sampleMilliseconds,
+                entries: payload.entries,
+                digest: digest,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -20026,6 +20244,204 @@ final class Ln1CLI {
             return ""
         }
         throw CommandError(description: "Chrome DevTools Runtime.evaluate returned \(remoteObject.type ?? "unknown") instead of string text")
+    }
+
+    private func readBrowserConsoleMessages(
+        from webSocketURL: URL,
+        maxEntries: Int,
+        maxMessageCharacters: Int,
+        sampleMilliseconds: Int
+    ) throws -> BrowserConsolePayload {
+        if webSocketURL.isFileURL {
+            let data = try Data(contentsOf: webSocketURL)
+            return try Self.browserConsolePayload(
+                fromEventData: data,
+                maxEntries: maxEntries,
+                maxMessageCharacters: maxMessageCharacters
+            )
+        }
+
+        guard ["ws", "wss"].contains(webSocketURL.scheme?.lowercased() ?? "") else {
+            throw CommandError(description: "unsupported DevTools debugger URL scheme '\(webSocketURL.scheme ?? "")'. Use ws or wss.")
+        }
+
+        let timeout = option("--timeout-ms").flatMap(Int.init).map { max(0, $0) } ?? max(sampleMilliseconds + 1_000, 2_000)
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.webSocketTask(with: webSocketURL)
+        let entries = BrowserConsoleEntriesBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        let deadline = Date().addingTimeInterval(Double(sampleMilliseconds) / 1_000.0)
+
+        @Sendable func receiveNext() {
+            task.receive { result in
+                switch result {
+                case .failure(let error):
+                    entries.setError(error)
+                    semaphore.signal()
+                case .success(let message):
+                    do {
+                        let data: Data
+                        switch message {
+                        case .data(let messageData):
+                            data = messageData
+                        case .string(let string):
+                            data = Data(string.utf8)
+                        @unknown default:
+                            throw CommandError(description: "unsupported WebSocket message from Chrome DevTools")
+                        }
+                        if let entry = try Self.browserConsoleEntry(fromEventData: data, maxMessageCharacters: maxMessageCharacters) {
+                            entries.append(entry)
+                        }
+                        if Date() >= deadline {
+                            semaphore.signal()
+                        } else {
+                            receiveNext()
+                        }
+                    } catch {
+                        entries.setError(error)
+                        semaphore.signal()
+                    }
+                }
+            }
+        }
+
+        task.resume()
+        receiveNext()
+        try sendBrowserConsoleSetupCommand(id: 1, method: "Runtime.enable", task: task)
+        try sendBrowserConsoleSetupCommand(id: 2, method: "Log.enable", task: task)
+
+        if semaphore.wait(timeout: .now() + Double(timeout) / 1_000.0) == .timedOut {
+            task.cancel(with: .goingAway, reason: nil)
+            session.invalidateAndCancel()
+            throw CommandError(description: "timed out waiting for Chrome DevTools console events")
+        }
+
+        task.cancel(with: .normalClosure, reason: nil)
+        session.finishTasksAndInvalidate()
+        let capturedEntries = try entries.snapshot()
+        return Self.browserConsolePayload(
+            fromEntries: capturedEntries,
+            maxEntries: maxEntries
+        )
+    }
+
+    private func sendBrowserConsoleSetupCommand(id: Int, method: String, task: URLSessionWebSocketTask) throws {
+        let payload: [String: Any] = [
+            "id": id,
+            "method": method,
+            "params": [:]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        task.send(.data(data)) { _ in }
+    }
+
+    private static func browserConsolePayload(
+        fromEventData data: Data,
+        maxEntries: Int,
+        maxMessageCharacters: Int
+    ) throws -> BrowserConsolePayload {
+        let json = try JSONSerialization.jsonObject(with: data)
+        let messages: [[String: Any]]
+        if let array = json as? [[String: Any]] {
+            messages = array
+        } else if let object = json as? [String: Any] {
+            messages = [object]
+        } else {
+            throw CommandError(description: "Chrome DevTools console event fixture was not an object or array")
+        }
+        let entries = try messages.compactMap { message -> BrowserConsoleEntry? in
+            let eventData = try JSONSerialization.data(withJSONObject: message, options: [])
+            return try browserConsoleEntry(fromEventData: eventData, maxMessageCharacters: maxMessageCharacters)
+        }
+        return browserConsolePayload(fromEntries: entries, maxEntries: maxEntries)
+    }
+
+    private static func browserConsolePayload(
+        fromEntries entries: [BrowserConsoleEntry],
+        maxEntries: Int
+    ) -> BrowserConsolePayload {
+        let selected = maxEntries == 0 ? [] : Array(entries.suffix(maxEntries))
+        return BrowserConsolePayload(
+            entryCount: entries.count,
+            returnedCount: selected.count,
+            truncated: entries.count > selected.count,
+            entries: selected
+        )
+    }
+
+    private static func browserConsoleEntry(
+        fromEventData data: Data,
+        maxMessageCharacters: Int
+    ) throws -> BrowserConsoleEntry? {
+        let json = try JSONSerialization.jsonObject(with: data)
+        guard let object = json as? [String: Any],
+              let method = object["method"] as? String,
+              let params = object["params"] as? [String: Any] else {
+            return nil
+        }
+
+        if method == "Runtime.consoleAPICalled" {
+            let level = params["type"] as? String ?? "log"
+            let args = params["args"] as? [[String: Any]] ?? []
+            let text = args.map(browserConsoleArgumentText).joined(separator: " ")
+            return browserConsoleEntry(
+                source: "runtime",
+                level: level,
+                text: text,
+                maxMessageCharacters: maxMessageCharacters,
+                url: nil,
+                lineNumber: nil,
+                timestamp: params["timestamp"] as? Double
+            )
+        }
+
+        if method == "Log.entryAdded",
+           let entry = params["entry"] as? [String: Any] {
+            return browserConsoleEntry(
+                source: entry["source"] as? String ?? "log",
+                level: entry["level"] as? String ?? "info",
+                text: entry["text"] as? String ?? "",
+                maxMessageCharacters: maxMessageCharacters,
+                url: entry["url"] as? String,
+                lineNumber: entry["lineNumber"] as? Int,
+                timestamp: entry["timestamp"] as? Double
+            )
+        }
+
+        return nil
+    }
+
+    private static func browserConsoleArgumentText(_ argument: [String: Any]) -> String {
+        if let value = argument["value"] {
+            return String(describing: value)
+        }
+        if let description = argument["description"] as? String {
+            return description
+        }
+        return argument["type"] as? String ?? ""
+    }
+
+    private static func browserConsoleEntry(
+        source: String,
+        level: String,
+        text: String,
+        maxMessageCharacters: Int,
+        url: String?,
+        lineNumber: Int?,
+        timestamp: Double?
+    ) -> BrowserConsoleEntry {
+        let returnedText = String(text.prefix(maxMessageCharacters))
+        return BrowserConsoleEntry(
+            source: source,
+            level: level,
+            text: returnedText,
+            textLength: text.count,
+            textDigest: SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined(),
+            truncated: text.count > returnedText.count,
+            url: url,
+            lineNumber: lineNumber,
+            timestamp: timestamp
+        )
     }
 
     private func readBrowserNetworkActivity(
@@ -25162,7 +25578,7 @@ final class Ln1CLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
-        case "browser.readText", "browser.captureScreenshot", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
+        case "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -25347,6 +25763,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.captureScreenshot", domain: "browser", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "browser.readConsole", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readNetwork", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
@@ -26974,6 +27391,7 @@ final class Ln1CLI {
           Ln1 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser screenshot --id TARGET_ID --allow-risk medium [--format png|jpeg] [--quality N] [--from-surface true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser console --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-entries N] [--max-message-characters N] [--sample-ms N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser network --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-entries N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
@@ -27064,6 +27482,7 @@ final class Ln1CLI {
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
           - `browser screenshot` captures page image metadata through Chrome DevTools only after medium-risk policy approval and audits byte count/digest without storing image bytes.
+          - `browser console` samples bounded console/log events through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing message text.
           - `browser network` reads bounded Performance API navigation/resource timing metadata through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing request URLs.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.

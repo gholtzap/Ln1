@@ -193,6 +193,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.captureScreenshot"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.captureScreenshot"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.captureScreenshot"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.readConsole"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.readConsole"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.readConsole"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.readNetwork"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readNetwork"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readNetwork"]?["mutates"] as? Bool, false)
@@ -12827,6 +12830,11 @@ final class Ln1SmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == false
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.readConsole"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.readNetwork"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == false
@@ -13186,6 +13194,160 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "captured_screenshot")
+    }
+
+    func testBrowserConsoleReadsEventsWithPolicyAndAuditsSummaryOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-console-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpEvents = directory.appendingPathComponent("console-events.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "method": "Runtime.consoleAPICalled",
+            "params": {
+              "type": "error",
+              "timestamp": 1234.5,
+              "args": [
+                { "type": "string", "value": "first issue" },
+                { "type": "number", "value": 42 }
+              ]
+            }
+          },
+          {
+            "method": "Log.entryAdded",
+            "params": {
+              "entry": {
+                "source": "network",
+                "level": "warning",
+                "text": "request warning",
+                "url": "https://example.com/app.js",
+                "lineNumber": 12,
+                "timestamp": 1235.25
+              }
+            }
+          }
+        ]
+        """.write(to: cdpEvents, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Console Page",
+            "url": "https://example.com/console",
+            "webSocketDebuggerUrl": "\(cdpEvents.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "console",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "console",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--allow-risk", "medium",
+            "--max-entries", "2",
+            "--max-message-characters", "10",
+            "--sample-ms", "1",
+            "--audit-log", auditLog.path,
+            "--reason", "inspect console metadata"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let digest = try XCTUnwrap(object["digest"] as? String)
+        let first = try XCTUnwrap(entries.first)
+        let second = try XCTUnwrap(entries.last)
+
+        XCTAssertEqual(object["action"] as? String, "browser.readConsole")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["entryCount"] as? Int, 2)
+        XCTAssertEqual(object["returnedCount"] as? Int, 2)
+        XCTAssertEqual(object["truncated"] as? Bool, false)
+        XCTAssertEqual(object["maxEntries"] as? Int, 2)
+        XCTAssertEqual(object["maxMessageCharacters"] as? Int, 10)
+        XCTAssertEqual(object["sampleMilliseconds"] as? Int, 1)
+        XCTAssertEqual(first["source"] as? String, "runtime")
+        XCTAssertEqual(first["level"] as? String, "error")
+        XCTAssertEqual(first["text"] as? String, "first issu")
+        XCTAssertEqual(first["textLength"] as? Int, 14)
+        XCTAssertEqual(first["truncated"] as? Bool, true)
+        XCTAssertNotNil(first["textDigest"])
+        XCTAssertEqual(second["source"] as? String, "network")
+        XCTAssertEqual(second["url"] as? String, "https://example.com/app.js")
+        XCTAssertEqual(second["lineNumber"] as? Int, 12)
+        XCTAssertEqual(digest.count, 64)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.console",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.readConsole")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["id"] as? String, "page-1")
+        XCTAssertNil(deniedBrowserTab["consoleEntryCount"])
+        XCTAssertNil(deniedBrowserTab["consoleDigest"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.console",
+            "--code", "read_console",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let auditEntries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(auditEntries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.console")
+        XCTAssertEqual(entry["action"] as? String, "browser.readConsole")
+        XCTAssertEqual(entry["reason"] as? String, "inspect console metadata")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Console Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/console")
+        XCTAssertEqual(browserTab["consoleEntryCount"] as? Int, 2)
+        XCTAssertEqual(browserTab["consoleDigest"] as? String, digest)
+        XCTAssertNil(browserTab["entries"])
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_console")
     }
 
     func testBrowserNetworkReadsTimingMetadataWithPolicyAndAuditsSummaryOnly() throws {
