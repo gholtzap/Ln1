@@ -1150,6 +1150,8 @@ struct BrowserAuditSummary: Codable {
     var screenshotFormat: String? = nil
     var screenshotByteCount: Int? = nil
     var screenshotDigest: String? = nil
+    var networkEntryCount: Int? = nil
+    var networkDigest: String? = nil
 }
 
 struct BrowserTextResult: Codable {
@@ -1181,6 +1183,50 @@ struct BrowserScreenshotResult: Codable {
     let digest: String
     let imageWidth: Double?
     let imageHeight: Double?
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserNetworkEntry: Codable {
+    let name: String
+    let entryType: String
+    let initiatorType: String?
+    let startTime: Double?
+    let duration: Double?
+    let transferSize: Int?
+    let encodedBodySize: Int?
+    let decodedBodySize: Int?
+    let nextHopProtocol: String?
+    let responseStatus: Int?
+    let urlScheme: String?
+    let urlHost: String?
+}
+
+struct BrowserNetworkPayload: Codable {
+    let url: String?
+    let title: String?
+    let entryCount: Int
+    let returnedCount: Int
+    let truncated: Bool
+    let entries: [BrowserNetworkEntry]
+}
+
+struct BrowserNetworkResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let url: String?
+    let title: String?
+    let entryCount: Int
+    let returnedCount: Int
+    let truncated: Bool
+    let maxEntries: Int
+    let entries: [BrowserNetworkEntry]
+    let digest: String
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -15547,6 +15593,10 @@ final class Ln1CLI {
         case "screenshot":
             let id = try requiredOption("--id")
             try writeJSON(browserScreenshot(id: id))
+        case "network":
+            let id = try requiredOption("--id")
+            let maxEntries = max(0, option("--max-entries").flatMap(Int.init) ?? 100)
+            try writeJSON(browserNetwork(id: id, maxEntries: maxEntries))
         case "dom":
             let id = try requiredOption("--id")
             let maxElements = max(0, option("--max-elements").flatMap(Int.init) ?? 200)
@@ -17896,6 +17946,11 @@ final class Ln1CLI {
                     mutates: false
                 ),
                 BrowserAction(
+                    name: "browser.readNetwork",
+                    risk: browserActionRisk(for: "browser.readNetwork"),
+                    mutates: false
+                ),
+                BrowserAction(
                     name: "browser.readDOM",
                     risk: browserActionRisk(for: "browser.readDOM"),
                     mutates: false
@@ -18240,6 +18295,133 @@ final class Ln1CLI {
                 digest: digest,
                 imageWidth: width,
                 imageHeight: height,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func browserNetwork(id: String, maxEntries: Int) throws -> BrowserNetworkResult {
+        let action = "browser.readNetwork"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.network",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let payload = try readBrowserNetworkActivity(
+                from: webSocketURL,
+                maxEntries: maxEntries
+            )
+            let payloadData = try JSONEncoder().encode(payload)
+            let digest = sha256Digest(String(decoding: payloadData, as: UTF8.self))
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                networkEntryCount: payload.entryCount,
+                networkDigest: digest
+            )
+
+            let message = payload.truncated
+                ? "Read truncated browser network timing metadata from tab \(id)."
+                : "Read browser network timing metadata from tab \(id)."
+            try writeAudit(ok: true, code: "read_network", message: message)
+
+            return BrowserNetworkResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                url: payload.url,
+                title: payload.title,
+                entryCount: payload.entryCount,
+                returnedCount: payload.returnedCount,
+                truncated: payload.truncated,
+                maxEntries: maxEntries,
+                entries: payload.entries,
+                digest: digest,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -19844,6 +20026,83 @@ final class Ln1CLI {
             return ""
         }
         throw CommandError(description: "Chrome DevTools Runtime.evaluate returned \(remoteObject.type ?? "unknown") instead of string text")
+    }
+
+    private func readBrowserNetworkActivity(
+        from webSocketURL: URL,
+        maxEntries: Int
+    ) throws -> BrowserNetworkPayload {
+        let expression = """
+        (() => {
+          const maxEntries = \(maxEntries);
+          const round = (value) => Number.isFinite(value) ? Math.round(value * 1000) / 1000 : null;
+          const finiteInteger = (value) => Number.isFinite(value) ? Math.round(value) : null;
+          const urlParts = (name) => {
+            try {
+              const url = new URL(name, location.href);
+              return {
+                scheme: url.protocol ? url.protocol.replace(/:$/, "") : null,
+                host: url.host || null
+              };
+            } catch {
+              return { scheme: null, host: null };
+            }
+          };
+          const entries = [
+            ...performance.getEntriesByType("navigation"),
+            ...performance.getEntriesByType("resource")
+          ];
+          const selected = maxEntries === 0 ? [] : entries.slice(Math.max(0, entries.length - maxEntries));
+          const resultEntries = selected.map((entry) => {
+            const parts = urlParts(entry.name || "");
+            return {
+              name: entry.name || "",
+              entryType: entry.entryType || "",
+              initiatorType: entry.initiatorType || null,
+              startTime: round(entry.startTime),
+              duration: round(entry.duration),
+              transferSize: finiteInteger(entry.transferSize),
+              encodedBodySize: finiteInteger(entry.encodedBodySize),
+              decodedBodySize: finiteInteger(entry.decodedBodySize),
+              nextHopProtocol: entry.nextHopProtocol || null,
+              responseStatus: finiteInteger(entry.responseStatus),
+              urlScheme: parts.scheme,
+              urlHost: parts.host
+            };
+          });
+          return JSON.stringify({
+            url: location.href || null,
+            title: document.title || null,
+            entryCount: entries.length,
+            returnedCount: resultEntries.length,
+            truncated: entries.length > resultEntries.length,
+            entries: resultEntries
+          });
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a network timing result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools network timing result was not valid UTF-8")
+        }
+        do {
+            return try JSONDecoder().decode(BrowserNetworkPayload.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools network timing result was not valid JSON: \(error.localizedDescription)")
+        }
     }
 
     private func readBrowserDOMSnapshot(
@@ -24903,7 +25162,7 @@ final class Ln1CLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
-        case "browser.readText", "browser.captureScreenshot", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
+        case "browser.readText", "browser.captureScreenshot", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -25088,6 +25347,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.captureScreenshot", domain: "browser", risk: "medium", mutates: false),
+            PolicyActionRecord(name: "browser.readNetwork", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.selectOption", domain: "browser", risk: "medium", mutates: true),
@@ -26714,6 +26974,7 @@ final class Ln1CLI {
           Ln1 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser screenshot --id TARGET_ID --allow-risk medium [--format png|jpeg] [--quality N] [--from-surface true|false] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser network --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-entries N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
@@ -26803,6 +27064,7 @@ final class Ln1CLI {
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.
           - `browser screenshot` captures page image metadata through Chrome DevTools only after medium-risk policy approval and audits byte count/digest without storing image bytes.
+          - `browser network` reads bounded Performance API navigation/resource timing metadata through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing request URLs.
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
           - `browser select` chooses one select option through Chrome DevTools only after medium-risk policy approval, verifies the selection, and audits selector plus option length/digest without storing option text.

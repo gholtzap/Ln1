@@ -991,6 +991,14 @@ Capture browser page image metadata through the tab's DevTools WebSocket:
 
 `browser.captureScreenshot` is a medium-risk read action because page pixels can expose private web-app content. The command captures a screenshot through Chrome DevTools and returns only metadata: format, byte count, SHA-256 digest, and image dimensions when decodable. The audit record stores tab metadata plus screenshot format, byte count, digest, policy decision, reason, and outcome; it does not store image bytes.
 
+Read bounded browser network timing metadata through the tab's DevTools WebSocket:
+
+```sh
+.build/debug/Ln1 browser network --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-entries 100 --reason "Inspect page network activity"
+```
+
+`browser.readNetwork` is a medium-risk read action because request URLs can expose private web-app state. The command reads navigation and resource timing entries through the Performance API and returns bounded metadata including URL, entry type, initiator type, timing, transfer sizes, protocol, response status when available, and URL scheme/host. The audit record stores only tab metadata plus entry count and digest; it does not store request URLs.
+
 Read bounded structured page state from the DOM:
 
 ```sh
@@ -1143,7 +1151,7 @@ Wait for an element to become focused or unfocused without mutating the page:
 
 `browser.waitFocus` is a low-risk read action. It polls one selector through the tab's DevTools runtime until the focus state matches, returning target and active-element metadata, current URL, and match status without focusing the element.
 
-This adapter is now using browser-native DevTools metadata, page text, screenshot metadata capture, structured DOM snapshots with ARIA state metadata plus open shadow-root and same-origin iframe traversal, typed form filling, typed select-option control, typed checked-state control, typed focus control, typed key presses, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded selector count checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, bounded checked-state readiness checks, bounded enabled-state readiness checks, bounded focus-state readiness checks, and bounded attribute-state readiness checks.
+This adapter is now using browser-native DevTools metadata, page text, screenshot metadata capture, bounded network timing metadata, structured DOM snapshots with ARIA state metadata plus open shadow-root and same-origin iframe traversal, typed form filling, typed select-option control, typed checked-state control, typed focus control, typed key presses, typed element clicking, verified navigation, bounded URL waiting, bounded selector readiness checks, bounded selector count checks, bounded text readiness checks, bounded value readiness checks, bounded document readiness checks, bounded title readiness checks, bounded checked-state readiness checks, bounded enabled-state readiness checks, bounded focus-state readiness checks, and bounded attribute-state readiness checks.
 
 ## Product Direction
 

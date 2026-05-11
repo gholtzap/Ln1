@@ -193,6 +193,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.captureScreenshot"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.captureScreenshot"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.captureScreenshot"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.readNetwork"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.readNetwork"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.readNetwork"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.readDOM"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readDOM"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readDOM"]?["mutates"] as? Bool, false)
@@ -12824,6 +12827,11 @@ final class Ln1SmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == false
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.readNetwork"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.readDOM"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == false
@@ -13178,6 +13186,173 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "captured_screenshot")
+    }
+
+    func testBrowserNetworkReadsTimingMetadataWithPolicyAndAuditsSummaryOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-network-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("runtime-evaluate.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let networkPayload = """
+        {
+          "url": "https://example.com/app",
+          "title": "Network Page",
+          "entryCount": 3,
+          "returnedCount": 2,
+          "truncated": true,
+          "entries": [
+            {
+              "name": "https://example.com/app",
+              "entryType": "navigation",
+              "initiatorType": "navigation",
+              "startTime": 0,
+              "duration": 42.5,
+              "transferSize": 2048,
+              "encodedBodySize": 1024,
+              "decodedBodySize": 4096,
+              "nextHopProtocol": "h2",
+              "responseStatus": 200,
+              "urlScheme": "https",
+              "urlHost": "example.com"
+            },
+            {
+              "name": "https://cdn.example.com/app.js",
+              "entryType": "resource",
+              "initiatorType": "script",
+              "startTime": 12.25,
+              "duration": 7.75,
+              "transferSize": 512,
+              "encodedBodySize": 400,
+              "decodedBodySize": 900,
+              "nextHopProtocol": "h3",
+              "responseStatus": 200,
+              "urlScheme": "https",
+              "urlHost": "cdn.example.com"
+            }
+          ]
+        }
+        """
+        let encodedPayload = try XCTUnwrap(String(data: JSONEncoder().encode(networkPayload), encoding: .utf8))
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "id": 1,
+          "result": {
+            "result": {
+              "type": "string",
+              "value": \(encodedPayload)
+            }
+          }
+        }
+        """.write(to: cdpResponse, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Network Page",
+            "url": "https://example.com/app",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "network",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "network",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--allow-risk", "medium",
+            "--max-entries", "2",
+            "--audit-log", auditLog.path,
+            "--reason", "inspect network metadata"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let digest = try XCTUnwrap(object["digest"] as? String)
+
+        XCTAssertEqual(object["action"] as? String, "browser.readNetwork")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["url"] as? String, "https://example.com/app")
+        XCTAssertEqual(object["entryCount"] as? Int, 3)
+        XCTAssertEqual(object["returnedCount"] as? Int, 2)
+        XCTAssertEqual(object["truncated"] as? Bool, true)
+        XCTAssertEqual(object["maxEntries"] as? Int, 2)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries.last?["entryType"] as? String, "resource")
+        XCTAssertEqual(entries.last?["urlHost"] as? String, "cdn.example.com")
+        XCTAssertEqual(entries.last?["transferSize"] as? Int, 512)
+        XCTAssertEqual(digest.count, 64)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.network",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.readNetwork")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["id"] as? String, "page-1")
+        XCTAssertNil(deniedBrowserTab["networkEntryCount"])
+        XCTAssertNil(deniedBrowserTab["networkDigest"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.network",
+            "--code", "read_network",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let auditEntries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(auditEntries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.network")
+        XCTAssertEqual(entry["action"] as? String, "browser.readNetwork")
+        XCTAssertEqual(entry["reason"] as? String, "inspect network metadata")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Network Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/app")
+        XCTAssertEqual(browserTab["networkEntryCount"] as? Int, 3)
+        XCTAssertEqual(browserTab["networkDigest"] as? String, digest)
+        XCTAssertNil(browserTab["entries"])
+        XCTAssertNil(browserTab["name"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_network")
     }
 
     func testBrowserDOMReadsStructuredPageStateWithPolicyAndAuditsSummaryOnly() throws {
