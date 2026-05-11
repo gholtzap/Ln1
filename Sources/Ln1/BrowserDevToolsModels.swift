@@ -42,6 +42,298 @@ struct BrowserKeyDefinition {
     let text: String?
 }
 
+struct BrowserTextWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let currentTextLength: Int?
+    let currentTextDigest: String?
+    let currentURL: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserTextWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserTextWaitVerification
+    let message: String
+}
+
+struct BrowserElementTextWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let currentTextLength: Int?
+    let currentTextDigest: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserElementTextWaitPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let currentText: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserElementTextWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let expectedTextLength: Int
+    let expectedTextDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserElementTextWaitVerification
+    let message: String
+}
+
+struct BrowserValueWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let expectedValueLength: Int
+    let expectedValueDigest: String
+    let currentValueLength: Int?
+    let currentValueDigest: String?
+    let currentURL: String?
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let readOnly: Bool?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserValueWaitPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let currentValue: String?
+    let currentURL: String?
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let readOnly: Bool?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserValueWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let expectedValueLength: Int
+    let expectedValueDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserValueWaitVerification
+    let message: String
+}
+
+struct BrowserReadyWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let expectedState: String
+    let currentState: String?
+    let currentURL: String?
+    let matched: Bool
+}
+
+struct BrowserReadyWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let expectedState: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserReadyWaitVerification
+    let message: String
+}
+
+struct BrowserTitleWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let expectedTitle: String
+    let currentTitle: String?
+    let currentURL: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserTitleWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let expectedTitle: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserTitleWaitVerification
+    let message: String
+}
+
+struct BrowserCheckedWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let expectedChecked: Bool
+    let currentChecked: Bool?
+    let currentURL: String?
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let readOnly: Bool?
+    let matched: Bool
+}
+
+struct BrowserCheckedWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let expectedChecked: Bool
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserCheckedWaitVerification
+    let message: String
+}
+
+struct BrowserEnabledWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let expectedEnabled: Bool
+    let currentEnabled: Bool?
+    let currentURL: String?
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let readOnly: Bool?
+    let matched: Bool
+}
+
+struct BrowserEnabledWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let expectedEnabled: Bool
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserEnabledWaitVerification
+    let message: String
+}
+
+struct BrowserFocusWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let expectedFocused: Bool
+    let currentFocused: Bool?
+    let currentURL: String?
+    let tagName: String?
+    let inputType: String?
+    let activeTagName: String?
+    let activeInputType: String?
+    let matched: Bool
+}
+
+struct BrowserFocusWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let expectedFocused: Bool
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserFocusWaitVerification
+    let message: String
+}
+
+struct BrowserAttributeWaitVerification: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let attribute: String
+    let expectedValueLength: Int
+    let expectedValueDigest: String
+    let currentValueLength: Int?
+    let currentValueDigest: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserAttributeWaitPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let attribute: String
+    let currentValue: String?
+    let currentURL: String?
+    let tagName: String?
+    let match: String
+    let matched: Bool
+}
+
+struct BrowserAttributeWaitResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tabID: String
+    let selector: String
+    let attribute: String
+    let expectedValueLength: Int
+    let expectedValueDigest: String
+    let match: String
+    let timeoutMilliseconds: Int
+    let intervalMilliseconds: Int
+    let verification: BrowserAttributeWaitVerification
+    let message: String
+}
+
 struct DevToolsTarget: Decodable {
     let id: String
     let type: String?
