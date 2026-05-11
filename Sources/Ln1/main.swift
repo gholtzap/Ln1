@@ -14401,8 +14401,9 @@ final class Ln1CLI {
             pid: app.processIdentifier,
             hidden: app.isHidden
         )
-        let normalizedID = try normalizedElementID(elementID)
-        let element = try resolveElement(id: normalizedID, in: app.processIdentifier)
+        let resolved = try resolveGuardedElement(id: elementID, in: app)
+        let normalizedID = resolved.id
+        let element = resolved.element
         let node = buildNode(
             element,
             id: normalizedID,
@@ -14411,7 +14412,12 @@ final class Ln1CLI {
             depth: depth,
             maxChildren: maxChildren
         )
-        let identityVerification = try verifyElementIdentity(node.stableIdentity)
+        let identityVerification: IdentityVerification?
+        if let resolvedVerification = resolved.identityVerification {
+            identityVerification = resolvedVerification
+        } else {
+            identityVerification = try verifyElementIdentity(node.stableIdentity)
+        }
 
         return AccessibilityElementInspectResult(
             generatedAt: ISO8601DateFormatter().string(from: Date()),
@@ -14756,9 +14762,9 @@ final class Ln1CLI {
             throw error
         }
 
-        let element: AXUIElement
+        let resolved: GuardedElementResolution
         do {
-            element = try resolveElement(id: normalizedID, in: app.processIdentifier)
+            resolved = try resolveGuardedElement(id: normalizedID, in: app)
         } catch let error as CommandError {
             if error.description.contains("out of range") {
                 return AccessibilityElementWaitSnapshot(
@@ -14774,14 +14780,19 @@ final class Ln1CLI {
         }
 
         let node = buildNode(
-            element,
-            id: normalizedID,
+            resolved.element,
+            id: resolved.id,
             ownerName: app.localizedName,
             ownerBundleIdentifier: app.bundleIdentifier,
             depth: depth,
             maxChildren: maxChildren
         )
-        let identityVerification = try verifyElementIdentity(node.stableIdentity)
+        let identityVerification: IdentityVerification?
+        if let resolvedVerification = resolved.identityVerification {
+            identityVerification = resolvedVerification
+        } else {
+            identityVerification = try verifyElementIdentity(node.stableIdentity)
+        }
         let identityMatched = identityVerification?.ok != false
         let titleMatched = target.title.map { expectedTitle in
             stringValue(node.title, matches: expectedTitle, mode: target.match)
@@ -14911,35 +14922,11 @@ final class Ln1CLI {
                 pid: app.processIdentifier,
                 hidden: app.isHidden
             )
-            let element = try resolveElement(id: elementID!, in: app.processIdentifier)
-            let normalizedElementID = try normalizedElementID(elementID!)
-            elementSummary = auditSummary(
-                element,
-                pathID: normalizedElementID,
-                ownerName: app.localizedName,
-                ownerBundleIdentifier: app.bundleIdentifier
-            )
-
-            identityVerification = try verifyElementIdentity(elementSummary?.stableIdentity)
-            guard identityVerification?.ok != false else {
-                let message = identityVerification?.message ?? "element identity verification failed"
-                try appendAuditRecord(ActionAuditRecord(
-                    id: auditID,
-                    timestamp: ISO8601DateFormatter().string(from: Date()),
-                    command: "perform",
-                    risk: riskLevel(for: action!),
-                    reason: option("--reason"),
-                    app: appRecord,
-                    elementID: elementID,
-                    element: elementSummary,
-                    action: action,
-                    policy: policy,
-                    identityVerification: identityVerification,
-                    outcome: AuditOutcome(ok: false, code: identityVerification?.code ?? "identity_rejected", message: message)
-                ), to: auditURL)
-                auditWritten = true
-                throw CommandError(description: message)
-            }
+            let resolution = try resolveGuardedElement(id: elementID!, in: app)
+            let element = resolution.element
+            elementID = resolution.id
+            elementSummary = resolution.summary
+            identityVerification = resolution.identityVerification
 
             let available = elementSummary?.actions ?? actionNames(element)
             guard available.contains(action!) else {
@@ -15093,21 +15080,11 @@ final class Ln1CLI {
                 pid: app.processIdentifier,
                 hidden: app.isHidden
             )
-            let element = try resolveElement(id: elementID!, in: app.processIdentifier)
-            let normalizedElementID = try normalizedElementID(elementID!)
-            elementSummary = auditSummary(
-                element,
-                pathID: normalizedElementID,
-                ownerName: app.localizedName,
-                ownerBundleIdentifier: app.bundleIdentifier
-            )
-
-            identityVerification = try verifyElementIdentity(elementSummary?.stableIdentity)
-            guard identityVerification?.ok != false else {
-                let message = identityVerification?.message ?? "element identity verification failed"
-                try writeAudit(ok: false, code: identityVerification?.code ?? "identity_rejected", message: message)
-                throw CommandError(description: message)
-            }
+            let resolution = try resolveGuardedElement(id: elementID!, in: app)
+            let element = resolution.element
+            elementID = resolution.id
+            elementSummary = resolution.summary
+            identityVerification = resolution.identityVerification
 
             let writableAttributes = elementSummary?.settableAttributes ?? settableAttributes(element)
             guard writableAttributes.contains(kAXValueAttribute as String) else {
@@ -26320,10 +26297,10 @@ final class Ln1CLI {
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state menu` inspects the target app menu bar as a bounded Accessibility tree.
           - `state find` searches Accessibility elements by semantic attributes and returns bounded candidate IDs.
-          - `state element` inspects one Accessibility element path with optional stable identity verification.
+          - `state element` inspects one Accessibility element path with optional stable identity verification and re-resolves a stale path by identity when exactly one current element matches.
           - `state wait-element` waits for an Accessibility element path and optional identity, text, or enabled-state criteria.
           - `state --all` walks every running GUI app macOS exposes to this process.
-          - Element IDs are child-index paths. Use window IDs from `state` and menu IDs from `state menu` with `perform`.
+          - Element IDs are child-index paths. Use window IDs from `state` and menu IDs from `state menu` with `perform`; guarded element commands fail closed unless a supplied stable identity verifies or re-resolves to exactly one current element.
           - `perform` defaults to `--allow-risk low`; medium, high, and unknown actions require explicit allowance.
           - `perform` appends a structured JSONL audit record before returning success or failure.
           - `set-value` sets one element's AXValue only after medium-risk approval, verifies length and digest, and audits metadata without storing text.
@@ -28383,6 +28360,118 @@ final class Ln1CLI {
         }
 
         return byPid.values.sorted { ($0.name ?? "") < ($1.name ?? "") }
+    }
+
+    private struct GuardedElementResolution {
+        let element: AXUIElement
+        let id: String
+        let summary: AuditElementSummary
+        let identityVerification: IdentityVerification?
+    }
+
+    private func resolveGuardedElement(id requestedID: String, in app: NSRunningApplication) throws -> GuardedElementResolution {
+        let normalizedID = try normalizedElementID(requestedID)
+        let expectedIdentity = option("--expect-identity")
+        var pathError: CommandError?
+
+        do {
+            let element = try resolveElement(id: normalizedID, in: app.processIdentifier)
+            let summary = auditSummary(
+                element,
+                pathID: normalizedID,
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier
+            )
+            let verification = try verifyElementIdentity(summary.stableIdentity)
+            if verification?.ok != false {
+                return GuardedElementResolution(
+                    element: element,
+                    id: normalizedID,
+                    summary: summary,
+                    identityVerification: verification
+                )
+            }
+
+            pathError = CommandError(description: verification?.message ?? "element identity verification failed")
+        } catch let error as CommandError {
+            pathError = error
+        }
+
+        guard let expectedIdentity else {
+            throw pathError ?? CommandError(description: "element path \(normalizedID) could not be resolved")
+        }
+
+        let matches = try findAccessibilityElements(
+            matchingStableIdentity: expectedIdentity,
+            in: app,
+            maxDepth: 8,
+            maxChildren: 120,
+            maxMatches: 2
+        )
+        guard matches.count == 1, let match = matches.first else {
+            let countDescription = matches.isEmpty ? "no current element" : "\(matches.count) current elements"
+            throw CommandError(description: "requested element path \(normalizedID) did not verify and \(countDescription) matched expected identity \(expectedIdentity); refusing to guess")
+        }
+
+        return match
+    }
+
+    private func findAccessibilityElements(
+        matchingStableIdentity expectedIdentity: String,
+        in app: NSRunningApplication,
+        maxDepth: Int,
+        maxChildren: Int,
+        maxMatches: Int
+    ) throws -> [GuardedElementResolution] {
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var matches: [GuardedElementResolution] = []
+
+        func visit(_ element: AXUIElement, id: String, remainingDepth: Int) throws {
+            guard matches.count < maxMatches else {
+                return
+            }
+
+            let summary = auditSummary(
+                element,
+                pathID: id,
+                ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier
+            )
+            if let stableIdentity = summary.stableIdentity, stableIdentity.id == expectedIdentity {
+                let verification = try verifyElementIdentity(stableIdentity)
+                if verification?.ok != false {
+                    matches.append(GuardedElementResolution(
+                        element: element,
+                        id: id,
+                        summary: summary,
+                        identityVerification: verification
+                    ))
+                }
+            }
+
+            guard remainingDepth > 0 else {
+                return
+            }
+            for (index, child) in accessibilityArray(element, kAXChildrenAttribute).prefix(maxChildren).enumerated() {
+                try visit(child, id: "\(id).\(index)", remainingDepth: remainingDepth - 1)
+                if matches.count >= maxMatches {
+                    return
+                }
+            }
+        }
+
+        for (index, window) in accessibilityArray(axApp, kAXWindowsAttribute).prefix(maxChildren).enumerated() {
+            try visit(window, id: "w\(index)", remainingDepth: maxDepth)
+            if matches.count >= maxMatches {
+                return matches
+            }
+        }
+
+        if let menuBar = accessibilityElement(axApp, kAXMenuBarAttribute), matches.count < maxMatches {
+            try visit(menuBar, id: "m0", remainingDepth: maxDepth)
+        }
+
+        return matches
     }
 
     private func resolveElement(id: String, in pid: pid_t) throws -> AXUIElement {

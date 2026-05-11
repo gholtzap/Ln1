@@ -579,7 +579,7 @@ Wait for a desktop window to appear or disappear without relying on a fixed slee
 
 The output is JSON with app metadata, windows, elements, frames, values, available actions, settable Accessibility attributes, `minimized` state when an element exposes `AXMinimized`, and a `valueSettable` shortcut.
 
-Each Accessibility node includes the path-style `id` used by `perform` plus a semantic `stableIdentity`. The stable identity summarizes owner, role, title or help text, actions, and coarse frame when available, then reports a digest, confidence, readable label, components, and reasons. Use the confidence, reasons, `actions`, and `settableAttributes` to decide whether a repeated observation still refers to the same control and whether it supports press-style or value-setting operations before acting.
+Each Accessibility node includes the path-style `id` used by `perform` plus a semantic `stableIdentity`. The stable identity summarizes owner, role, title or help text, actions, and coarse frame when available, then reports a digest, confidence, readable label, components, and reasons. Use the confidence, reasons, `actions`, and `settableAttributes` to decide whether a repeated observation still refers to the same control and whether it supports press-style or value-setting operations before acting. When `--expect-identity` is supplied, guarded element commands re-resolve a stale child-index path by scanning the current bounded UI tree and fail closed unless exactly one element matches that stable identity.
 
 Inspect one known Accessibility element path without walking the full app tree:
 
@@ -654,7 +654,7 @@ To guard against a stale element path, pass the `stableIdentity.id` from a recen
 
 When identity constraints are present, `perform` recomputes the target element identity after resolving the path and before invoking the Accessibility action. It refuses to act if the identity digest does not match or if the current confidence is below `low`, `medium`, or `high` as requested.
 
-Every `perform` attempt appends a structured JSONL audit record before returning success or failure. The action result includes the audit record ID and log path, plus the target stable identity and identity verification result when available.
+Every `perform` attempt appends a structured JSONL audit record before returning success or failure. The action result includes the audit record ID and log path, plus the resolved target element ID, stable identity, and identity verification result when available.
 
 ## Set An Accessibility Value
 
@@ -664,7 +664,7 @@ Use `set-value` for controls that report `AXValue` in their `settableAttributes`
 .build/debug/Ln1 set-value --pid 123 --element w0.4 --expect-identity accessibilityElement:abc123 --min-identity-confidence medium --value "New title" --allow-risk medium --reason "Rename selected item"
 ```
 
-`set-value` is a medium-risk mutating Accessibility action. It checks policy before touching Accessibility APIs, resolves the target element, verifies any supplied stable identity guard, refuses elements that do not expose settable `AXValue`, sets the value, then verifies the current value by length and SHA-256 digest. The result and audit record include value lengths and digests, but not the value text.
+`set-value` is a medium-risk mutating Accessibility action. It checks policy before touching Accessibility APIs, resolves the target element, verifies any supplied stable identity guard, re-resolves stale guarded paths only on a single current identity match, refuses elements that do not expose settable `AXValue`, sets the value, then verifies the current value by length and SHA-256 digest. The result and audit record include value lengths and digests, but not the value text.
 
 By default the audit log is stored at:
 

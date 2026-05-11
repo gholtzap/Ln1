@@ -1897,6 +1897,68 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertNotNil(element["minimized"] as? Bool)
     }
 
+    func testStateElementReResolvesStalePathByStableIdentity() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility trust is not enabled.")
+        }
+
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "3",
+            "--max-children", "60"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        var candidatesByIdentity: [String: [[String: Any]]] = [:]
+
+        func collect(_ element: [String: Any]) {
+            if let stableIdentity = element["stableIdentity"] as? [String: Any],
+               let identityID = stableIdentity["id"] as? String {
+                candidatesByIdentity[identityID, default: []].append(element)
+            }
+            for child in element["children"] as? [[String: Any]] ?? [] {
+                collect(child)
+            }
+        }
+
+        for window in windows {
+            collect(window)
+        }
+
+        guard let unique = candidatesByIdentity.values
+            .compactMap({ $0.count == 1 ? $0[0] : nil })
+            .first(where: { ($0["id"] as? String)?.first == "w" }),
+              let elementID = unique["id"] as? String,
+              let stableIdentity = unique["stableIdentity"] as? [String: Any],
+              let identityID = stableIdentity["id"] as? String else {
+            throw XCTSkip("No uniquely identifiable Accessibility element was available for the frontmost app.")
+        }
+
+        let result = try runLn1([
+            "state",
+            "element",
+            "--pid", "\(pid)",
+            "--element", "w999",
+            "--expect-identity", identityID,
+            "--min-identity-confidence", "low",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let element = try XCTUnwrap(object["element"] as? [String: Any])
+        let identityVerification = try XCTUnwrap(object["identityVerification"] as? [String: Any])
+
+        XCTAssertEqual(element["id"] as? String, elementID)
+        XCTAssertEqual(identityVerification["ok"] as? Bool, true)
+        XCTAssertEqual(identityVerification["expectedID"] as? String, identityID)
+        XCTAssertEqual(identityVerification["actualID"] as? String, identityID)
+    }
+
     func testStateWaitElementReturnsStructuredVerificationForCurrentWindow() throws {
         guard AXIsProcessTrusted() else {
             throw XCTSkip("Accessibility trust is not enabled.")
