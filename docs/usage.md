@@ -999,6 +999,14 @@ Sample browser console and log metadata through the tab's DevTools WebSocket:
 
 `browser.readConsole` is a medium-risk read action because console messages can expose private web-app state. The command enables the Runtime and Log DevTools domains for a bounded sampling window and returns bounded console/log entries with source, level, message text, text length/digest, URL and line metadata when available. The audit record stores only tab metadata plus entry count and digest; it does not store message text.
 
+Sample JavaScript dialog-opening metadata through the tab's DevTools WebSocket:
+
+```sh
+.build/debug/Ln1 browser dialogs --endpoint http://127.0.0.1:9222 --id TARGET_ID --allow-risk medium --max-entries 20 --sample-ms 1000 --reason "Inspect page dialog state"
+```
+
+`browser.readDialogs` is a medium-risk read action because alert, confirm, and prompt messages can expose private web-app state. The command enables the Page DevTools domain for a bounded sampling window and returns bounded dialog-opening entries with type, message metadata, URL, frame ID, handler state, and prompt-default length/digest when available. The audit record stores only tab metadata plus entry count and digest; it does not store prompt defaults.
+
 Read bounded browser network timing metadata through the tab's DevTools WebSocket:
 
 ```sh

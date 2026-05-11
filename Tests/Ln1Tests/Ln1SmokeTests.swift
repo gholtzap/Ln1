@@ -196,6 +196,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["browser.readConsole"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readConsole"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readConsole"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["browser.readDialogs"]?["domain"] as? String, "browser")
+        XCTAssertEqual(actionByName["browser.readDialogs"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["browser.readDialogs"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["browser.readNetwork"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.readNetwork"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["browser.readNetwork"]?["mutates"] as? Bool, false)
@@ -12835,6 +12838,11 @@ final class Ln1SmokeTests: XCTestCase {
                 && $0["mutates"] as? Bool == false
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.readDialogs"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == false
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.readNetwork"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == false
@@ -13348,6 +13356,156 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(policy["allowed"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "read_console")
+    }
+
+    func testBrowserDialogsReadsEventsWithPolicyAndAuditsSummaryOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-dialogs-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpEvents = directory.appendingPathComponent("dialog-events.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try """
+        [
+          {
+            "method": "Page.javascriptDialogOpening",
+            "params": {
+              "url": "https://example.com/dialog",
+              "frameId": "frame-1",
+              "message": "dangerous confirmation",
+              "type": "confirm",
+              "hasBrowserHandler": true,
+              "defaultPrompt": "private default"
+            }
+          },
+          {
+            "method": "Page.javascriptDialogClosed",
+            "params": {
+              "result": true,
+              "userInput": "do not capture"
+            }
+          }
+        ]
+        """.write(to: cdpEvents, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Dialog Page",
+            "url": "https://example.com/dialog",
+            "webSocketDebuggerUrl": "\(cdpEvents.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "dialogs",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "dialogs",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--allow-risk", "medium",
+            "--max-entries", "1",
+            "--max-message-characters", "9",
+            "--sample-ms", "1",
+            "--audit-log", auditLog.path,
+            "--reason", "inspect dialog metadata"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let digest = try XCTUnwrap(object["digest"] as? String)
+
+        XCTAssertEqual(object["action"] as? String, "browser.readDialogs")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["entryCount"] as? Int, 1)
+        XCTAssertEqual(object["returnedCount"] as? Int, 1)
+        XCTAssertEqual(object["truncated"] as? Bool, false)
+        XCTAssertEqual(object["maxEntries"] as? Int, 1)
+        XCTAssertEqual(object["maxMessageCharacters"] as? Int, 9)
+        XCTAssertEqual(object["sampleMilliseconds"] as? Int, 1)
+        XCTAssertEqual(entry["type"] as? String, "confirm")
+        XCTAssertEqual(entry["message"] as? String, "dangerous")
+        XCTAssertEqual(entry["messageLength"] as? Int, 22)
+        XCTAssertEqual(entry["truncated"] as? Bool, true)
+        XCTAssertEqual(entry["url"] as? String, "https://example.com/dialog")
+        XCTAssertEqual(entry["frameID"] as? String, "frame-1")
+        XCTAssertEqual(entry["hasBrowserHandler"] as? Bool, true)
+        XCTAssertEqual(entry["defaultPromptLength"] as? Int, 15)
+        XCTAssertNotNil(entry["defaultPromptDigest"])
+        XCTAssertNil(entry["defaultPrompt"])
+        XCTAssertNil(entry["userInput"])
+        XCTAssertEqual(digest.count, 64)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.dialogs",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.readDialogs")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["id"] as? String, "page-1")
+        XCTAssertNil(deniedBrowserTab["dialogEntryCount"])
+        XCTAssertNil(deniedBrowserTab["dialogDigest"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.dialogs",
+            "--code", "read_dialogs",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let auditEntries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let auditEntry = try XCTUnwrap(auditEntries.first)
+        let browserTab = try XCTUnwrap(auditEntry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(auditEntry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(auditEntry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(auditEntry["command"] as? String, "browser.dialogs")
+        XCTAssertEqual(auditEntry["action"] as? String, "browser.readDialogs")
+        XCTAssertEqual(auditEntry["reason"] as? String, "inspect dialog metadata")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Dialog Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/dialog")
+        XCTAssertEqual(browserTab["dialogEntryCount"] as? Int, 1)
+        XCTAssertEqual(browserTab["dialogDigest"] as? String, digest)
+        XCTAssertNil(browserTab["entries"])
+        XCTAssertNil(browserTab["message"])
+        XCTAssertNil(browserTab["defaultPrompt"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "read_dialogs")
     }
 
     func testBrowserNetworkReadsTimingMetadataWithPolicyAndAuditsSummaryOnly() throws {
