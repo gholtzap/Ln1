@@ -13189,7 +13189,7 @@ final class Ln1SmokeTests: XCTestCase {
         let domSnapshot: [String: Any] = [
             "url": "https://example.com/form",
             "title": "Example Form",
-            "elementCount": 4,
+            "elementCount": 6,
             "truncated": true,
             "elements": [
                 [
@@ -13259,6 +13259,51 @@ final class Ln1SmokeTests: XCTestCase {
                     "disabled": false,
                     "hasValue": NSNull(),
                     "valueLength": NSNull()
+                ],
+                [
+                    "id": "dom.4",
+                    "parentID": "dom.3",
+                    "depth": 2,
+                    "selector": "#shadow-action",
+                    "context": "shadow-root",
+                    "framePath": "top",
+                    "frameURL": NSNull(),
+                    "frameAccessible": NSNull(),
+                    "shadowPath": "button[aria-controls=\"menu-1\"]",
+                    "tagName": "button",
+                    "role": "button",
+                    "text": "Shadow Action",
+                    "textLength": 13,
+                    "attributes": ["id": "shadow-action"],
+                    "inputType": NSNull(),
+                    "checked": NSNull(),
+                    "disabled": false,
+                    "hasValue": NSNull(),
+                    "valueLength": NSNull()
+                ],
+                [
+                    "id": "dom.5",
+                    "parentID": "dom.0",
+                    "depth": 1,
+                    "selector": "iframe[name=\"checkout\"]",
+                    "context": "document",
+                    "framePath": "top",
+                    "frameURL": "https://payments.example/checkout",
+                    "frameAccessible": false,
+                    "shadowPath": NSNull(),
+                    "tagName": "iframe",
+                    "role": NSNull(),
+                    "text": NSNull(),
+                    "textLength": 0,
+                    "attributes": [
+                        "name": "checkout",
+                        "title": "Payment"
+                    ],
+                    "inputType": NSNull(),
+                    "checked": NSNull(),
+                    "disabled": NSNull(),
+                    "hasValue": NSNull(),
+                    "valueLength": NSNull()
                 ]
             ]
         ]
@@ -13305,7 +13350,7 @@ final class Ln1SmokeTests: XCTestCase {
             "--endpoint", directory.path,
             "--id", "page-1",
             "--allow-risk", "medium",
-            "--max-elements", "4",
+            "--max-elements", "6",
             "--max-text-characters", "40",
             "--audit-log", auditLog.path,
             "--reason", "inspect form controls"
@@ -13318,17 +13363,20 @@ final class Ln1SmokeTests: XCTestCase {
         let link = try XCTUnwrap(elements.first { $0["id"] as? String == "dom.1" })
         let input = try XCTUnwrap(elements.first { $0["id"] as? String == "dom.2" })
         let button = try XCTUnwrap(elements.first { $0["id"] as? String == "dom.3" })
+        let shadowButton = try XCTUnwrap(elements.first { $0["id"] as? String == "dom.4" })
+        let iframe = try XCTUnwrap(elements.first { $0["id"] as? String == "dom.5" })
         let linkAttributes = try XCTUnwrap(link["attributes"] as? [String: Any])
         let inputAttributes = try XCTUnwrap(input["attributes"] as? [String: Any])
         let buttonAttributes = try XCTUnwrap(button["attributes"] as? [String: Any])
+        let iframeAttributes = try XCTUnwrap(iframe["attributes"] as? [String: Any])
 
         XCTAssertEqual(object["action"] as? String, "browser.readDOM")
         XCTAssertEqual(object["risk"] as? String, "medium")
         XCTAssertEqual(object["url"] as? String, "https://example.com/form")
         XCTAssertEqual(object["title"] as? String, "Example Form")
-        XCTAssertEqual(object["elementCount"] as? Int, 4)
+        XCTAssertEqual(object["elementCount"] as? Int, 6)
         XCTAssertEqual(object["truncated"] as? Bool, true)
-        XCTAssertEqual(object["maxElements"] as? Int, 4)
+        XCTAssertEqual(object["maxElements"] as? Int, 6)
         XCTAssertEqual(object["maxTextCharacters"] as? Int, 40)
         XCTAssertNotNil(object["digest"])
         XCTAssertEqual(tab["id"] as? String, "page-1")
@@ -13348,6 +13396,15 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(buttonAttributes["aria-controls"] as? String, "menu-1")
         XCTAssertEqual(buttonAttributes["aria-expanded"] as? String, "false")
         XCTAssertEqual(buttonAttributes["aria-pressed"] as? String, "false")
+        XCTAssertEqual(shadowButton["context"] as? String, "shadow-root")
+        XCTAssertEqual(shadowButton["parentID"] as? String, "dom.3")
+        XCTAssertEqual(shadowButton["shadowPath"] as? String, "button[aria-controls=\"menu-1\"]")
+        XCTAssertEqual(shadowButton["selector"] as? String, "#shadow-action")
+        XCTAssertEqual(iframe["context"] as? String, "document")
+        XCTAssertEqual(iframe["framePath"] as? String, "top")
+        XCTAssertEqual(iframe["frameURL"] as? String, "https://payments.example/checkout")
+        XCTAssertEqual(iframe["frameAccessible"] as? Bool, false)
+        XCTAssertEqual(iframeAttributes["title"] as? String, "Payment")
 
         let deniedAudit = try runLn1([
             "audit",
@@ -13391,7 +13448,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(entry["action"] as? String, "browser.readDOM")
         XCTAssertEqual(entry["reason"] as? String, "inspect form controls")
         XCTAssertEqual(browserTab["id"] as? String, "page-1")
-        XCTAssertEqual(browserTab["domNodeCount"] as? Int, 4)
+        XCTAssertEqual(browserTab["domNodeCount"] as? Int, 6)
         XCTAssertNotNil(browserTab["domDigest"])
         XCTAssertNil(browserTab["elements"])
         XCTAssertEqual(policy["allowed"] as? Bool, true)

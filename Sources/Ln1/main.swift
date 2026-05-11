@@ -1483,6 +1483,11 @@ struct BrowserDOMElement: Codable {
     let parentID: String?
     let depth: Int
     let selector: String?
+    let context: String?
+    let framePath: String?
+    let frameURL: String?
+    let frameAccessible: Bool?
+    let shadowPath: String?
     let tagName: String
     let role: String?
     let text: String?
@@ -19472,7 +19477,6 @@ final class Ln1CLI {
         (() => {
           const maxElements = \(maxElements);
           const maxTextCharacters = \(maxTextCharacters);
-          const root = document.body || document.documentElement;
           const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
           const attrNames = [
             "id", "class", "name", "aria-label", "placeholder", "title", "href", "type",
@@ -19481,7 +19485,17 @@ final class Ln1CLI {
           ];
           const elements = [];
           const ids = new Map();
-          const queue = root ? [{ element: root, depth: 0 }] : [];
+          const root = document.body || document.documentElement;
+          const queue = root ? [{
+            element: root,
+            depth: 0,
+            parentID: null,
+            context: "document",
+            framePath: "top",
+            frameURL: location.href || null,
+            frameAccessible: null,
+            shadowPath: null
+          }] : [];
           const cssEscape = (value) => {
             if (window.CSS && typeof window.CSS.escape === "function") {
               return window.CSS.escape(value);
@@ -19492,35 +19506,37 @@ final class Ln1CLI {
             });
           };
           const cssString = (value) => String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
-          const isUniqueSelector = (selector) => {
+          const isUniqueSelector = (selector, rootNode = document) => {
             try {
-              return document.querySelectorAll(selector).length === 1;
+              return rootNode.querySelectorAll(selector).length === 1;
             } catch {
               return false;
             }
           };
           const selectorFor = (element) => {
+            const rootNode = typeof element.getRootNode === "function" ? element.getRootNode() : document;
+            const uniqueInRoot = (selector) => isUniqueSelector(selector, rootNode);
             const tag = element.tagName.toLowerCase();
             if (element.id) {
               const candidate = `#${cssEscape(element.id)}`;
-              if (isUniqueSelector(candidate)) return candidate;
+              if (uniqueInRoot(candidate)) return candidate;
             }
 
             for (const name of ["name", "aria-label", "placeholder", "title", "href", "aria-controls", "aria-current"]) {
               const value = element.getAttribute(name);
               if (!value) continue;
               const candidate = `${tag}[${name}="${cssString(value)}"]`;
-              if (isUniqueSelector(candidate)) return candidate;
+              if (uniqueInRoot(candidate)) return candidate;
             }
 
             const parts = [];
             let current = element;
-            while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.documentElement) {
+            while (current && current.nodeType === Node.ELEMENT_NODE && current !== rootNode.documentElement) {
               let part = current.tagName.toLowerCase();
               if (current.id) {
                 parts.unshift(`#${cssEscape(current.id)}`);
                 const candidate = parts.join(" > ");
-                if (isUniqueSelector(candidate)) return candidate;
+                if (uniqueInRoot(candidate)) return candidate;
                 current = current.parentElement;
                 continue;
               }
@@ -19534,7 +19550,7 @@ final class Ln1CLI {
               parts.unshift(part);
 
               const candidate = parts.join(" > ");
-              if (isUniqueSelector(candidate)) return candidate;
+              if (uniqueInRoot(candidate)) return candidate;
               current = current.parentElement;
             }
             return parts.join(" > ") || tag;
@@ -19573,8 +19589,17 @@ final class Ln1CLI {
           };
 
           while (queue.length && elements.length < maxElements) {
-            const { element, depth } = queue.shift();
-            if (ignoredTags.has(element.tagName)) continue;
+            const {
+              element,
+              depth,
+              parentID,
+              context,
+              framePath,
+              frameURL,
+              frameAccessible,
+              shadowPath
+            } = queue.shift();
+            if (!element.tagName || ignoredTags.has(element.tagName)) continue;
 
             const id = `dom.${elements.length}`;
             ids.set(element, id);
@@ -19589,12 +19614,28 @@ final class Ln1CLI {
             const inputType = element.tagName === "INPUT" ? (element.getAttribute("type") || "text").toLowerCase() : null;
             const suppressValueMetadata = inputType === "password" || inputType === "hidden";
             const value = !suppressValueMetadata && "value" in element ? String(element.value || "") : null;
+            const tagName = element.tagName.toLowerCase();
+            let elementFrameURL = context === "iframe" ? frameURL : null;
+            let elementFrameAccessible = frameAccessible;
+            if (tagName === "iframe") {
+              elementFrameURL = element.src || element.getAttribute("src") || null;
+              try {
+                elementFrameAccessible = Boolean(element.contentDocument && (element.contentDocument.body || element.contentDocument.documentElement));
+              } catch {
+                elementFrameAccessible = false;
+              }
+            }
             elements.push({
               id,
-              parentID: ids.get(element.parentElement) || null,
+              parentID,
               depth,
               selector: selectorFor(element),
-              tagName: element.tagName.toLowerCase(),
+              context,
+              framePath,
+              frameURL: elementFrameURL,
+              frameAccessible: elementFrameAccessible,
+              shadowPath,
+              tagName,
               role: inferredRole(element),
               text: text.text || null,
               textLength: text.length,
@@ -19607,7 +19648,56 @@ final class Ln1CLI {
             });
 
             for (const child of element.children) {
-              queue.push({ element: child, depth: depth + 1 });
+              queue.push({
+                element: child,
+                depth: depth + 1,
+                parentID: id,
+                context,
+                framePath,
+                frameURL,
+                frameAccessible,
+                shadowPath
+              });
+            }
+
+            if (element.shadowRoot) {
+              const hostSelector = selectorFor(element);
+              const nextShadowPath = shadowPath ? `${shadowPath} > ${hostSelector}` : hostSelector;
+              for (const child of element.shadowRoot.children) {
+                queue.push({
+                  element: child,
+                  depth: depth + 1,
+                  parentID: id,
+                  context: "shadow-root",
+                  framePath,
+                  frameURL,
+                  frameAccessible,
+                  shadowPath: nextShadowPath
+                });
+              }
+            }
+
+            if (tagName === "iframe") {
+              try {
+                const frameDocument = element.contentDocument;
+                const frameRoot = frameDocument ? (frameDocument.body || frameDocument.documentElement) : null;
+                if (frameRoot) {
+                  const nextFramePath = `${framePath} > ${selectorFor(element)}`;
+                  const nextFrameURL = element.contentWindow?.location?.href || element.src || null;
+                  queue.push({
+                    element: frameRoot,
+                    depth: depth + 1,
+                    parentID: id,
+                    context: "iframe",
+                    framePath: nextFramePath,
+                    frameURL: nextFrameURL,
+                    frameAccessible: true,
+                    shadowPath: null
+                  });
+                }
+              } catch {
+                // Cross-origin frames are represented by their iframe element metadata.
+              }
             }
           }
 
