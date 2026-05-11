@@ -2196,105 +2196,11 @@ struct FileRollbackResult: Codable {
     let auditLogPath: String
 }
 
-private struct DevToolsTarget: Decodable {
-    let id: String
-    let type: String?
-    let title: String?
-    let url: String?
-    let description: String?
-    let webSocketDebuggerUrl: String?
-    let devtoolsFrontendUrl: String?
-    let faviconUrl: String?
-    let attached: Bool?
-}
-
-private struct CDPEvaluateResponse: Decodable {
-    let id: Int?
-    let result: CDPEvaluateResult?
-    let error: CDPError?
-}
-
-private struct CDPCommandResponse: Decodable {
-    let id: Int?
-    let result: CDPCommandResult?
-    let error: CDPError?
-}
-
-private struct CDPCommandResult: Decodable {
-    let data: String?
-}
-
 private struct BrowserKeyDefinition {
     let key: String
     let code: String
     let windowsVirtualKeyCode: Int
     let text: String?
-}
-
-private struct CDPEvaluateResult: Decodable {
-    let result: CDPRemoteObject
-}
-
-private struct CDPRemoteObject: Decodable {
-    let type: String?
-    let value: String?
-    let description: String?
-}
-
-private struct CDPError: Decodable {
-    let code: Int
-    let message: String
-}
-
-private final class CDPResponseBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Result<CDPEvaluateResponse, Error>?
-
-    func set(_ newValue: Result<CDPEvaluateResponse, Error>) {
-        lock.lock()
-        value = newValue
-        lock.unlock()
-    }
-
-    func get() -> Result<CDPEvaluateResponse, Error>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-}
-
-private final class CDPCommandResponseBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Result<CDPCommandResponse, Error>?
-
-    func set(_ newValue: Result<CDPCommandResponse, Error>) {
-        lock.lock()
-        value = newValue
-        lock.unlock()
-    }
-
-    func get() -> Result<CDPCommandResponse, Error>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-}
-
-private final class DataResponseBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: Result<Data, Error>?
-
-    func set(_ newValue: Result<Data, Error>) {
-        lock.lock()
-        value = newValue
-        lock.unlock()
-    }
-
-    func get() -> Result<Data, Error>? {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
