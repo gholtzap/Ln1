@@ -1867,6 +1867,7 @@ struct ActionAuditRecord: Codable {
     var policy: AuditPolicyDecision? = nil
     var fileSource: FileAuditTarget? = nil
     var fileDestination: FileAuditTarget? = nil
+    var fileRollbackSnapshotPath: String? = nil
     var verification: FileOperationVerification? = nil
     var identityVerification: IdentityVerification? = nil
     var clipboard: ClipboardAuditSummary? = nil
@@ -2182,6 +2183,7 @@ struct FileTextWriteResult: Codable {
     let writtenLength: Int
     let writtenBytes: Int
     let writtenDigest: String
+    let rollbackSnapshotPath: String?
     let verification: FileOperationVerification
     let message: String
     let auditID: String
@@ -2200,10 +2202,36 @@ struct FileTextAppendResult: Codable {
     let appendedBytes: Int
     let appendedDigest: String
     let finalBytes: Int
+    let rollbackSnapshotPath: String?
     let verification: FileOperationVerification
     let message: String
     let auditID: String
     let auditLogPath: String
+}
+
+struct FileTextRollbackResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let rollbackOfAuditID: String
+    let path: String
+    let previous: FileAuditTarget
+    let current: FileAuditTarget
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct FileTextRollbackSnapshot: Codable {
+    let version: Int
+    let auditID: String
+    let savedAt: String
+    let path: String
+    let previousExists: Bool
+    let previousTextLength: Int?
+    let previousTextDigest: String?
+    let previousTextBase64: String?
 }
 
 struct DirectoryOperationResult: Codable {
@@ -15467,6 +15495,10 @@ final class Ln1CLI {
             let auditRecordID = try requiredOption("--audit-id")
             let result = try rollbackFileMove(auditRecordID: auditRecordID)
             try writeJSON(result)
+        case "rollback-text":
+            let auditRecordID = try requiredOption("--audit-id")
+            let result = try rollbackFileText(auditRecordID: auditRecordID)
+            try writeJSON(result)
         default:
             throw CommandError(description: "unknown files mode '\(mode)'")
         }
@@ -16234,6 +16266,8 @@ final class Ln1CLI {
         let risk = fileActionRisk(for: action)
         let policy = policyDecision(actionRisk: risk)
         let previousRecord = try? fileRecord(for: url)
+        let rollbackSnapshotURL = option("--rollback-snapshot")
+            .map { URL(fileURLWithPath: expandedPath($0)).standardizedFileURL }
         var previousTarget = previousRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: url)
         var currentTarget = previousTarget
         var verification: FileOperationVerification?
@@ -16253,6 +16287,7 @@ final class Ln1CLI {
                 policy: policy,
                 fileSource: previousTarget,
                 fileDestination: currentTarget,
+                fileRollbackSnapshotPath: rollbackSnapshotURL?.path,
                 verification: verification,
                 outcome: AuditOutcome(ok: ok, code: code, message: message)
             ), to: auditURL)
@@ -16303,6 +16338,15 @@ final class Ln1CLI {
                 throw CommandError(description: message)
             }
 
+            if let rollbackSnapshotURL {
+                try writeFileTextRollbackSnapshot(
+                    auditID: auditID,
+                    fileURL: url,
+                    previousRecord: previousRecord,
+                    to: rollbackSnapshotURL
+                )
+            }
+
             try text.write(to: url, atomically: true, encoding: .utf8)
 
             let currentRecord = try fileRecord(for: url)
@@ -16338,6 +16382,7 @@ final class Ln1CLI {
                 writtenLength: text.count,
                 writtenBytes: writtenBytes,
                 writtenDigest: writtenDigest,
+                rollbackSnapshotPath: rollbackSnapshotURL?.path,
                 verification: verification!,
                 message: message,
                 auditID: auditID,
@@ -16405,6 +16450,8 @@ final class Ln1CLI {
         let risk = fileActionRisk(for: action)
         let policy = policyDecision(actionRisk: risk)
         let previousRecord = try? fileRecord(for: url)
+        let rollbackSnapshotURL = option("--rollback-snapshot")
+            .map { URL(fileURLWithPath: expandedPath($0)).standardizedFileURL }
         var previousTarget = previousRecord.map { fileAuditTarget(record: $0, exists: true) } ?? fileAuditTarget(url: url)
         var currentTarget = previousTarget
         var verification: FileOperationVerification?
@@ -16424,6 +16471,7 @@ final class Ln1CLI {
                 policy: policy,
                 fileSource: previousTarget,
                 fileDestination: currentTarget,
+                fileRollbackSnapshotPath: rollbackSnapshotURL?.path,
                 verification: verification,
                 outcome: AuditOutcome(ok: ok, code: code, message: message)
             ), to: auditURL)
@@ -16457,6 +16505,14 @@ final class Ln1CLI {
                 }
 
                 previousSize = try fileByteSize(at: url)
+                if let rollbackSnapshotURL {
+                    try writeFileTextRollbackSnapshot(
+                        auditID: auditID,
+                        fileURL: url,
+                        previousRecord: previousRecord,
+                        to: rollbackSnapshotURL
+                    )
+                }
                 let handle = try FileHandle(forWritingTo: url)
                 defer { try? handle.close() }
                 try handle.seekToEnd()
@@ -16483,6 +16539,14 @@ final class Ln1CLI {
                 }
 
                 previousSize = 0
+                if let rollbackSnapshotURL {
+                    try writeFileTextRollbackSnapshot(
+                        auditID: auditID,
+                        fileURL: url,
+                        previousRecord: previousRecord,
+                        to: rollbackSnapshotURL
+                    )
+                }
                 try appendedData.write(to: url, options: .atomic)
             }
 
@@ -16517,6 +16581,7 @@ final class Ln1CLI {
                 appendedBytes: appendedData.count,
                 appendedDigest: sha256Digest(text),
                 finalBytes: currentRecord.sizeBytes ?? previousSize + appendedData.count,
+                rollbackSnapshotPath: rollbackSnapshotURL?.path,
                 verification: verification!,
                 message: message,
                 auditID: auditID,
@@ -16576,6 +16641,319 @@ final class Ln1CLI {
             ok: true,
             code: "text_appended",
             message: "file grew by the requested byte length and ends with the requested text bytes"
+        )
+    }
+
+    private func writeFileTextRollbackSnapshot(
+        auditID: String,
+        fileURL: URL,
+        previousRecord: FileRecord?,
+        to url: URL
+    ) throws {
+        let previousText: String?
+        if let previousRecord {
+            guard previousRecord.kind == "regularFile" else {
+                throw CommandError(description: "file text rollback snapshots support regular files only")
+            }
+            let data = try Data(contentsOf: fileURL)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw CommandError(description: "previous file contents are not valid UTF-8 at \(fileURL.path)")
+            }
+            previousText = text
+        } else {
+            previousText = nil
+        }
+
+        let textData = previousText?.data(using: .utf8)
+        let snapshot = FileTextRollbackSnapshot(
+            version: 1,
+            auditID: auditID,
+            savedAt: ISO8601DateFormatter().string(from: Date()),
+            path: fileURL.path,
+            previousExists: previousRecord != nil,
+            previousTextLength: previousText?.count,
+            previousTextDigest: previousText.map(sha256Digest),
+            previousTextBase64: textData?.base64EncodedString()
+        )
+        let data = try JSONEncoder().encode(snapshot)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: url.path)
+    }
+
+    private func readFileTextRollbackSnapshot(from url: URL) throws -> FileTextRollbackSnapshot {
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(FileTextRollbackSnapshot.self, from: data)
+        } catch {
+            throw CommandError(description: "could not read file text rollback snapshot at \(url.path): \(error.localizedDescription)")
+        }
+    }
+
+    private func fileTextRollbackText(from snapshot: FileTextRollbackSnapshot) throws -> String? {
+        guard snapshot.previousExists else {
+            return nil
+        }
+        guard let base64 = snapshot.previousTextBase64,
+              let data = Data(base64Encoded: base64),
+              let text = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "file text rollback snapshot does not contain valid UTF-8 text")
+        }
+        guard snapshot.previousTextLength == text.count,
+              snapshot.previousTextDigest == sha256Digest(text) else {
+            throw CommandError(description: "file text rollback snapshot text does not match its metadata")
+        }
+        return text
+    }
+
+    private func rollbackFileText(auditRecordID: String) throws -> FileTextRollbackResult {
+        let action = "filesystem.rollbackTextWrite"
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let risk = fileActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        var rollbackSourceTarget: FileAuditTarget?
+        var restoreTarget: FileAuditTarget?
+        var verification: FileOperationVerification?
+        var snapshotPath: String?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "files.rollback-text",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                fileSource: rollbackSourceTarget,
+                fileDestination: restoreTarget,
+                fileRollbackSnapshotPath: snapshotPath,
+                verification: verification,
+                rollbackOfAuditID: auditRecordID,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            let records = try readAuditRecords(from: auditURL, limit: Int.max)
+            guard let originalRecord = records.first(where: { $0.id == auditRecordID }) else {
+                let message = "no audit record found with id \(auditRecordID)"
+                try writeAudit(ok: false, code: "rollback_record_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let supportedCodes: Set<String> = [
+                "created_text_file",
+                "overwrote_text_file",
+                "appended_text_file",
+                "created_appended_text_file"
+            ]
+            guard (originalRecord.command == "files.write-text" || originalRecord.command == "files.append-text"),
+                  originalRecord.outcome.ok,
+                  supportedCodes.contains(originalRecord.outcome.code) else {
+                let message = "audit record \(auditRecordID) is not a successful file text write or append record"
+                try writeAudit(ok: false, code: "unsupported_rollback_record", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard let originalSource = originalRecord.fileSource,
+                  let writtenDestination = originalRecord.fileDestination else {
+                let message = "audit record \(auditRecordID) does not contain file text source and destination metadata"
+                try writeAudit(ok: false, code: "rollback_metadata_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard let originalSnapshotPath = originalRecord.fileRollbackSnapshotPath else {
+                let message = "audit record \(auditRecordID) does not include a rollback snapshot path"
+                try writeAudit(ok: false, code: "rollback_snapshot_missing", message: message)
+                throw CommandError(description: message)
+            }
+            snapshotPath = originalSnapshotPath
+
+            let fileURL = URL(fileURLWithPath: writtenDestination.path).standardizedFileURL
+            rollbackSourceTarget = FileAuditTarget(
+                path: fileURL.path,
+                id: nil,
+                kind: nil,
+                sizeBytes: nil,
+                exists: FileManager.default.fileExists(atPath: fileURL.path)
+            )
+            restoreTarget = originalSource
+
+            let snapshotURL = URL(fileURLWithPath: expandedPath(originalSnapshotPath)).standardizedFileURL
+            let snapshot = try readFileTextRollbackSnapshot(from: snapshotURL)
+            guard snapshot.auditID == auditRecordID,
+                  URL(fileURLWithPath: snapshot.path).standardizedFileURL.path == fileURL.path else {
+                let message = "file text rollback snapshot does not match audit record \(auditRecordID)"
+                try writeAudit(ok: false, code: "rollback_snapshot_mismatch", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let currentRecord = try fileRecord(for: fileURL)
+            rollbackSourceTarget = fileAuditTarget(record: currentRecord, exists: true)
+            guard fileTextRecord(currentRecord, matches: writtenDestination) else {
+                let message = "current file does not match audited write result at \(fileURL.path)"
+                try writeAudit(ok: false, code: "rollback_current_mismatch", message: message)
+                throw CommandError(description: message)
+            }
+
+            let parentURL = fileURL.deletingLastPathComponent()
+            guard FileManager.default.isWritableFile(atPath: parentURL.path) else {
+                let message = "file parent directory is not writable at \(parentURL.path)"
+                try writeAudit(ok: false, code: "rollback_parent_unwritable", message: message)
+                throw CommandError(description: message)
+            }
+
+            if snapshot.previousExists {
+                guard currentRecord.writable else {
+                    let message = "current file is not writable at \(fileURL.path)"
+                    try writeAudit(ok: false, code: "rollback_file_unwritable", message: message)
+                    throw CommandError(description: message)
+                }
+                guard let restoredText = try fileTextRollbackText(from: snapshot) else {
+                    let message = "file text rollback snapshot is missing previous text"
+                    try writeAudit(ok: false, code: "rollback_snapshot_missing_text", message: message)
+                    throw CommandError(description: message)
+                }
+                try restoredText.write(to: fileURL, atomically: true, encoding: .utf8)
+            } else {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+
+            if let restoredRecord = try? refreshedFileRecord(for: fileURL) {
+                restoreTarget = fileAuditTarget(record: restoredRecord, exists: true)
+            } else {
+                restoreTarget = FileAuditTarget(
+                    path: fileURL.path,
+                    id: originalSource.id,
+                    kind: originalSource.kind,
+                    sizeBytes: originalSource.sizeBytes,
+                    exists: false
+                )
+            }
+
+            verification = try verifyFileTextRollback(
+                path: fileURL.path,
+                expectedPrevious: originalSource,
+                snapshot: snapshot
+            )
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "file text rollback verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Rolled back file text write \(auditRecordID) at \(fileURL.path)."
+            try writeAudit(ok: true, code: "rolled_back_text_write", message: message)
+
+            return FileTextRollbackResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                rollbackOfAuditID: auditRecordID,
+                path: fileURL.path,
+                previous: rollbackSourceTarget!,
+                current: restoreTarget!,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func fileTextRecord(_ record: FileRecord, matches target: FileAuditTarget) -> Bool {
+        record.path == target.path
+            && (target.kind == nil || record.kind == target.kind)
+            && (target.sizeBytes == nil || record.sizeBytes == target.sizeBytes)
+    }
+
+    private func verifyFileTextRollback(
+        path: String,
+        expectedPrevious: FileAuditTarget,
+        snapshot: FileTextRollbackSnapshot
+    ) throws -> FileOperationVerification {
+        if snapshot.previousExists {
+            let restoredRecord = try fileRecord(for: URL(fileURLWithPath: path))
+            guard restoredRecord.path == expectedPrevious.path else {
+                return FileOperationVerification(
+                    ok: false,
+                    code: "restored_path_mismatch",
+                    message: "restored file path does not match original path"
+                )
+            }
+            guard restoredRecord.kind == "regularFile" else {
+                return FileOperationVerification(
+                    ok: false,
+                    code: "restored_not_regular_file",
+                    message: "restored path is not a regular file"
+                )
+            }
+            if let expectedSize = expectedPrevious.sizeBytes, restoredRecord.sizeBytes != expectedSize {
+                return FileOperationVerification(
+                    ok: false,
+                    code: "restored_size_mismatch",
+                    message: "restored file size does not match original metadata"
+                )
+            }
+            let text = try String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8)
+            guard snapshot.previousTextLength == text.count,
+                  snapshot.previousTextDigest == sha256Digest(text) else {
+                return FileOperationVerification(
+                    ok: false,
+                    code: "restored_text_mismatch",
+                    message: "restored file text does not match rollback snapshot metadata"
+                )
+            }
+            return FileOperationVerification(
+                ok: true,
+                code: "text_restored",
+                message: "file text matches the rollback snapshot previous state"
+            )
+        }
+
+        guard !FileManager.default.fileExists(atPath: path) else {
+            return FileOperationVerification(
+                ok: false,
+                code: "restored_missing_mismatch",
+                message: "file still exists after rollback to missing state"
+            )
+        }
+        guard expectedPrevious.exists == false else {
+            return FileOperationVerification(
+                ok: false,
+                code: "previous_metadata_mismatch",
+                message: "audit source metadata did not describe a missing file"
+            )
+        }
+        return FileOperationVerification(
+            ok: true,
+            code: "missing_restored",
+            message: "file was removed to restore the audited missing previous state"
         )
     }
 
@@ -24503,7 +24881,7 @@ final class Ln1CLI {
         switch action {
         case "filesystem.stat", "filesystem.list", "filesystem.search", "filesystem.wait", "filesystem.watch", "filesystem.checksum", "filesystem.compare", "filesystem.plan":
             return "low"
-        case "filesystem.readText", "filesystem.tailText", "filesystem.readLines", "filesystem.readJSON", "filesystem.readPropertyList", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove":
+        case "filesystem.readText", "filesystem.tailText", "filesystem.readLines", "filesystem.readJSON", "filesystem.readPropertyList", "filesystem.writeText", "filesystem.appendText", "filesystem.duplicate", "filesystem.move", "filesystem.createDirectory", "filesystem.rollbackMove", "filesystem.rollbackTextWrite":
             return "medium"
         default:
             return "unknown"
@@ -24700,6 +25078,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "filesystem.move", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.createDirectory", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "filesystem.rollbackMove", domain: "filesystem", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "filesystem.rollbackTextWrite", domain: "filesystem", risk: "medium", mutates: true),
             PolicyActionRecord(name: "clipboard.state", domain: "clipboard", risk: "low", mutates: false),
             PolicyActionRecord(name: "clipboard.wait", domain: "clipboard", risk: "low", mutates: false),
             PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false),
@@ -26312,8 +26691,8 @@ final class Ln1CLI {
           Ln1 files read-lines --path PATH --allow-risk medium [--start-line N] [--line-count N] [--max-line-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files read-json --path PATH --allow-risk medium [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
           Ln1 files read-plist --path PATH --allow-risk medium [--pointer POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-file-bytes N] [--reason TEXT] [--audit-log PATH]
-          Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH]
-          Ln1 files append-text --path PATH --text TEXT --allow-risk medium [--create] [--reason TEXT] [--audit-log PATH]
+          Ln1 files write-text --path PATH --text TEXT --allow-risk medium [--overwrite] [--reason TEXT] [--audit-log PATH] [--rollback-snapshot PATH]
+          Ln1 files append-text --path PATH --text TEXT --allow-risk medium [--create] [--reason TEXT] [--audit-log PATH] [--rollback-snapshot PATH]
           Ln1 files wait --path PATH [--exists true|false] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--timeout-ms N] [--interval-ms N]
           Ln1 files watch --path PATH [--depth N] [--limit N] [--include-hidden] [--timeout-ms N] [--interval-ms N]
           Ln1 files checksum --path PATH [--algorithm sha256] [--max-file-bytes N]
@@ -26325,6 +26704,7 @@ final class Ln1CLI {
           Ln1 files move --path SOURCE --to DESTINATION --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 files mkdir --path PATH --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 files rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
+          Ln1 files rollback-text --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH]
           Ln1 clipboard state [--pasteboard NAME]
           Ln1 clipboard wait [--changed-from N] [--has-string true|false] [--string-digest HEX] [--timeout-ms N] [--interval-ms N] [--pasteboard NAME]
           Ln1 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
@@ -26402,8 +26782,8 @@ final class Ln1CLI {
           - `files read-lines` returns bounded, numbered UTF-8 lines from one regular file only after medium-risk approval and audits metadata without storing text.
           - `files read-json` returns a bounded typed JSON tree, optionally at a JSON Pointer, from one regular file only after medium-risk approval and audits metadata without storing JSON values.
           - `files read-plist` returns a bounded typed property list tree, optionally at a pointer, from one regular file only after medium-risk approval and audits metadata without storing property list values.
-          - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs.
-          - `files append-text` appends UTF-8 text to one regular file, or creates it with `--create`, after medium-risk approval and verifies by size/tail bytes without storing text in audit logs.
+          - `files write-text` creates one UTF-8 text file, or overwrites with `--overwrite`, after medium-risk approval and verifies by length/digest without storing text in audit logs; pass `--rollback-snapshot` to store a local 0600 compensating undo token.
+          - `files append-text` appends UTF-8 text to one regular file, or creates it with `--create`, after medium-risk approval and verifies by size/tail bytes without storing text in audit logs; pass `--rollback-snapshot` to store a local 0600 compensating undo token.
           - `files wait` waits for a path to exist, disappear, or match expected size/digest metadata.
           - `files watch` waits for created, deleted, or modified file metadata events under a path and returns normalized event records.
           - `files checksum` returns a bounded SHA-256 digest for a regular file without exposing file contents.
@@ -26413,6 +26793,7 @@ final class Ln1CLI {
           - `files move` moves one regular file to a new path, refuses overwrites, verifies the result, and writes an audit record.
           - `files mkdir` creates one directory, refuses existing paths, verifies the result, and writes an audit record.
           - `files rollback` restores a successful audited file move after validating current filesystem metadata.
+          - `files rollback-text` restores a successful audited text write or append from its rollback snapshot after validating current filesystem metadata.
           - `clipboard state` reports pasteboard metadata and text digest without returning clipboard text.
           - `clipboard wait` waits for pasteboard metadata changes without returning clipboard text.
           - `clipboard read-text` returns bounded text only after medium-risk policy approval and audits metadata without storing text.
@@ -26900,11 +27281,13 @@ final class Ln1CLI {
             actions.append(FileAction(name: "filesystem.duplicate", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.move", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.rollbackMove", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.rollbackTextWrite", risk: "medium", mutates: true))
         }
 
         if kind == "regularFile", writable {
             actions.append(FileAction(name: "filesystem.writeText", risk: "medium", mutates: true))
             actions.append(FileAction(name: "filesystem.appendText", risk: "medium", mutates: true))
+            actions.append(FileAction(name: "filesystem.rollbackTextWrite", risk: "medium", mutates: true))
         }
 
         return actions

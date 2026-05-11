@@ -163,6 +163,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["filesystem.createDirectory"]?["domain"] as? String, "filesystem")
         XCTAssertEqual(actionByName["filesystem.rollbackMove"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["filesystem.rollbackMove"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["filesystem.rollbackTextWrite"]?["domain"] as? String, "filesystem")
+        XCTAssertEqual(actionByName["filesystem.rollbackTextWrite"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["filesystem.rollbackTextWrite"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["clipboard.state"]?["domain"] as? String, "clipboard")
         XCTAssertEqual(actionByName["clipboard.state"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["clipboard.state"]?["mutates"] as? Bool, false)
@@ -16453,6 +16456,135 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "created_appended_text_file")
         XCTAssertNil(entry["text"])
+    }
+
+    func testFilesRollbackTextRestoresAuditedOverwriteFromSnapshot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-file-text-rollback-write-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let snapshot = directory.appendingPathComponent("rollback.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "old text".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let write = try runLn1([
+            "files",
+            "write-text",
+            "--path", file.path,
+            "--text", "new text",
+            "--overwrite",
+            "--allow-risk", "medium",
+            "--rollback-snapshot", snapshot.path,
+            "--audit-log", auditLog.path,
+            "--reason", "write before rollback"
+        ])
+
+        XCTAssertEqual(write.status, 0, write.stderr)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "new text")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: snapshot.path))
+        let writeObject = try decodeJSONObject(write.stdout)
+        let writeAuditID = try XCTUnwrap(writeObject["auditID"] as? String)
+        XCTAssertEqual(writeObject["rollbackSnapshotPath"] as? String, snapshot.path)
+
+        let rollback = try runLn1([
+            "files",
+            "rollback-text",
+            "--audit-id", writeAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "undo write"
+        ])
+
+        XCTAssertEqual(rollback.status, 0, rollback.stderr)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "old text")
+        let object = try decodeJSONObject(rollback.stdout)
+        let previous = try XCTUnwrap(object["previous"] as? [String: Any])
+        let current = try XCTUnwrap(object["current"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["action"] as? String, "filesystem.rollbackTextWrite")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["rollbackOfAuditID"] as? String, writeAuditID)
+        XCTAssertEqual(object["path"] as? String, file.path)
+        XCTAssertEqual(previous["path"] as? String, file.path)
+        XCTAssertEqual(previous["sizeBytes"] as? Int, 8)
+        XCTAssertEqual(current["path"] as? String, file.path)
+        XCTAssertEqual(current["kind"] as? String, "regularFile")
+        XCTAssertEqual(current["sizeBytes"] as? Int, 8)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "text_restored")
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "files.rollback-text",
+            "--code", "rolled_back_text_write",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "files.rollback-text")
+        XCTAssertEqual(entry["action"] as? String, "filesystem.rollbackTextWrite")
+        XCTAssertEqual(entry["fileRollbackSnapshotPath"] as? String, snapshot.path)
+        XCTAssertEqual(entry["rollbackOfAuditID"] as? String, writeAuditID)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "rolled_back_text_write")
+        XCTAssertNil(entry["text"])
+        XCTAssertNil(entry["value"])
+    }
+
+    func testFilesRollbackTextRestoresAuditedAppendFromSnapshot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-file-text-rollback-append-\(UUID().uuidString)")
+        let file = directory.appendingPathComponent("note.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let snapshot = directory.appendingPathComponent("rollback.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "first".write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let append = try runLn1([
+            "files",
+            "append-text",
+            "--path", file.path,
+            "--text", "\nsecond",
+            "--allow-risk", "medium",
+            "--rollback-snapshot", snapshot.path,
+            "--audit-log", auditLog.path,
+            "--reason", "append before rollback"
+        ])
+
+        XCTAssertEqual(append.status, 0, append.stderr)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "first\nsecond")
+        let appendObject = try decodeJSONObject(append.stdout)
+        let appendAuditID = try XCTUnwrap(appendObject["auditID"] as? String)
+        XCTAssertEqual(appendObject["rollbackSnapshotPath"] as? String, snapshot.path)
+
+        let rollback = try runLn1([
+            "files",
+            "rollback-text",
+            "--audit-id", appendAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "undo append"
+        ])
+
+        XCTAssertEqual(rollback.status, 0, rollback.stderr)
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "first")
+        let object = try decodeJSONObject(rollback.stdout)
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "filesystem.rollbackTextWrite")
+        XCTAssertEqual(object["rollbackOfAuditID"] as? String, appendAuditID)
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "text_restored")
     }
 
     func testFilesWaitReturnsMatchedExistingFileMetadata() throws {

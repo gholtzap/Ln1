@@ -702,7 +702,7 @@ Filter audit records before applying the limit:
 .build/debug/Ln1 audit --id 5B3D2E12-1D75-4C9E-B6DA-FD1F3C9E6A57
 ```
 
-`--id` matches an exact audit record ID. `--command` matches audit command names such as `perform`, `set-value`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `clipboard.read-text`, `clipboard.write-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `set_value`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `read_clipboard_text`, `wrote_clipboard_text`, or `read_dom`.
+`--id` matches an exact audit record ID. `--command` matches audit command names such as `perform`, `set-value`, `apps.activate`, `files.read-text`, `files.tail-text`, `files.read-lines`, `files.read-json`, `files.read-plist`, `files.write-text`, `files.append-text`, `files.duplicate`, `files.move`, `files.mkdir`, `files.rollback`, `files.rollback-text`, `clipboard.read-text`, `clipboard.write-text`, `browser.text`, or `browser.dom`. `--code` matches the outcome code, such as `policy_denied`, `set_value`, `activated`, `read_text`, `tail_text`, `read_lines`, `read_json`, `json_pointer_missing`, `read_plist`, `plist_pointer_missing`, `created_text_file`, `appended_text_file`, `duplicated`, `moved`, `created_directory`, `rolled_back_move`, `rolled_back_text_write`, `read_clipboard_text`, `wrote_clipboard_text`, or `read_dom`.
 
 ## Track Task Memory
 
@@ -766,7 +766,7 @@ Hidden files are skipped by default. Include them explicitly when they are relev
 .build/debug/Ln1 files list --path ~/Documents --include-hidden --depth 1
 ```
 
-The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.readText`, `filesystem.tailText`, `filesystem.readLines`, `filesystem.readJSON`, `filesystem.readPropertyList`, `filesystem.writeText`, `filesystem.appendText`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, and `filesystem.rollbackMove`. Search only exposes bounded matching snippets, not full file contents.
+The filesystem adapter returns stable-ish file identity, absolute path, kind, size, timestamps, hidden/readable/writable flags, and available typed actions such as `filesystem.stat`, `filesystem.list`, `filesystem.search`, `filesystem.watch`, `filesystem.plan`, `filesystem.readText`, `filesystem.tailText`, `filesystem.readLines`, `filesystem.readJSON`, `filesystem.readPropertyList`, `filesystem.writeText`, `filesystem.appendText`, `filesystem.duplicate`, `filesystem.move`, `filesystem.createDirectory`, `filesystem.rollbackMove`, and `filesystem.rollbackTextWrite`. Search only exposes bounded matching snippets, not full file contents.
 
 Search file names and bounded UTF-8 text content without using Finder:
 
@@ -819,18 +819,18 @@ Read a bounded typed tree from a macOS property list:
 Create one UTF-8 text file through policy, audit, and verification:
 
 ```sh
-.build/debug/Ln1 files write-text --path ~/Documents/agent-note.txt --text "Prepared by Ln1" --allow-risk medium --reason "Create a structured note"
+.build/debug/Ln1 files write-text --path ~/Documents/agent-note.txt --text "Prepared by Ln1" --allow-risk medium --rollback-snapshot /tmp/ln1-file-rollback.json --reason "Create a structured note"
 ```
 
-`filesystem.writeText` is a medium-risk mutating action. It creates missing files by default, refuses to replace existing files unless `--overwrite` is passed, requires a writable parent directory, verifies the written file by byte length and SHA-256 digest, and audits only file metadata, policy, and verification details.
+`filesystem.writeText` is a medium-risk mutating action. It creates missing files by default, refuses to replace existing files unless `--overwrite` is passed, requires a writable parent directory, verifies the written file by byte length and SHA-256 digest, and audits only file metadata, policy, rollback snapshot path, and verification details. Pass `--rollback-snapshot PATH` when the write must be reversible; this writes the previous UTF-8 text or missing-file state to a local 0600 snapshot file without storing file text in the audit log.
 
 Append UTF-8 text without replacing the existing file:
 
 ```sh
-.build/debug/Ln1 files append-text --path ~/Documents/agent-note.txt --text "\nNext step recorded by Ln1" --allow-risk medium --reason "Record agent progress"
+.build/debug/Ln1 files append-text --path ~/Documents/agent-note.txt --text "\nNext step recorded by Ln1" --allow-risk medium --rollback-snapshot /tmp/ln1-file-append-rollback.json --reason "Record agent progress"
 ```
 
-`filesystem.appendText` is a medium-risk mutating action. It appends to an existing writable regular file, refuses missing paths unless `--create` is passed, verifies the final byte length and tail bytes, and audits only file metadata, policy, appended text length/digest, verification details, and outcome.
+`filesystem.appendText` is a medium-risk mutating action. It appends to an existing writable regular file, refuses missing paths unless `--create` is passed, verifies the final byte length and tail bytes, and audits only file metadata, policy, rollback snapshot path, appended text length/digest, verification details, and outcome. Pass `--rollback-snapshot PATH` to capture the previous UTF-8 text or missing-file state before appending.
 
 Wait for a path to appear or disappear with bounded polling:
 
@@ -900,6 +900,14 @@ Rollback a successful audited file move:
 ```
 
 `filesystem.rollbackMove` is a medium-risk mutating file action. It reads the requested audit record, only supports successful `files.move` records, verifies that the current moved file still matches the recorded destination metadata, refuses to overwrite the original source path, moves the file back, verifies that the original source path is restored and the moved destination is gone, and records the rollback policy decision plus verification result in the audit log.
+
+Rollback a successful audited text write or append:
+
+```sh
+.build/debug/Ln1 files rollback-text --audit-id AUDIT_ID --allow-risk medium --reason "Undo mistaken text write"
+```
+
+`filesystem.rollbackTextWrite` is a medium-risk mutating file action. It only supports successful audited `files.write-text` or `files.append-text` records that include a rollback snapshot, verifies that the current file still matches the audited write result, restores the previous UTF-8 text or removes the newly created file, and records rollback metadata without storing file text in the audit log.
 
 Create one directory for organization workflows:
 
