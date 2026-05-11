@@ -1089,56 +1089,6 @@ struct ClipboardWaitResult: Codable {
     let message: String
 }
 
-struct BrowserDOMElement: Codable {
-    let id: String
-    let parentID: String?
-    let depth: Int
-    let selector: String?
-    let context: String?
-    let framePath: String?
-    let frameURL: String?
-    let frameAccessible: Bool?
-    let shadowPath: String?
-    let tagName: String
-    let role: String?
-    let text: String?
-    let textLength: Int
-    let attributes: [String: String]
-    let inputType: String?
-    let checked: Bool?
-    let disabled: Bool?
-    let hasValue: Bool?
-    let valueLength: Int?
-}
-
-struct BrowserDOMSnapshotPayload: Codable {
-    let url: String?
-    let title: String?
-    let elements: [BrowserDOMElement]
-    let elementCount: Int
-    let truncated: Bool
-}
-
-struct BrowserDOMResult: Codable {
-    let generatedAt: String
-    let platform: String
-    let endpoint: String
-    let tab: BrowserTab
-    let action: String
-    let risk: String
-    let url: String?
-    let title: String?
-    let elements: [BrowserDOMElement]
-    let elementCount: Int
-    let truncated: Bool
-    let maxElements: Int
-    let maxTextCharacters: Int
-    let digest: String
-    let auditID: String
-    let auditLogPath: String
-    let message: String
-}
-
 struct BrowserFormFillPayload: Codable {
     let ok: Bool
     let code: String
