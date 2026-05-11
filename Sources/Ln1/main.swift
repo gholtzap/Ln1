@@ -1036,10 +1036,36 @@ struct ClipboardWriteResult: Codable {
     let current: ClipboardAuditSummary
     let writtenLength: Int
     let writtenDigest: String
+    let rollbackSnapshotPath: String?
     let verification: FileOperationVerification
     let auditID: String
     let auditLogPath: String
     let message: String
+}
+
+struct ClipboardRollbackResult: Codable {
+    let ok: Bool
+    let action: String
+    let risk: String
+    let pasteboard: String
+    let rollbackOfAuditID: String
+    let previous: ClipboardAuditSummary
+    let current: ClipboardAuditSummary
+    let verification: FileOperationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct ClipboardRollbackSnapshot: Codable {
+    let version: Int
+    let auditID: String
+    let savedAt: String
+    let pasteboard: String
+    let previousHadString: Bool
+    let previousTextLength: Int?
+    let previousTextDigest: String?
+    let previousTextBase64: String?
 }
 
 struct ClipboardWaitVerification: Codable {
@@ -1841,6 +1867,8 @@ struct ActionAuditRecord: Codable {
     var clipboard: ClipboardAuditSummary? = nil
     var clipboardBefore: ClipboardAuditSummary? = nil
     var clipboardAfter: ClipboardAuditSummary? = nil
+    var clipboardRollbackSnapshotPath: String? = nil
+    var rollbackOfAuditID: String? = nil
     var appLaunchTarget: AppLaunchTargetSummary? = nil
     var workspaceOpenTarget: WorkspaceOpenTarget? = nil
     var workspaceOpenHandler: AppLaunchTargetSummary? = nil
@@ -15479,6 +15507,9 @@ final class Ln1CLI {
                 throw CommandError(description: "missing required option --text")
             }
             try writeJSON(writeClipboardText(text, to: pasteboard))
+        case "rollback":
+            let auditRecordID = try requiredOption("--audit-id")
+            try writeJSON(rollbackClipboardText(auditRecordID: auditRecordID))
         default:
             throw CommandError(description: "unknown clipboard mode '\(mode)'")
         }
@@ -23475,7 +23506,8 @@ final class Ln1CLI {
                 ClipboardAction(name: "clipboard.state", risk: "low", mutates: false),
                 ClipboardAction(name: "clipboard.wait", risk: "low", mutates: false),
                 ClipboardAction(name: "clipboard.readText", risk: "medium", mutates: false),
-                ClipboardAction(name: "clipboard.writeText", risk: "medium", mutates: true)
+                ClipboardAction(name: "clipboard.writeText", risk: "medium", mutates: true),
+                ClipboardAction(name: "clipboard.rollbackText", risk: "medium", mutates: true)
             ]
         )
     }
@@ -23598,6 +23630,8 @@ final class Ln1CLI {
         let beforeString = pasteboard.string(forType: .string)
         let before = clipboardAuditSummary(for: pasteboard, string: beforeString)
         let writtenDigest = sha256Digest(text)
+        let rollbackSnapshotURL = option("--rollback-snapshot")
+            .map { URL(fileURLWithPath: expandedPath($0)).standardizedFileURL }
         var after = before
         var verification: FileOperationVerification?
         var auditWritten = false
@@ -23618,6 +23652,7 @@ final class Ln1CLI {
                 clipboard: after,
                 clipboardBefore: before,
                 clipboardAfter: after,
+                clipboardRollbackSnapshotPath: rollbackSnapshotURL?.path,
                 outcome: AuditOutcome(ok: ok, code: code, message: message)
             ), to: auditURL)
             auditWritten = true
@@ -23628,6 +23663,15 @@ final class Ln1CLI {
                 let message = policy.message
                 try writeAudit(ok: false, code: "policy_denied", message: message)
                 throw CommandError(description: message)
+            }
+
+            if let rollbackSnapshotURL {
+                try writeClipboardRollbackSnapshot(
+                    auditID: auditID,
+                    pasteboard: pasteboard,
+                    previousText: beforeString,
+                    to: rollbackSnapshotURL
+                )
             }
 
             pasteboard.clearContents()
@@ -23659,6 +23703,7 @@ final class Ln1CLI {
                 current: after,
                 writtenLength: text.count,
                 writtenDigest: writtenDigest,
+                rollbackSnapshotPath: rollbackSnapshotURL?.path,
                 verification: verification!,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
@@ -23677,6 +23722,200 @@ final class Ln1CLI {
             }
             throw CommandError(description: message)
         }
+    }
+
+    private func rollbackClipboardText(auditRecordID: String) throws -> ClipboardRollbackResult {
+        let action = "clipboard.rollbackText"
+        let risk = clipboardActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        var pasteboard: NSPasteboard?
+        var before: ClipboardAuditSummary?
+        var after: ClipboardAuditSummary?
+        var verification: FileOperationVerification?
+        var snapshotPath: String?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "clipboard.rollback",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                clipboard: after ?? before,
+                clipboardBefore: before,
+                clipboardAfter: after,
+                clipboardRollbackSnapshotPath: snapshotPath,
+                rollbackOfAuditID: auditRecordID,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            let records = try readAuditRecords(from: auditURL, limit: Int.max)
+            guard let originalRecord = records.first(where: { $0.id == auditRecordID }) else {
+                let message = "no audit record found with id \(auditRecordID)"
+                try writeAudit(ok: false, code: "rollback_record_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard originalRecord.command == "clipboard.write-text",
+                  originalRecord.outcome.ok,
+                  originalRecord.outcome.code == "wrote_text" else {
+                let message = "audit record \(auditRecordID) is not a successful clipboard.write-text record"
+                try writeAudit(ok: false, code: "unsupported_rollback_record", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard let originalBefore = originalRecord.clipboardBefore,
+                  let originalAfter = originalRecord.clipboardAfter else {
+                let message = "audit record \(auditRecordID) does not contain clipboard before/after metadata"
+                try writeAudit(ok: false, code: "rollback_metadata_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard let originalSnapshotPath = originalRecord.clipboardRollbackSnapshotPath else {
+                let message = "audit record \(auditRecordID) does not include a rollback snapshot path"
+                try writeAudit(ok: false, code: "rollback_snapshot_missing", message: message)
+                throw CommandError(description: message)
+            }
+            snapshotPath = originalSnapshotPath
+
+            let snapshotURL = URL(fileURLWithPath: expandedPath(originalSnapshotPath)).standardizedFileURL
+            let snapshot = try readClipboardRollbackSnapshot(from: snapshotURL)
+            guard snapshot.auditID == auditRecordID else {
+                let message = "clipboard rollback snapshot does not match audit record \(auditRecordID)"
+                try writeAudit(ok: false, code: "rollback_snapshot_mismatch", message: message)
+                throw CommandError(description: message)
+            }
+
+            pasteboard = clipboardPasteboard(named: option("--pasteboard") ?? snapshot.pasteboard)
+            let currentString = pasteboard?.string(forType: .string)
+            before = pasteboard.map { clipboardAuditSummary(for: $0, string: currentString) }
+
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            guard clipboardSummary(before, matches: originalAfter) else {
+                let message = "current clipboard metadata does not match audited write result"
+                try writeAudit(ok: false, code: "rollback_current_mismatch", message: message)
+                throw CommandError(description: message)
+            }
+
+            let restoredText = try clipboardRollbackText(from: snapshot)
+            pasteboard?.clearContents()
+            if let restoredText, pasteboard?.setString(restoredText, forType: .string) != true {
+                let message = "failed to restore plain text to \(pasteboard?.name.rawValue ?? snapshot.pasteboard)"
+                verification = FileOperationVerification(ok: false, code: "restore_failed", message: message)
+                after = pasteboard.map { clipboardAuditSummary(for: $0, string: $0.string(forType: .string)) }
+                try writeAudit(ok: false, code: "restore_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            after = pasteboard.map { clipboardAuditSummary(for: $0, string: $0.string(forType: .string)) }
+            verification = verifyClipboardSummary(after, matches: originalBefore)
+            guard verification?.ok == true else {
+                let message = verification?.message ?? "clipboard rollback verification failed"
+                try writeAudit(ok: false, code: "verification_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            let message = "Rolled back clipboard write \(auditRecordID)."
+            try writeAudit(ok: true, code: "rolled_back_clipboard", message: message)
+
+            return ClipboardRollbackResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                pasteboard: after?.pasteboard ?? snapshot.pasteboard,
+                rollbackOfAuditID: auditRecordID,
+                previous: before!,
+                current: after!,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    private func writeClipboardRollbackSnapshot(
+        auditID: String,
+        pasteboard: NSPasteboard,
+        previousText: String?,
+        to url: URL
+    ) throws {
+        let textData = previousText?.data(using: .utf8)
+        let snapshot = ClipboardRollbackSnapshot(
+            version: 1,
+            auditID: auditID,
+            savedAt: ISO8601DateFormatter().string(from: Date()),
+            pasteboard: pasteboard.name.rawValue,
+            previousHadString: previousText != nil,
+            previousTextLength: previousText?.count,
+            previousTextDigest: previousText.map(sha256Digest),
+            previousTextBase64: textData?.base64EncodedString()
+        )
+        let data = try JSONEncoder().encode(snapshot)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: url.path)
+    }
+
+    private func readClipboardRollbackSnapshot(from url: URL) throws -> ClipboardRollbackSnapshot {
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(ClipboardRollbackSnapshot.self, from: data)
+        } catch {
+            throw CommandError(description: "could not read clipboard rollback snapshot at \(url.path): \(error.localizedDescription)")
+        }
+    }
+
+    private func clipboardRollbackText(from snapshot: ClipboardRollbackSnapshot) throws -> String? {
+        guard snapshot.previousHadString else {
+            return nil
+        }
+        guard let base64 = snapshot.previousTextBase64,
+              let data = Data(base64Encoded: base64),
+              let text = String(data: data, encoding: .utf8) else {
+            throw CommandError(description: "clipboard rollback snapshot does not contain valid UTF-8 text")
+        }
+        guard snapshot.previousTextLength == text.count,
+              snapshot.previousTextDigest == sha256Digest(text) else {
+            throw CommandError(description: "clipboard rollback snapshot text does not match its metadata")
+        }
+        return text
+    }
+
+    private func clipboardPasteboard(named name: String) -> NSPasteboard {
+        if name == "general" || name == NSPasteboard.general.name.rawValue {
+            return .general
+        }
+        return NSPasteboard(name: NSPasteboard.Name(rawValue: name))
     }
 
     private func verifyClipboardText(
@@ -23713,6 +23952,30 @@ final class Ln1CLI {
             code: "text_matched",
             message: "clipboard contains text with the requested length and digest"
         )
+    }
+
+    private func verifyClipboardSummary(_ current: ClipboardAuditSummary?, matches expected: ClipboardAuditSummary) -> FileOperationVerification {
+        guard clipboardSummary(current, matches: expected) else {
+            return FileOperationVerification(
+                ok: false,
+                code: "clipboard_metadata_mismatch",
+                message: "clipboard metadata does not match expected rollback state"
+            )
+        }
+        return FileOperationVerification(
+            ok: true,
+            code: "clipboard_rolled_back",
+            message: "clipboard metadata matches the audited previous state"
+        )
+    }
+
+    private func clipboardSummary(_ current: ClipboardAuditSummary?, matches expected: ClipboardAuditSummary) -> Bool {
+        guard let current else {
+            return false
+        }
+        return current.hasString == expected.hasString
+            && current.stringLength == expected.stringLength
+            && current.stringDigest == expected.stringDigest
     }
 
     private func clipboardAuditSummary(for pasteboard: NSPasteboard, string: String?) -> ClipboardAuditSummary {
@@ -24184,7 +24447,7 @@ final class Ln1CLI {
         switch action {
         case "clipboard.state", "clipboard.wait":
             return "low"
-        case "clipboard.readText", "clipboard.writeText":
+        case "clipboard.readText", "clipboard.writeText", "clipboard.rollbackText":
             return "medium"
         default:
             return "unknown"
@@ -24374,6 +24637,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "clipboard.wait", domain: "clipboard", risk: "low", mutates: false),
             PolicyActionRecord(name: "clipboard.readText", domain: "clipboard", risk: "medium", mutates: false),
             PolicyActionRecord(name: "clipboard.writeText", domain: "clipboard", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "clipboard.rollbackText", domain: "clipboard", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.listTabs", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.inspectTab", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.readText", domain: "browser", risk: "medium", mutates: false),
@@ -25997,7 +26261,8 @@ final class Ln1CLI {
           Ln1 clipboard state [--pasteboard NAME]
           Ln1 clipboard wait [--changed-from N] [--has-string true|false] [--string-digest HEX] [--timeout-ms N] [--interval-ms N] [--pasteboard NAME]
           Ln1 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
-          Ln1 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
+          Ln1 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME] [--rollback-snapshot PATH]
+          Ln1 clipboard rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           Ln1 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
@@ -26084,7 +26349,8 @@ final class Ln1CLI {
           - `clipboard state` reports pasteboard metadata and text digest without returning clipboard text.
           - `clipboard wait` waits for pasteboard metadata changes without returning clipboard text.
           - `clipboard read-text` returns bounded text only after medium-risk policy approval and audits metadata without storing text.
-          - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text.
+          - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text; pass `--rollback-snapshot` to store a local 0600 compensating undo token.
+          - `clipboard rollback` restores a successful audited clipboard write from its rollback snapshot after medium-risk policy approval and fails closed if current clipboard metadata no longer matches the write result.
           - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.

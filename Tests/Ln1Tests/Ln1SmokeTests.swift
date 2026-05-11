@@ -175,6 +175,9 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(actionByName["clipboard.writeText"]?["domain"] as? String, "clipboard")
         XCTAssertEqual(actionByName["clipboard.writeText"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["clipboard.writeText"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["clipboard.rollbackText"]?["domain"] as? String, "clipboard")
+        XCTAssertEqual(actionByName["clipboard.rollbackText"]?["risk"] as? String, "medium")
+        XCTAssertEqual(actionByName["clipboard.rollbackText"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["browser.listTabs"]?["domain"] as? String, "browser")
         XCTAssertEqual(actionByName["browser.listTabs"]?["risk"] as? String, "low")
         XCTAssertEqual(actionByName["browser.listTabs"]?["mutates"] as? Bool, false)
@@ -17393,6 +17396,7 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.wait" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.readText" })
         XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.writeText" })
+        XCTAssertTrue(actions.contains { $0["name"] as? String == "clipboard.rollbackText" })
     }
 
     func testClipboardWaitReturnsMetadataWithoutTextContents() throws {
@@ -17628,6 +17632,103 @@ final class Ln1SmokeTests: XCTestCase {
         XCTAssertEqual(auditVerification["ok"] as? Bool, true)
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "wrote_text")
+    }
+
+    func testClipboardRollbackRestoresAuditedWriteFromSnapshot() throws {
+        let pasteboardName = "Ln1-test-rollback-\(UUID().uuidString)"
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-clipboard-rollback-\(UUID().uuidString)")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let snapshot = directory.appendingPathComponent("rollback.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        pasteboard.clearContents()
+        pasteboard.setString("old clipboard", forType: .string)
+        defer {
+            pasteboard.clearContents()
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let write = try runLn1([
+            "clipboard",
+            "write-text",
+            "--pasteboard", pasteboardName,
+            "--text", "new clipboard",
+            "--rollback-snapshot", snapshot.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "write before rollback"
+        ])
+
+        XCTAssertEqual(write.status, 0, write.stderr)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new clipboard")
+        let writeObject = try decodeJSONObject(write.stdout)
+        let writeAuditID = try XCTUnwrap(writeObject["auditID"] as? String)
+        XCTAssertEqual(writeObject["rollbackSnapshotPath"] as? String, snapshot.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: snapshot.path))
+
+        let deniedRollback = try runLn1([
+            "clipboard",
+            "rollback",
+            "--audit-id", writeAuditID,
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(deniedRollback.status, 0)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new clipboard")
+
+        let rollback = try runLn1([
+            "clipboard",
+            "rollback",
+            "--audit-id", writeAuditID,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "restore clipboard"
+        ])
+
+        XCTAssertEqual(rollback.status, 0, rollback.stderr)
+        XCTAssertEqual(pasteboard.string(forType: .string), "old clipboard")
+        let object = try decodeJSONObject(rollback.stdout)
+        let previous = try XCTUnwrap(object["previous"] as? [String: Any])
+        let current = try XCTUnwrap(object["current"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "clipboard.rollbackText")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["rollbackOfAuditID"] as? String, writeAuditID)
+        XCTAssertEqual(previous["stringLength"] as? Int, 13)
+        XCTAssertEqual(current["stringLength"] as? Int, 13)
+        XCTAssertEqual(current["stringDigest"] as? String, "0312018b065d8cb2e51c979661397ec81de42a3c324db8f3642e82a8e61d9f4f")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "clipboard_rolled_back")
+        XCTAssertNil(object["text"])
+        XCTAssertNil(current["text"])
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "clipboard.rollback",
+            "--code", "rolled_back_clipboard",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let after = try XCTUnwrap(entry["clipboardAfter"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["action"] as? String, "clipboard.rollbackText")
+        XCTAssertEqual(entry["rollbackOfAuditID"] as? String, writeAuditID)
+        XCTAssertEqual(entry["clipboardRollbackSnapshotPath"] as? String, snapshot.path)
+        XCTAssertEqual(after["stringDigest"] as? String, current["stringDigest"] as? String)
+        XCTAssertNil(after["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "rolled_back_clipboard")
     }
 
     func testRejectedPerformWritesAuditRecord() throws {

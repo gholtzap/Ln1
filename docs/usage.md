@@ -938,10 +938,13 @@ Read bounded plain text from the clipboard only after explicitly allowing medium
 Write plain text to the clipboard only after explicitly allowing medium-risk clipboard mutation:
 
 ```sh
-.build/debug/Ln1 clipboard write-text --text "ready to paste" --allow-risk medium --reason "Prepare value for the next app"
+.build/debug/Ln1 clipboard write-text --text "ready to paste" --allow-risk medium --rollback-snapshot /tmp/ln1-clipboard-rollback.json --reason "Prepare value for the next app"
+.build/debug/Ln1 clipboard rollback --audit-id AUDIT_ID --allow-risk medium --reason "Undo clipboard write"
 ```
 
-`clipboard.writeText` is a medium-risk mutating action because it replaces the current plain-text pasteboard contents. The command records before/after pasteboard metadata, text lengths, digests, policy decision, verification result, reason, and outcome without storing either the previous or new clipboard text in the audit log. The command verifies the write by checking that the clipboard contains text with the requested length and SHA-256 digest.
+`clipboard.writeText` is a medium-risk mutating action because it replaces the current plain-text pasteboard contents. The command records before/after pasteboard metadata, text lengths, digests, policy decision, verification result, reason, and outcome without storing either the previous or new clipboard text in the audit log. The command verifies the write by checking that the clipboard contains text with the requested length and SHA-256 digest. Pass `--rollback-snapshot PATH` when the write must be reversible; this writes the previous plain text to a local 0600 snapshot file and records only that snapshot path in the audit log.
+
+`clipboard.rollbackText` is a medium-risk mutating action for compensating clipboard writes. It only supports successful audited `clipboard.write-text` records that include a rollback snapshot, verifies that the current clipboard still matches the audited write result, restores the previous plain-text state from the snapshot, and records rollback metadata without storing clipboard text in the audit log.
 
 ## Inspect Browser Tabs
 
