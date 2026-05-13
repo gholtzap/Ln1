@@ -17,6 +17,9 @@ struct BrowserLaunchResult: Codable {
     let appPath: String?
     let executablePath: String?
     let profilePath: String
+    let downloadDirectoryPath: String?
+    let preferencesPath: String?
+    let preferenceKeys: [String]
     let endpoint: String
     let remoteDebuggingPort: Int
     let url: String?

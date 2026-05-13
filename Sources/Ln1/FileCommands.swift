@@ -396,6 +396,17 @@ extension Ln1CLI {
         let appURL = try browserLaunchAppURL(target: browserTarget)
         let executableURL = try browserLaunchExecutableURL(target: browserTarget, appURL: appURL)
         let launchArguments = browserLaunchArguments(port: port, profileURL: profileURL, url: url)
+        let downloadDirectoryURL = option("--download-dir").map {
+            URL(fileURLWithPath: expandedPath($0)).standardizedFileURL
+        }
+        let preferencesURL = downloadDirectoryURL.map { _ in
+            profileURL
+                .appendingPathComponent("Default")
+                .appendingPathComponent("Preferences")
+        }
+        let preferenceKeys = downloadDirectoryURL == nil
+            ? []
+            : ["download.default_directory", "download.prompt_for_download"]
 
         guard !dryRun else {
             return BrowserLaunchResult(
@@ -409,6 +420,9 @@ extension Ln1CLI {
                 appPath: appURL?.path,
                 executablePath: executableURL.path,
                 profilePath: profileURL.path,
+                downloadDirectoryPath: downloadDirectoryURL?.path,
+                preferencesPath: preferencesURL?.path,
+                preferenceKeys: preferenceKeys,
                 endpoint: endpoint,
                 remoteDebuggingPort: port,
                 url: url,
@@ -421,6 +435,12 @@ extension Ln1CLI {
         }
 
         try FileManager.default.createDirectory(at: profileURL, withIntermediateDirectories: true)
+        if let downloadDirectoryURL, let preferencesURL {
+            try browserWriteDownloadPreferences(
+                downloadDirectoryURL: downloadDirectoryURL,
+                preferencesURL: preferencesURL
+            )
+        }
         let process = Process()
         process.executableURL = executableURL
         process.arguments = launchArguments
@@ -437,6 +457,9 @@ extension Ln1CLI {
             appPath: appURL?.path,
             executablePath: executableURL.path,
             profilePath: profileURL.path,
+            downloadDirectoryPath: downloadDirectoryURL?.path,
+            preferencesPath: preferencesURL?.path,
+            preferenceKeys: preferenceKeys,
             endpoint: endpoint,
             remoteDebuggingPort: port,
             url: url,
@@ -534,6 +557,22 @@ extension Ln1CLI {
             launchArguments.append(url)
         }
         return launchArguments
+    }
+
+    func browserWriteDownloadPreferences(downloadDirectoryURL: URL, preferencesURL: URL) throws {
+        try FileManager.default.createDirectory(at: downloadDirectoryURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: preferencesURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let preferences: [String: Any] = [
+            "download": [
+                "default_directory": downloadDirectoryURL.path,
+                "prompt_for_download": false
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: preferences, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: preferencesURL, options: .atomic)
     }
 
     func fileOperationPreflight(operation rawOperation: String) throws -> FileOperationPreflight {

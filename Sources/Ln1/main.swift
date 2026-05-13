@@ -10279,7 +10279,7 @@ final class Ln1CLI {
           Ln1 clipboard read-text --allow-risk medium [--max-characters N] [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
           Ln1 clipboard write-text --text TEXT --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME] [--rollback-snapshot PATH]
           Ln1 clipboard rollback --audit-id AUDIT_ID --allow-risk medium [--reason TEXT] [--audit-log PATH] [--pasteboard NAME]
-          Ln1 browser launch --allow-risk medium [--browser chrome|chrome-canary|chromium|edge|brave] [--remote-debugging-port N] [--profile PATH] [--app-path PATH] [--executable PATH] [--url URL] [--dry-run true|false]
+          Ln1 browser launch --allow-risk medium [--browser chrome|chrome-canary|chromium|edge|brave] [--remote-debugging-port N] [--profile PATH] [--download-dir PATH] [--app-path PATH] [--executable PATH] [--url URL] [--dry-run true|false]
           Ln1 browser tabs [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser tab --id TARGET_ID [--endpoint URL_OR_PATH] [--include-non-page]
           Ln1 browser text --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
@@ -10372,7 +10372,7 @@ final class Ln1CLI {
           - `clipboard read-text` returns bounded text only after medium-risk policy approval and audits metadata without storing text.
           - `clipboard write-text` writes plain text only after medium-risk policy approval, verifies by length and digest, and audits metadata without storing text; pass `--rollback-snapshot` to store a local 0600 compensating undo token.
           - `clipboard rollback` restores a successful audited clipboard write from its rollback snapshot after medium-risk policy approval and fails closed if current clipboard metadata no longer matches the write result.
-          - `browser launch` plans or starts a Chromium-family browser with an isolated profile directory and explicit DevTools endpoint.
+          - `browser launch` plans or starts a Chromium-family browser with an isolated profile directory, optional download directory preferences, and explicit DevTools endpoint.
           - `browser tabs` reads Chrome DevTools target metadata from an explicit endpoint and returns structured tab records.
           - `browser tab` inspects one DevTools target by id from the same structured browser source.
           - `browser text` reads page text through Chrome DevTools only after medium-risk policy approval and audits length/digest without storing text.

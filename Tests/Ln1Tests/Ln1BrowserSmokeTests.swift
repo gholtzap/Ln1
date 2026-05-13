@@ -5,6 +5,8 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
     func testBrowserLaunchPlansIsolatedProfileAndDevToolsEndpoint() throws {
         let profile = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-browser-profile-\(UUID().uuidString)")
+        let downloads = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-downloads-\(UUID().uuidString)")
         let executable = FileManager.default.temporaryDirectory
             .appendingPathComponent("Fake Chromium")
 
@@ -14,6 +16,7 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
             "--browser", "chromium",
             "--executable", executable.path,
             "--profile", profile.path,
+            "--download-dir", downloads.path,
             "--remote-debugging-port", "9333",
             "--url", "https://example.com/start",
             "--allow-risk", "medium",
@@ -31,6 +34,15 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
         XCTAssertEqual(object["browser"] as? String, "chromium")
         XCTAssertEqual(object["executablePath"] as? String, executable.path)
         XCTAssertEqual(object["profilePath"] as? String, profile.path)
+        XCTAssertEqual(object["downloadDirectoryPath"] as? String, downloads.path)
+        XCTAssertEqual(
+            object["preferencesPath"] as? String,
+            profile.appendingPathComponent("Default").appendingPathComponent("Preferences").path
+        )
+        XCTAssertEqual(
+            object["preferenceKeys"] as? [String],
+            ["download.default_directory", "download.prompt_for_download"]
+        )
         XCTAssertEqual(object["endpoint"] as? String, "http://127.0.0.1:9333")
         XCTAssertEqual(object["remoteDebuggingPort"] as? Int, 9333)
         XCTAssertEqual(object["url"] as? String, "https://example.com/start")
