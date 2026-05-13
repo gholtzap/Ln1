@@ -240,6 +240,8 @@ extension Ln1CLI {
         let mode = arguments.dropFirst().first ?? "tabs"
 
         switch mode {
+        case "launch":
+            try writeJSON(browserLaunch())
         case "tabs":
             let includeNonPageTargets = flag("--include-non-page")
             try writeJSON(browserTabs(includeNonPageTargets: includeNonPageTargets))
@@ -368,6 +370,170 @@ extension Ln1CLI {
         default:
             throw CommandError(description: "unknown browser mode '\(mode)'")
         }
+    }
+
+    func browserLaunch() throws -> BrowserLaunchResult {
+        let action = "browser.launch"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        guard policy.allowed else {
+            throw CommandError(description: policy.message)
+        }
+
+        let browser = option("--browser") ?? "chrome"
+        let port = try browserLaunchPort()
+        let profileURL = URL(fileURLWithPath: expandedPath(
+            option("--profile") ?? FileManager.default.temporaryDirectory
+                .appendingPathComponent("Ln1-browser-profile-\(browser)-\(port)")
+                .path
+        )).standardizedFileURL
+        let endpoint = "http://127.0.0.1:\(port)"
+        let dryRun = try option("--dry-run").map {
+            try booleanOption($0, optionName: "--dry-run")
+        } ?? true
+        let url = option("--url")
+        let browserTarget = browserLaunchTarget(browser: browser)
+        let appURL = try browserLaunchAppURL(target: browserTarget)
+        let executableURL = try browserLaunchExecutableURL(target: browserTarget, appURL: appURL)
+        let launchArguments = browserLaunchArguments(port: port, profileURL: profileURL, url: url)
+
+        guard !dryRun else {
+            return BrowserLaunchResult(
+                ok: true,
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                action: action,
+                risk: risk,
+                browser: browserTarget.name,
+                bundleIdentifier: browserTarget.bundleIdentifier,
+                appPath: appURL?.path,
+                executablePath: executableURL.path,
+                profilePath: profileURL.path,
+                endpoint: endpoint,
+                remoteDebuggingPort: port,
+                url: url,
+                dryRun: true,
+                launched: false,
+                pid: nil,
+                arguments: [executableURL.path] + launchArguments,
+                message: "Dry run only. Browser launch command was planned with an isolated profile and DevTools endpoint."
+            )
+        }
+
+        try FileManager.default.createDirectory(at: profileURL, withIntermediateDirectories: true)
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = launchArguments
+        try process.run()
+
+        return BrowserLaunchResult(
+            ok: true,
+            generatedAt: ISO8601DateFormatter().string(from: Date()),
+            platform: "macOS",
+            action: action,
+            risk: risk,
+            browser: browserTarget.name,
+            bundleIdentifier: browserTarget.bundleIdentifier,
+            appPath: appURL?.path,
+            executablePath: executableURL.path,
+            profilePath: profileURL.path,
+            endpoint: endpoint,
+            remoteDebuggingPort: port,
+            url: url,
+            dryRun: false,
+            launched: true,
+            pid: process.processIdentifier,
+            arguments: [executableURL.path] + launchArguments,
+            message: "Launched browser with an isolated profile and DevTools endpoint."
+        )
+    }
+
+    struct BrowserLaunchTarget {
+        let name: String
+        let bundleIdentifier: String?
+        let executableName: String?
+    }
+
+    func browserLaunchTarget(browser rawBrowser: String) -> BrowserLaunchTarget {
+        switch rawBrowser.lowercased() {
+        case "chrome", "google-chrome", "google chrome":
+            return BrowserLaunchTarget(
+                name: "chrome",
+                bundleIdentifier: "com.google.Chrome",
+                executableName: "Google Chrome"
+            )
+        case "chrome-canary", "canary":
+            return BrowserLaunchTarget(
+                name: "chrome-canary",
+                bundleIdentifier: "com.google.Chrome.canary",
+                executableName: "Google Chrome Canary"
+            )
+        case "chromium":
+            return BrowserLaunchTarget(
+                name: "chromium",
+                bundleIdentifier: "org.chromium.Chromium",
+                executableName: "Chromium"
+            )
+        case "edge", "microsoft-edge":
+            return BrowserLaunchTarget(
+                name: "edge",
+                bundleIdentifier: "com.microsoft.edgemac",
+                executableName: "Microsoft Edge"
+            )
+        case "brave":
+            return BrowserLaunchTarget(
+                name: "brave",
+                bundleIdentifier: "com.brave.Browser",
+                executableName: "Brave Browser"
+            )
+        default:
+            return BrowserLaunchTarget(name: rawBrowser, bundleIdentifier: nil, executableName: nil)
+        }
+    }
+
+    func browserLaunchPort() throws -> Int {
+        let port = option("--remote-debugging-port").flatMap(Int.init) ?? 9_222
+        guard (1...65_535).contains(port) else {
+            throw CommandError(description: "--remote-debugging-port must be between 1 and 65535")
+        }
+        return port
+    }
+
+    func browserLaunchAppURL(target: BrowserLaunchTarget) throws -> URL? {
+        if let appPath = option("--app-path") {
+            return URL(fileURLWithPath: expandedPath(appPath)).standardizedFileURL
+        }
+        guard let bundleIdentifier = target.bundleIdentifier else {
+            return nil
+        }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+    }
+
+    func browserLaunchExecutableURL(target: BrowserLaunchTarget, appURL: URL?) throws -> URL {
+        if let executablePath = option("--executable") {
+            return URL(fileURLWithPath: expandedPath(executablePath)).standardizedFileURL
+        }
+        guard let appURL, let executableName = target.executableName else {
+            throw CommandError(description: "could not resolve a browser executable; pass --executable PATH or --app-path PATH")
+        }
+        return appURL
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("MacOS")
+            .appendingPathComponent(executableName)
+            .standardizedFileURL
+    }
+
+    func browserLaunchArguments(port: Int, profileURL: URL, url: String?) -> [String] {
+        var launchArguments = [
+            "--remote-debugging-port=\(port)",
+            "--user-data-dir=\(profileURL.path)",
+            "--no-first-run",
+            "--no-default-browser-check"
+        ]
+        if let url {
+            launchArguments.append(url)
+        }
+        return launchArguments
     }
 
     func fileOperationPreflight(operation rawOperation: String) throws -> FileOperationPreflight {

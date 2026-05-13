@@ -2,6 +2,49 @@ import Foundation
 import XCTest
 
 final class Ln1BrowserSmokeTests: Ln1TestCase {
+    func testBrowserLaunchPlansIsolatedProfileAndDevToolsEndpoint() throws {
+        let profile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-profile-\(UUID().uuidString)")
+        let executable = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Fake Chromium")
+
+        let result = try runLn1([
+            "browser",
+            "launch",
+            "--browser", "chromium",
+            "--executable", executable.path,
+            "--profile", profile.path,
+            "--remote-debugging-port", "9333",
+            "--url", "https://example.com/start",
+            "--allow-risk", "medium",
+            "--dry-run", "true"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let arguments = try XCTUnwrap(object["arguments"] as? [String])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["platform"] as? String, "macOS")
+        XCTAssertEqual(object["action"] as? String, "browser.launch")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["browser"] as? String, "chromium")
+        XCTAssertEqual(object["executablePath"] as? String, executable.path)
+        XCTAssertEqual(object["profilePath"] as? String, profile.path)
+        XCTAssertEqual(object["endpoint"] as? String, "http://127.0.0.1:9333")
+        XCTAssertEqual(object["remoteDebuggingPort"] as? Int, 9333)
+        XCTAssertEqual(object["url"] as? String, "https://example.com/start")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["launched"] as? Bool, false)
+        XCTAssertNil(object["pid"])
+        XCTAssertEqual(arguments.first, executable.path)
+        XCTAssertTrue(arguments.contains("--remote-debugging-port=9333"))
+        XCTAssertTrue(arguments.contains("--user-data-dir=\(profile.path)"))
+        XCTAssertTrue(arguments.contains("--no-first-run"))
+        XCTAssertTrue(arguments.contains("--no-default-browser-check"))
+        XCTAssertEqual(arguments.last, "https://example.com/start")
+    }
+
     func testBrowserTabsReturnsStructuredDevToolsPageTargets() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-browser-\(UUID().uuidString)")

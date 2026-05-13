@@ -6,6 +6,27 @@ struct BrowserAction: Codable {
     let mutates: Bool
 }
 
+struct BrowserLaunchResult: Codable {
+    let ok: Bool
+    let generatedAt: String
+    let platform: String
+    let action: String
+    let risk: String
+    let browser: String
+    let bundleIdentifier: String?
+    let appPath: String?
+    let executablePath: String?
+    let profilePath: String
+    let endpoint: String
+    let remoteDebuggingPort: Int
+    let url: String?
+    let dryRun: Bool
+    let launched: Bool
+    let pid: Int32?
+    let arguments: [String]
+    let message: String
+}
+
 struct BrowserTab: Codable {
     let id: String
     let type: String
