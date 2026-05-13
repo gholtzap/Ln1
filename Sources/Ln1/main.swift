@@ -122,9 +122,15 @@ final class Ln1CLI {
         }
         let displayID = option("--display-id").flatMap(UInt32.init)
         let maxSampleBytes = max(0, option("--max-sample-bytes").flatMap(Int.init) ?? 1_048_576)
+        let includeOCR = try option("--include-ocr").map {
+            try booleanOption($0, optionName: "--include-ocr")
+        } ?? false
+        let maxOCRCharacters = max(0, option("--max-ocr-characters").flatMap(Int.init) ?? 4_096)
         return desktopVisualSnapshot(
             targetDisplayID: displayID,
-            maxSampleBytes: maxSampleBytes
+            maxSampleBytes: maxSampleBytes,
+            includeOCR: includeOCR,
+            maxOCRCharacters: maxOCRCharacters
         )
     }
 
@@ -10219,7 +10225,7 @@ final class Ln1CLI {
           Ln1 processes wait --pid PID [--exists true|false] [--timeout-ms N] [--interval-ms N]
           Ln1 desktop displays
           Ln1 desktop active-window
-          Ln1 desktop screenshot --allow-risk medium [--display-id ID] [--max-sample-bytes N]
+          Ln1 desktop screenshot --allow-risk medium [--display-id ID] [--max-sample-bytes N] [--include-ocr true|false] [--max-ocr-characters N]
           Ln1 desktop minimize-active-window --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 desktop restore-window (--pid PID|--bundle-id BUNDLE_ID|--current) --element WINDOW_ID --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 desktop raise-window (--pid PID|--bundle-id BUNDLE_ID|--current) --element WINDOW_ID --allow-risk medium [--timeout-ms N] [--interval-ms N] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
@@ -10320,7 +10326,7 @@ final class Ln1CLI {
           - `processes` lists and inspects bounded process metadata without reading command-line arguments.
           - `desktop displays` lists connected display topology, bounds, scale, and rotation without screenshots.
           - `desktop active-window` returns the frontmost visible window with stable identity metadata without screenshots.
-          - `desktop screenshot` captures display image metadata and a bounded SHA-256 byte-sample digest after medium-risk approval.
+          - `desktop screenshot` captures display image metadata and a bounded SHA-256 byte-sample digest after medium-risk approval, with opt-in bounded OCR text metadata for visual fallback.
           - `desktop minimize-active-window` minimizes the frontmost Accessibility window after medium-risk approval and verifies AXMinimized.
           - `desktop restore-window` restores one target app Accessibility window after medium-risk approval and verifies AXMinimized is false.
           - `desktop raise-window` raises one target app Accessibility window after medium-risk approval and verifies it is focused in the frontmost app.

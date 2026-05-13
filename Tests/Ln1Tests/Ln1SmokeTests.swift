@@ -1385,7 +1385,9 @@ final class Ln1SmokeTests: Ln1TestCase {
             "desktop",
             "screenshot",
             "--allow-risk", "medium",
-            "--max-sample-bytes", "4096"
+            "--max-sample-bytes", "4096",
+            "--include-ocr", "true",
+            "--max-ocr-characters", "256"
         ])
 
         XCTAssertEqual(result.status, 0, result.stderr)
@@ -1396,6 +1398,8 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertEqual(object["action"] as? String, "desktop.screenshot")
         XCTAssertEqual(object["risk"] as? String, "medium")
         XCTAssertEqual(object["maxSampleBytes"] as? Int, 4096)
+        XCTAssertEqual(object["includeOCR"] as? Bool, true)
+        XCTAssertEqual(object["maxOCRCharacters"] as? Int, 256)
         XCTAssertEqual(object["displayCount"] as? Int, displays.count)
         let message = try XCTUnwrap(object["message"] as? String)
         if displays.isEmpty {
@@ -1409,12 +1413,22 @@ final class Ln1SmokeTests: Ln1TestCase {
             XCTAssertNotNil(first["pixelHeight"] as? Int)
             XCTAssertNotNil(first["captured"] as? Bool)
             XCTAssertNotNil(first["sampleByteCount"] as? Int)
+            let ocr = try XCTUnwrap(first["ocr"] as? [String: Any])
+            XCTAssertEqual(ocr["requested"] as? Bool, true)
+            XCTAssertNotNil(ocr["available"] as? Bool)
+            XCTAssertNotNil(ocr["observationCount"] as? Int)
+            XCTAssertNotNil(ocr["textLength"] as? Int)
+            XCTAssertNotNil(ocr["truncated"] as? Bool)
+            XCTAssertNotNil(ocr["message"] as? String)
 
             if first["captured"] as? Bool == true {
                 XCTAssertNotNil(first["imageWidth"] as? Int)
                 XCTAssertNotNil(first["imageHeight"] as? Int)
                 XCTAssertNotNil(first["sampleDigest"] as? String)
                 XCTAssertLessThanOrEqual(try XCTUnwrap(first["sampleByteCount"] as? Int), 4096)
+                if let text = ocr["text"] as? String {
+                    XCTAssertLessThanOrEqual(text.count, 256)
+                }
             }
         }
     }

@@ -1,6 +1,20 @@
 import AppKit
 import CryptoKit
 import Foundation
+#if canImport(Vision)
+import Vision
+#endif
+
+struct VisualSnapshotOCR: Codable {
+    let requested: Bool
+    let available: Bool
+    let observationCount: Int
+    let textLength: Int
+    let text: String?
+    let textDigest: String?
+    let truncated: Bool
+    let message: String
+}
 
 struct VisualSnapshotDisplay: Codable {
     let id: String
@@ -16,6 +30,7 @@ struct VisualSnapshotDisplay: Codable {
     let sampleByteCount: Int
     let fullByteCount: Int?
     let sampleDigest: String?
+    let ocr: VisualSnapshotOCR?
     let message: String
 }
 
@@ -25,6 +40,8 @@ struct VisualSnapshotState: Codable {
     let action: String
     let risk: String
     let maxSampleBytes: Int
+    let includeOCR: Bool
+    let maxOCRCharacters: Int
     let targetDisplayID: UInt32?
     let displayCount: Int
     let displays: [VisualSnapshotDisplay]
@@ -34,6 +51,8 @@ struct VisualSnapshotState: Codable {
 func desktopVisualSnapshot(
     targetDisplayID: UInt32?,
     maxSampleBytes: Int,
+    includeOCR: Bool = false,
+    maxOCRCharacters: Int = 4_096,
     generatedAt: String = ISO8601DateFormatter().string(from: Date())
 ) -> VisualSnapshotState {
     let displayIDs = onlineDisplayIDs()
@@ -43,7 +62,14 @@ func desktopVisualSnapshot(
     } else {
         selectedDisplayIDs = displayIDs
     }
-    let displays = selectedDisplayIDs.map { visualSnapshotDisplay($0, maxSampleBytes: maxSampleBytes) }
+    let displays = selectedDisplayIDs.map {
+        visualSnapshotDisplay(
+            $0,
+            maxSampleBytes: maxSampleBytes,
+            includeOCR: includeOCR,
+            maxOCRCharacters: maxOCRCharacters
+        )
+    }
     let message: String
     if selectedDisplayIDs.isEmpty {
         message = targetDisplayID == nil
@@ -61,6 +87,8 @@ func desktopVisualSnapshot(
         action: "desktop.screenshot",
         risk: "medium",
         maxSampleBytes: maxSampleBytes,
+        includeOCR: includeOCR,
+        maxOCRCharacters: maxOCRCharacters,
         targetDisplayID: targetDisplayID,
         displayCount: displays.count,
         displays: displays,
@@ -79,7 +107,12 @@ private func onlineDisplayIDs() -> [CGDirectDisplayID] {
     return Array(displayIDs.prefix(Int(displayCount)))
 }
 
-private func visualSnapshotDisplay(_ displayID: CGDirectDisplayID, maxSampleBytes: Int) -> VisualSnapshotDisplay {
+private func visualSnapshotDisplay(
+    _ displayID: CGDirectDisplayID,
+    maxSampleBytes: Int,
+    includeOCR: Bool,
+    maxOCRCharacters: Int
+) -> VisualSnapshotDisplay {
     let bounds = CGDisplayBounds(displayID)
     let rect = Rect(
         x: bounds.origin.x,
@@ -104,12 +137,23 @@ private func visualSnapshotDisplay(_ displayID: CGDirectDisplayID, maxSampleByte
             sampleByteCount: 0,
             fullByteCount: nil,
             sampleDigest: nil,
+            ocr: includeOCR ? VisualSnapshotOCR(
+                requested: true,
+                available: false,
+                observationCount: 0,
+                textLength: 0,
+                text: nil,
+                textDigest: nil,
+                truncated: false,
+                message: "OCR was unavailable because display image capture was unavailable."
+            ) : nil,
             message: "Display image capture was unavailable."
         )
     }
 
     let bytes = data as Data
     let sample = bytes.prefix(max(0, maxSampleBytes))
+    let ocr = visualOCRSnapshot(from: image, requested: includeOCR, maxCharacters: maxOCRCharacters)
     return VisualSnapshotDisplay(
         id: "display:\(displayID)",
         displayID: displayID,
@@ -124,8 +168,73 @@ private func visualSnapshotDisplay(_ displayID: CGDirectDisplayID, maxSampleByte
         sampleByteCount: sample.count,
         fullByteCount: bytes.count,
         sampleDigest: visualSHA256Hex(sample),
-        message: "Captured display image metadata and bounded byte-sample digest."
+        ocr: ocr,
+        message: includeOCR
+            ? "Captured display image metadata, bounded byte-sample digest, and bounded OCR metadata."
+            : "Captured display image metadata and bounded byte-sample digest."
     )
+}
+
+private func visualOCRSnapshot(
+    from image: CGImage,
+    requested: Bool,
+    maxCharacters: Int
+) -> VisualSnapshotOCR? {
+    guard requested else {
+        return nil
+    }
+
+    #if canImport(Vision)
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+
+    do {
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        let strings = (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .filter { !$0.isEmpty }
+        let combined = strings.joined(separator: "\n")
+        let limit = max(0, maxCharacters)
+        let text = String(combined.prefix(limit))
+        let textData = Data(combined.utf8)
+
+        return VisualSnapshotOCR(
+            requested: true,
+            available: true,
+            observationCount: strings.count,
+            textLength: combined.count,
+            text: text.isEmpty ? nil : text,
+            textDigest: textData.isEmpty ? nil : visualSHA256Hex(textData),
+            truncated: combined.count > text.count,
+            message: strings.isEmpty
+                ? "OCR completed without recognized text."
+                : "OCR completed with bounded recognized text."
+        )
+    } catch {
+        return VisualSnapshotOCR(
+            requested: true,
+            available: false,
+            observationCount: 0,
+            textLength: 0,
+            text: nil,
+            textDigest: nil,
+            truncated: false,
+            message: "OCR failed: \(error.localizedDescription)"
+        )
+    }
+    #else
+    return VisualSnapshotOCR(
+        requested: true,
+        available: false,
+        observationCount: 0,
+        textLength: 0,
+        text: nil,
+        textDigest: nil,
+        truncated: false,
+        message: "OCR is unavailable because the Vision framework is not available."
+    )
+    #endif
 }
 
 private func visualSHA256Hex<D: DataProtocol>(_ data: D) -> String {
