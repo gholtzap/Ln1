@@ -449,6 +449,19 @@ struct BrowserCheckedPayload: Codable {
     let matched: Bool
 }
 
+struct BrowserFileUploadPayload: Codable {
+    let ok: Bool
+    let code: String
+    let message: String
+    let selector: String
+    let tagName: String?
+    let inputType: String?
+    let disabled: Bool?
+    let multiple: Bool?
+    let fileCount: Int
+    let matched: Bool
+}
+
 struct BrowserFormFillResult: Codable {
     let generatedAt: String
     let platform: String
@@ -509,6 +522,28 @@ struct BrowserCheckedResult: Codable {
     let targetDisabled: Bool?
     let targetReadOnly: Bool?
     let currentChecked: Bool?
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
+struct BrowserFileUploadResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let selector: String
+    let fileCount: Int
+    let totalBytes: Int
+    let pathDigest: String
+    let verification: FileOperationVerification
+    let targetTagName: String?
+    let targetInputType: String?
+    let targetDisabled: Bool?
+    let targetMultiple: Bool?
+    let resultingFileCount: Int
     let auditID: String
     let auditLogPath: String
     let message: String
@@ -727,6 +762,12 @@ struct CDPCommandResponse: Decodable {
 
 struct CDPCommandResult: Decodable {
     let data: String?
+    let root: CDPNode?
+    let nodeId: Int?
+}
+
+struct CDPNode: Decodable {
+    let nodeId: Int?
 }
 
 struct CDPEvaluateResult: Decodable {
@@ -757,6 +798,10 @@ struct BrowserAuditSummary: Codable {
     var formTextLength: Int? = nil
     var formTextDigest: String? = nil
     var formChecked: Bool? = nil
+    var uploadSelector: String? = nil
+    var uploadFileCount: Int? = nil
+    var uploadTotalBytes: Int? = nil
+    var uploadDigest: String? = nil
     var navigationURL: String? = nil
     var currentURL: String? = nil
     var urlMatched: Bool? = nil

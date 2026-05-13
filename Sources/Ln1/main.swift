@@ -9930,7 +9930,7 @@ final class Ln1CLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
-        case "browser.launch", "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readDialogs", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
+        case "browser.launch", "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readDialogs", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.uploadFiles", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
             return "medium"
         default:
             return "unknown"
@@ -10113,6 +10113,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.readDOM", domain: "browser", risk: "medium", mutates: false),
             PolicyActionRecord(name: "browser.fillFormField", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.selectOption", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.uploadFiles", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.setChecked", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.focusElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.pressKey", domain: "browser", risk: "medium", mutates: true),
@@ -10290,6 +10291,7 @@ final class Ln1CLI {
           Ln1 browser dom --id TARGET_ID --allow-risk medium [--endpoint URL_OR_PATH] [--max-elements N] [--max-text-characters N] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser fill --id TARGET_ID --selector CSS_SELECTOR --text TEXT --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser select --id TARGET_ID --selector CSS_SELECTOR (--value VALUE|--label LABEL) --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser upload --id TARGET_ID --selector CSS_SELECTOR --path FILE [--path FILE ...] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser check --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser focus --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser press-key --id TARGET_ID --key KEY --allow-risk medium [--selector CSS_SELECTOR] [--modifiers shift,control,alt,meta] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
@@ -10383,6 +10385,7 @@ final class Ln1CLI {
           - `browser dom` reads bounded structured page state through Chrome DevTools only after medium-risk policy approval and audits count/digest without storing the DOM payload.
           - `browser fill` writes one form field through Chrome DevTools only after medium-risk policy approval, verifies by length, and audits selector plus text length/digest without storing text.
           - `browser select` chooses one select option through Chrome DevTools only after medium-risk policy approval, verifies the selection, and audits selector plus option length/digest without storing option text.
+          - `browser upload` attaches readable local files to one file input through Chrome DevTools only after medium-risk policy approval, verifies file count, and audits selector plus file count/size/path digest without storing file contents.
           - `browser check` sets one checkbox or radio input through Chrome DevTools only after medium-risk policy approval and audits selector plus requested checked state.
           - `browser focus` focuses one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
           - `browser press-key` dispatches one key press through Chrome DevTools only after medium-risk policy approval and audits key/modifier metadata.

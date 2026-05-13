@@ -296,6 +296,10 @@ extension Ln1CLI {
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
             try writeJSON(browserSelect(id: id, selector: selector))
+        case "upload":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserUpload(id: id, selector: selector))
         case "check":
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
@@ -2753,6 +2757,11 @@ extension Ln1CLI {
                     mutates: true
                 ),
                 BrowserAction(
+                    name: "browser.uploadFiles",
+                    risk: browserActionRisk(for: "browser.uploadFiles"),
+                    mutates: true
+                ),
+                BrowserAction(
                     name: "browser.setChecked",
                     risk: browserActionRisk(for: "browser.setChecked"),
                     mutates: true
@@ -3892,6 +3901,147 @@ extension Ln1CLI {
                 selectedIndex: payload.selectedIndex,
                 selectedValueLength: payload.selectedValueLength,
                 selectedLabelLength: payload.selectedLabelLength,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    func browserUpload(id: String, selector: String) throws -> BrowserFileUploadResult {
+        let action = "browser.uploadFiles"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let fileURLs = try browserUploadFileURLs()
+        let pathDigest = sha256Digest(fileURLs.map(\.path).joined(separator: "\n"))
+        let totalBytes = try fileURLs.reduce(0) { partial, url in
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            return partial + ((attributes[.size] as? NSNumber)?.intValue ?? 0)
+        }
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            uploadSelector: selector,
+            uploadFileCount: fileURLs.count,
+            uploadTotalBytes: totalBytes,
+            uploadDigest: pathDigest
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String, verification: FileOperationVerification? = nil) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.upload",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                uploadSelector: selector,
+                uploadFileCount: fileURLs.count,
+                uploadTotalBytes: totalBytes,
+                uploadDigest: pathDigest
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            let payload = try setBrowserFileInputFiles(
+                selector: selector,
+                fileURLs: fileURLs,
+                at: webSocketURL
+            )
+            let verification = FileOperationVerification(
+                ok: payload.ok && payload.matched && payload.fileCount == fileURLs.count,
+                code: payload.ok && payload.matched && payload.fileCount == fileURLs.count ? "files_uploaded" : payload.code,
+                message: payload.ok && payload.matched && payload.fileCount == fileURLs.count
+                    ? "browser file input contains the requested number of files"
+                    : payload.message
+            )
+
+            guard verification.ok else {
+                try writeAudit(ok: false, code: payload.code, message: payload.message, verification: verification)
+                throw CommandError(description: payload.message)
+            }
+
+            let message = "Uploaded \(fileURLs.count) file(s) to browser file input matching selector '\(selector)' in tab \(id)."
+            try writeAudit(ok: true, code: "uploaded", message: message, verification: verification)
+
+            return BrowserFileUploadResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
+                selector: selector,
+                fileCount: fileURLs.count,
+                totalBytes: totalBytes,
+                pathDigest: pathDigest,
+                verification: verification,
+                targetTagName: payload.tagName,
+                targetInputType: payload.inputType,
+                targetDisabled: payload.disabled,
+                targetMultiple: payload.multiple,
+                resultingFileCount: payload.fileCount,
                 auditID: auditID,
                 auditLogPath: auditURL.path,
                 message: message
@@ -5892,6 +6042,128 @@ extension Ln1CLI {
             return try JSONDecoder().decode(BrowserFormFillPayload.self, from: data)
         } catch {
             throw CommandError(description: "Chrome DevTools form fill result was not valid JSON: \(error.localizedDescription)")
+        }
+    }
+
+    func setBrowserFileInputFiles(
+        selector: String,
+        fileURLs: [URL],
+        at webSocketURL: URL
+    ) throws -> BrowserFileUploadPayload {
+        let timeout = option("--timeout-ms").flatMap(Int.init).map { Double(max(0, $0)) / 1_000.0 } ?? 5.0
+        let documentResponse = try sendCDPCommand(
+            method: "DOM.getDocument",
+            params: ["depth": 0, "pierce": true],
+            at: webSocketURL,
+            timeout: timeout
+        )
+        if let error = documentResponse.error {
+            throw CommandError(description: "Chrome DevTools DOM.getDocument failed with \(error.code): \(error.message)")
+        }
+        guard let rootNodeID = documentResponse.result?.root?.nodeId else {
+            throw CommandError(description: "Chrome DevTools DOM.getDocument response did not include a root node ID")
+        }
+
+        let queryResponse = try sendCDPCommand(
+            method: "DOM.querySelector",
+            params: ["nodeId": rootNodeID, "selector": selector],
+            at: webSocketURL,
+            timeout: timeout
+        )
+        if let error = queryResponse.error {
+            throw CommandError(description: "Chrome DevTools DOM.querySelector failed with \(error.code): \(error.message)")
+        }
+        guard let nodeID = queryResponse.result?.nodeId, nodeID != 0 else {
+            return BrowserFileUploadPayload(
+                ok: false,
+                code: "element_missing",
+                message: "No element matches selector '\(selector)'.",
+                selector: selector,
+                tagName: nil,
+                inputType: nil,
+                disabled: nil,
+                multiple: nil,
+                fileCount: 0,
+                matched: false
+            )
+        }
+
+        let setResponse = try sendCDPCommand(
+            method: "DOM.setFileInputFiles",
+            params: [
+                "nodeId": nodeID,
+                "files": fileURLs.map(\.path)
+            ],
+            at: webSocketURL,
+            timeout: timeout
+        )
+        if let error = setResponse.error {
+            throw CommandError(description: "Chrome DevTools DOM.setFileInputFiles failed with \(error.code): \(error.message)")
+        }
+
+        let expectedCount = fileURLs.count
+        let expression = """
+        (() => {
+          const selector = \(try javascriptStringLiteral(selector));
+          const expectedCount = \(expectedCount);
+          const element = document.querySelector(selector);
+          const result = (ok, code, message, extra = {}) => JSON.stringify({
+            ok,
+            code,
+            message,
+            selector,
+            tagName: extra.tagName || null,
+            inputType: extra.inputType || null,
+            disabled: extra.disabled ?? null,
+            multiple: extra.multiple ?? null,
+            fileCount: extra.fileCount ?? 0,
+            matched: extra.matched || false
+          });
+
+          if (!element) {
+            return result(false, "element_missing", `No element matches selector '${selector}'.`);
+          }
+          const tagName = element.tagName ? element.tagName.toLowerCase() : null;
+          const inputType = tagName === "input" ? (element.getAttribute("type") || "text").toLowerCase() : null;
+          const disabled = Boolean(element.disabled);
+          const multiple = Boolean(element.multiple);
+          const metadata = { tagName, inputType, disabled, multiple };
+          if (tagName !== "input" || inputType !== "file") {
+            return result(false, "unsupported_element", "The matched element is not a file input.", metadata);
+          }
+          if (disabled) {
+            return result(false, "element_disabled", "The matched file input is disabled.", metadata);
+          }
+          const fileCount = element.files ? element.files.length : 0;
+          return result(fileCount === expectedCount, fileCount === expectedCount ? "uploaded" : "file_count_mismatch", fileCount === expectedCount ? "The matched file input contains the requested files." : "The matched file input file count did not match.", {
+            ...metadata,
+            fileCount,
+            matched: fileCount === expectedCount
+          });
+        })()
+        """
+        let response = try evaluateCDPRuntimeExpression(
+            expression,
+            at: webSocketURL,
+            timeout: timeout
+        )
+
+        if let error = response.error {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate failed with \(error.code): \(error.message)")
+        }
+        guard let remoteObject = response.result?.result else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate response did not include a result object")
+        }
+        guard let value = remoteObject.value else {
+            throw CommandError(description: "Chrome DevTools Runtime.evaluate did not return a file upload result string")
+        }
+        guard let data = value.data(using: .utf8) else {
+            throw CommandError(description: "Chrome DevTools file upload result was not valid UTF-8")
+        }
+        do {
+            return try JSONDecoder().decode(BrowserFileUploadPayload.self, from: data)
+        } catch {
+            throw CommandError(description: "Chrome DevTools file upload result was not valid JSON: \(error.localizedDescription)")
         }
     }
 
@@ -8330,13 +8602,45 @@ extension Ln1CLI {
         return rawOption
     }
 
+    func browserUploadFileURLs() throws -> [URL] {
+        var paths: [String] = []
+        for (index, argument) in arguments.enumerated() where argument == "--path" {
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else {
+                throw CommandError(description: "--path requires a file path")
+            }
+            paths.append(arguments[valueIndex])
+        }
+        if let singlePath = option("--file") {
+            paths.append(singlePath)
+        }
+        guard !paths.isEmpty else {
+            throw CommandError(description: "browser upload requires at least one --path FILE")
+        }
+
+        return try paths.map { rawPath in
+            let url = URL(fileURLWithPath: expandedPath(rawPath)).standardizedFileURL
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                throw CommandError(description: "upload file does not exist at \(url.path)")
+            }
+            guard !isDirectory.boolValue else {
+                throw CommandError(description: "upload path must be a regular file, not a directory: \(url.path)")
+            }
+            guard FileManager.default.isReadableFile(atPath: url.path) else {
+                throw CommandError(description: "upload file is not readable at \(url.path)")
+            }
+            return url
+        }
+    }
+
     func evaluateCDPRuntimeExpression(
         _ expression: String,
         at webSocketURL: URL,
         timeout: TimeInterval
     ) throws -> CDPEvaluateResponse {
         if webSocketURL.isFileURL {
-            let data = try Data(contentsOf: webSocketURL)
+            let data = try cdpFixtureData(for: webSocketURL, method: "Runtime.evaluate")
             return try Self.decodeCDPEvaluateResponse(from: data)
         }
 
@@ -8429,7 +8733,7 @@ extension Ln1CLI {
         timeout: TimeInterval
     ) throws -> CDPCommandResponse {
         if webSocketURL.isFileURL {
-            let data = try Data(contentsOf: webSocketURL)
+            let data = try cdpFixtureData(for: webSocketURL, method: method)
             return try JSONDecoder().decode(CDPCommandResponse.self, from: data)
         }
 
@@ -8509,6 +8813,15 @@ extension Ln1CLI {
         return try result.get()?.get() ?? {
             throw CommandError(description: "Chrome DevTools \(method) did not produce a response")
         }()
+    }
+
+    func cdpFixtureData(for fileURL: URL, method: String) throws -> Data {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            let fileName = method.replacingOccurrences(of: ".", with: "-") + ".json"
+            return try Data(contentsOf: fileURL.appendingPathComponent(fileName))
+        }
+        return try Data(contentsOf: fileURL)
     }
 
     private static func decodeCDPEvaluateResponse(from data: Data) throws -> CDPEvaluateResponse {

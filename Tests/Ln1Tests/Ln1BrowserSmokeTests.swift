@@ -162,6 +162,11 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.uploadFiles"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.setChecked"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -1398,6 +1403,175 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "value_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "filled")
+    }
+
+    func testBrowserUploadSetsFileInputWithPolicyVerificationAndRedactedAudit() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-upload-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpDirectory = directory.appendingPathComponent("cdp")
+        let uploadFile = directory.appendingPathComponent("upload.txt")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cdpDirectory, withIntermediateDirectories: true)
+        try "upload payload".write(to: uploadFile, atomically: true, encoding: .utf8)
+
+        try """
+        {
+          "id": 1,
+          "result": {
+            "root": { "nodeId": 7 }
+          }
+        }
+        """.write(to: cdpDirectory.appendingPathComponent("DOM-getDocument.json"), atomically: true, encoding: .utf8)
+        try """
+        {
+          "id": 1,
+          "result": {
+            "nodeId": 9
+          }
+        }
+        """.write(to: cdpDirectory.appendingPathComponent("DOM-querySelector.json"), atomically: true, encoding: .utf8)
+        try """
+        {
+          "id": 1,
+          "result": {}
+        }
+        """.write(to: cdpDirectory.appendingPathComponent("DOM-setFileInputFiles.json"), atomically: true, encoding: .utf8)
+
+        let uploadPayload: [String: Any] = [
+            "ok": true,
+            "code": "uploaded",
+            "message": "The matched file input contains the requested files.",
+            "selector": "input[type='file']",
+            "tagName": "input",
+            "inputType": "file",
+            "disabled": false,
+            "multiple": false,
+            "fileCount": 1,
+            "matched": true
+        ]
+        let uploadData = try JSONSerialization.data(withJSONObject: uploadPayload, options: [.sortedKeys])
+        let uploadJSONString = String(decoding: uploadData, as: UTF8.self)
+        let cdpPayload: [String: Any] = [
+            "id": 1,
+            "result": [
+                "result": [
+                    "type": "string",
+                    "value": uploadJSONString
+                ]
+            ]
+        ]
+        let cdpData = try JSONSerialization.data(withJSONObject: cdpPayload, options: [.prettyPrinted, .sortedKeys])
+        try cdpData.write(to: cdpDirectory.appendingPathComponent("Runtime-evaluate.json"))
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Upload Page",
+            "url": "https://example.com/upload",
+            "webSocketDebuggerUrl": "\(cdpDirectory.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "upload",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[type='file']",
+            "--path", uploadFile.path,
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "upload",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[type='file']",
+            "--path", uploadFile.path,
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "attach report"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.uploadFiles")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["selector"] as? String, "input[type='file']")
+        XCTAssertEqual(object["fileCount"] as? Int, 1)
+        XCTAssertEqual(object["totalBytes"] as? Int, 14)
+        XCTAssertNotNil(object["pathDigest"] as? String)
+        XCTAssertEqual(object["targetTagName"] as? String, "input")
+        XCTAssertEqual(object["targetInputType"] as? String, "file")
+        XCTAssertEqual(object["resultingFileCount"] as? Int, 1)
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "files_uploaded")
+        XCTAssertNil(object["fileContents"])
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.upload",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.uploadFiles")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertEqual(deniedBrowserTab["uploadSelector"] as? String, "input[type='file']")
+        XCTAssertEqual(deniedBrowserTab["uploadFileCount"] as? Int, 1)
+        XCTAssertEqual(deniedBrowserTab["uploadTotalBytes"] as? Int, 14)
+        XCTAssertNotNil(deniedBrowserTab["uploadDigest"] as? String)
+        XCTAssertNil(deniedBrowserTab["fileContents"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.upload",
+            "--code", "uploaded",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.upload")
+        XCTAssertEqual(entry["action"] as? String, "browser.uploadFiles")
+        XCTAssertEqual(entry["reason"] as? String, "attach report")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["uploadFileCount"] as? Int, 1)
+        XCTAssertEqual(browserTab["uploadTotalBytes"] as? Int, 14)
+        XCTAssertNotNil(browserTab["uploadDigest"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "uploaded")
     }
 
     func testBrowserSelectSetsOptionWithPolicyVerificationAndRedactedAudit() throws {
