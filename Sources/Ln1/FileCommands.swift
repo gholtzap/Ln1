@@ -236,6 +236,140 @@ extension Ln1CLI {
         }
     }
 
+    func browser() throws {
+        let mode = arguments.dropFirst().first ?? "tabs"
+
+        switch mode {
+        case "tabs":
+            let includeNonPageTargets = flag("--include-non-page")
+            try writeJSON(browserTabs(includeNonPageTargets: includeNonPageTargets))
+        case "tab":
+            let id = try requiredOption("--id")
+            let includeNonPageTargets = flag("--include-non-page")
+            try writeJSON(browserTab(id: id, includeNonPageTargets: includeNonPageTargets))
+        case "text":
+            let id = try requiredOption("--id")
+            let maxCharacters = max(0, option("--max-characters").flatMap(Int.init) ?? 16_384)
+            try writeJSON(browserText(id: id, maxCharacters: maxCharacters))
+        case "screenshot":
+            let id = try requiredOption("--id")
+            try writeJSON(browserScreenshot(id: id))
+        case "console":
+            let id = try requiredOption("--id")
+            let maxEntries = max(0, option("--max-entries").flatMap(Int.init) ?? 100)
+            let maxMessageCharacters = max(0, option("--max-message-characters").flatMap(Int.init) ?? 1_000)
+            let sampleMilliseconds = max(0, option("--sample-ms").flatMap(Int.init) ?? 1_000)
+            try writeJSON(browserConsole(
+                id: id,
+                maxEntries: maxEntries,
+                maxMessageCharacters: maxMessageCharacters,
+                sampleMilliseconds: sampleMilliseconds
+            ))
+        case "dialogs":
+            let id = try requiredOption("--id")
+            let maxEntries = max(0, option("--max-entries").flatMap(Int.init) ?? 20)
+            let maxMessageCharacters = max(0, option("--max-message-characters").flatMap(Int.init) ?? 1_000)
+            let sampleMilliseconds = max(0, option("--sample-ms").flatMap(Int.init) ?? 1_000)
+            try writeJSON(browserDialogs(
+                id: id,
+                maxEntries: maxEntries,
+                maxMessageCharacters: maxMessageCharacters,
+                sampleMilliseconds: sampleMilliseconds
+            ))
+        case "network":
+            let id = try requiredOption("--id")
+            let maxEntries = max(0, option("--max-entries").flatMap(Int.init) ?? 100)
+            try writeJSON(browserNetwork(id: id, maxEntries: maxEntries))
+        case "dom":
+            let id = try requiredOption("--id")
+            let maxElements = max(0, option("--max-elements").flatMap(Int.init) ?? 200)
+            let maxTextCharacters = max(0, option("--max-text-characters").flatMap(Int.init) ?? 120)
+            try writeJSON(browserDOM(id: id, maxElements: maxElements, maxTextCharacters: maxTextCharacters))
+        case "fill":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let text = try requiredOption("--text")
+            try writeJSON(browserFill(id: id, selector: selector, text: text))
+        case "select":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserSelect(id: id, selector: selector))
+        case "check":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserCheck(id: id, selector: selector))
+        case "focus":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserFocus(id: id, selector: selector))
+        case "press-key":
+            let id = try requiredOption("--id")
+            let key = try requiredOption("--key")
+            try writeJSON(browserPressKey(id: id, key: key))
+        case "click":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserClick(id: id, selector: selector))
+        case "navigate":
+            let id = try requiredOption("--id")
+            let url = try requiredOption("--url")
+            try writeJSON(browserNavigate(id: id, requestedURL: url))
+        case "wait-url":
+            let id = try requiredOption("--id")
+            let expectedURL = try requiredOption("--expect-url")
+            try writeJSON(browserWaitURL(id: id, expectedURL: expectedURL))
+        case "wait-selector":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserWaitSelector(id: id, selector: selector))
+        case "wait-count":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserWaitCount(id: id, selector: selector))
+        case "wait-text":
+            let id = try requiredOption("--id")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitText(id: id, expectedText: text))
+        case "wait-element-text":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitElementText(id: id, selector: selector, expectedText: text))
+        case "wait-value":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitValue(id: id, selector: selector, expectedValue: text))
+        case "wait-ready":
+            let id = try requiredOption("--id")
+            try writeJSON(browserWaitReady(id: id))
+        case "wait-title":
+            let id = try requiredOption("--id")
+            let title = try requiredOption("--title")
+            try writeJSON(browserWaitTitle(id: id, expectedTitle: title))
+        case "wait-checked":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserWaitChecked(id: id, selector: selector))
+        case "wait-enabled":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserWaitEnabled(id: id, selector: selector))
+        case "wait-focus":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            try writeJSON(browserWaitFocus(id: id, selector: selector))
+        case "wait-attribute":
+            let id = try requiredOption("--id")
+            let selector = try requiredOption("--selector")
+            let attribute = try requiredOption("--attribute")
+            let text = try requiredOption("--text")
+            try writeJSON(browserWaitAttribute(id: id, selector: selector, attribute: attribute, expectedValue: text))
+        default:
+            throw CommandError(description: "unknown browser mode '\(mode)'")
+        }
+    }
+
     func fileOperationPreflight(operation rawOperation: String) throws -> FileOperationPreflight {
         let operation = rawOperation.lowercased()
         switch operation {
