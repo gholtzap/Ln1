@@ -9930,7 +9930,7 @@ final class Ln1CLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
-        case "browser.launch", "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readDialogs", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.uploadFiles", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate":
+        case "browser.launch", "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readDialogs", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.uploadFiles", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate", "browser.rollbackNavigation":
             return "medium"
         default:
             return "unknown"
@@ -10119,6 +10119,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.pressKey", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.rollbackNavigation", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.waitURL", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitSelector", domain: "browser", risk: "low", mutates: false),
             PolicyActionRecord(name: "browser.waitCount", domain: "browser", risk: "low", mutates: false),
@@ -10297,6 +10298,7 @@ final class Ln1CLI {
           Ln1 browser press-key --id TARGET_ID --key KEY --allow-risk medium [--selector CSS_SELECTOR] [--modifiers shift,control,alt,meta] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser back --id TARGET_ID --allow-risk medium [--steps N] [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser wait-url --id TARGET_ID --expect-url URL_OR_TEXT [--endpoint URL_OR_PATH] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-selector --id TARGET_ID --selector CSS_SELECTOR [--endpoint URL_OR_PATH] [--state attached|visible|hidden|detached] [--timeout-ms N] [--interval-ms N]
           Ln1 browser wait-count --id TARGET_ID --selector CSS_SELECTOR --count N [--endpoint URL_OR_PATH] [--count-match exact|at-least|at-most] [--timeout-ms N] [--interval-ms N]
@@ -10391,6 +10393,7 @@ final class Ln1CLI {
           - `browser press-key` dispatches one key press through Chrome DevTools only after medium-risk policy approval and audits key/modifier metadata.
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
+          - `browser back` rolls a tab back through DevTools navigation history only after medium-risk policy approval, verifies the resulting URL, and audits target entry metadata.
           - `browser wait-url` waits for one tab URL to match exact, prefix, or contains criteria without mutating the page.
           - `browser wait-selector` waits for one DOM selector to become attached, visible, hidden, or detached without mutating the page.
           - `browser wait-count` waits for a selector count to match exact, at-least, or at-most criteria without mutating the page.

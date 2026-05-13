@@ -192,6 +192,11 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.rollbackNavigation"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.waitURL"
                 && $0["risk"] as? String == "low"
                 && $0["mutates"] as? Bool == false
@@ -2502,6 +2507,156 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "url_matched")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "navigated")
+    }
+
+    func testBrowserBackUsesHistoryEntryVerifiesURLAndAudits() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-back-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpDirectory = directory.appendingPathComponent("cdp")
+        let historyResponse = cdpDirectory.appendingPathComponent("Page-getNavigationHistory.json")
+        let navigateResponse = cdpDirectory.appendingPathComponent("Page-navigateToHistoryEntry.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cdpDirectory, withIntermediateDirectories: true)
+
+        try """
+        {
+          "id": 1,
+          "result": {
+            "currentIndex": 1,
+            "entries": [
+              {
+                "id": 7,
+                "url": "https://example.com/start",
+                "userTypedURL": "https://example.com/start",
+                "title": "Start Page",
+                "transitionType": "typed"
+              },
+              {
+                "id": 8,
+                "url": "https://example.com/current",
+                "userTypedURL": "https://example.com/current",
+                "title": "Current Page",
+                "transitionType": "link"
+              }
+            ]
+          }
+        }
+        """.write(to: historyResponse, atomically: true, encoding: .utf8)
+        try """
+        {
+          "id": 1,
+          "result": {}
+        }
+        """.write(to: navigateResponse, atomically: true, encoding: .utf8)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Current Page",
+            "url": "https://example.com/start",
+            "webSocketDebuggerUrl": "\(cdpDirectory.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "back",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "back",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--steps", "1",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "undo navigation"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.rollbackNavigation")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertEqual(object["steps"] as? Int, 1)
+        XCTAssertEqual(object["fromURL"] as? String, "https://example.com/current")
+        XCTAssertEqual(object["targetEntryID"] as? Int, 7)
+        XCTAssertEqual(object["targetURL"] as? String, "https://example.com/start")
+        XCTAssertEqual(object["expectedURL"] as? String, "https://example.com/start")
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "url_matched")
+        XCTAssertEqual(verification["currentURL"] as? String, "https://example.com/start")
+        XCTAssertEqual(verification["matched"] as? Bool, true)
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.back",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.rollbackNavigation")
+        XCTAssertEqual(deniedEntry["risk"] as? String, "medium")
+        XCTAssertNil(deniedBrowserTab["navigationURL"])
+        XCTAssertNil(deniedBrowserTab["currentURL"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.back",
+            "--code", "navigation_rolled_back",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.back")
+        XCTAssertEqual(entry["action"] as? String, "browser.rollbackNavigation")
+        XCTAssertEqual(entry["reason"] as? String, "undo navigation")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["navigationURL"] as? String, "https://example.com/start")
+        XCTAssertEqual(browserTab["currentURL"] as? String, "https://example.com/start")
+        XCTAssertEqual(browserTab["urlMatched"] as? Bool, true)
+        XCTAssertEqual(browserTab["rollbackFromURL"] as? String, "https://example.com/current")
+        XCTAssertEqual(browserTab["rollbackEntryID"] as? Int, 7)
+        XCTAssertEqual(browserTab["rollbackSteps"] as? Int, 1)
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "url_matched")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "navigation_rolled_back")
     }
 
     func testBrowserWaitURLReturnsVerificationWithoutMutating() throws {

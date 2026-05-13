@@ -668,6 +668,40 @@ struct BrowserNavigationResult: Codable {
     let message: String
 }
 
+struct BrowserNavigationHistoryEntry: Codable {
+    let id: Int
+    let url: String?
+    let userTypedURL: String?
+    let title: String?
+    let transitionType: String?
+}
+
+struct BrowserNavigationHistoryTarget: Codable {
+    let currentIndex: Int
+    let targetIndex: Int
+    let currentEntry: BrowserNavigationHistoryEntry?
+    let targetEntry: BrowserNavigationHistoryEntry
+}
+
+struct BrowserNavigationRollbackResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let steps: Int
+    let fromURL: String?
+    let targetEntryID: Int
+    let targetURL: String
+    let expectedURL: String
+    let match: String
+    let verification: BrowserNavigationVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct BrowserURLWaitResult: Codable {
     let generatedAt: String
     let platform: String
@@ -764,6 +798,8 @@ struct CDPCommandResult: Decodable {
     let data: String?
     let root: CDPNode?
     let nodeId: Int?
+    let currentIndex: Int?
+    let entries: [BrowserNavigationHistoryEntry]?
 }
 
 struct CDPNode: Decodable {
@@ -805,6 +841,9 @@ struct BrowserAuditSummary: Codable {
     var navigationURL: String? = nil
     var currentURL: String? = nil
     var urlMatched: Bool? = nil
+    var rollbackFromURL: String? = nil
+    var rollbackEntryID: Int? = nil
+    var rollbackSteps: Int? = nil
     var clickSelector: String? = nil
     var clickTagName: String? = nil
     var focusSelector: String? = nil
