@@ -10658,24 +10658,15 @@ final class Ln1CLI {
             try requireTrusted()
             let app = try targetRunningApplicationForAppCommand()
             appRecord = self.appRecord(for: app)
-            let window = try resolveElement(id: requestedElementID, in: app.processIdentifier)
-            elementSummary = auditSummary(
-                window,
-                pathID: requestedElementID,
-                ownerName: app.localizedName,
-                ownerBundleIdentifier: app.bundleIdentifier
-            )
+            let resolution = try resolveGuardedElement(id: requestedElementID, in: app)
+            let window = resolution.element
+            elementID = resolution.id
+            elementSummary = resolution.summary
+            identityVerification = resolution.identityVerification
 
             guard elementSummary?.role == (kAXWindowRole as String) else {
                 let message = "target element role is \(elementSummary?.role ?? "unavailable"), not AXWindow"
                 try writeAudit(ok: false, code: "target_not_window", message: message)
-                throw CommandError(description: message)
-            }
-
-            identityVerification = try verifyElementIdentity(elementSummary?.stableIdentity)
-            guard identityVerification?.ok != false else {
-                let message = identityVerification?.message ?? "window identity verification failed"
-                try writeAudit(ok: false, code: identityVerification?.code ?? "identity_rejected", message: message)
                 throw CommandError(description: message)
             }
 
@@ -10723,7 +10714,7 @@ final class Ln1CLI {
                 throw CommandError(description: message)
             }
 
-            let message = "Restored window \(requestedElementID) for \(appDisplayName(appRecord!))."
+            let message = "Restored window \(elementID!) for \(appDisplayName(appRecord!))."
             try writeAudit(ok: true, code: "restored", message: message)
 
             return DesktopMinimizeWindowResult(
@@ -10731,7 +10722,7 @@ final class Ln1CLI {
                 action: actionName,
                 risk: risk,
                 app: appRecord!,
-                elementID: requestedElementID,
+                elementID: elementID!,
                 window: elementSummary!,
                 minimizedBefore: minimizedBefore,
                 minimizedAfter: minimizedAfter,
