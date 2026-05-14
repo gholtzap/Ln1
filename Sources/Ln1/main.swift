@@ -9954,7 +9954,7 @@ final class Ln1CLI {
         switch action {
         case "input.pointer":
             return "low"
-        case "input.movePointer", "input.dragPointer", "input.scrollWheel", "input.pressKey", "input.typeText":
+        case "input.movePointer", "input.dragPointer", "input.scrollWheel", "input.pressKey", "input.undo", "input.typeText":
             return "medium"
         default:
             return "unknown"
@@ -10076,6 +10076,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "input.dragPointer", domain: "input", risk: inputActionRisk(for: "input.dragPointer"), mutates: true),
             PolicyActionRecord(name: "input.scrollWheel", domain: "input", risk: inputActionRisk(for: "input.scrollWheel"), mutates: true),
             PolicyActionRecord(name: "input.pressKey", domain: "input", risk: inputActionRisk(for: "input.pressKey"), mutates: true),
+            PolicyActionRecord(name: "input.undo", domain: "input", risk: inputActionRisk(for: "input.undo"), mutates: true),
             PolicyActionRecord(name: "input.typeText", domain: "input", risk: inputActionRisk(for: "input.typeText"), mutates: true),
             PolicyActionRecord(name: "filesystem.stat", domain: "filesystem", risk: "low", mutates: false),
             PolicyActionRecord(name: "filesystem.list", domain: "filesystem", risk: "low", mutates: false),
@@ -10241,6 +10242,7 @@ final class Ln1CLI {
           Ln1 input drag --from-x N --from-y N --to-x N --to-y N --allow-risk medium [--dry-run true|false] [--steps N] [--tolerance N] [--reason TEXT] [--audit-log PATH]
           Ln1 input scroll (--dx N|--dy N) --allow-risk medium [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 input key --key KEY --allow-risk medium [--modifiers shift,control,alt,meta] [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
+          Ln1 input undo --allow-risk medium [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 input type --text TEXT --allow-risk medium [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 state menu [--pid PID] [--depth N] [--max-children N]
@@ -10340,7 +10342,7 @@ final class Ln1CLI {
           - `desktop wait-active-window` waits for the frontmost visible window to match target metadata or change identity.
           - `desktop windows` lists or filters visible desktop windows from macOS window metadata without requiring screenshots.
           - `desktop wait-window` waits for visible desktop window metadata to appear or disappear without fixed sleeps.
-          - `input pointer`, `input move`, `input drag`, `input scroll`, `input key`, and `input type` provide a global input layer outside AX and browser targets, with policy/audit/verification for mutating input.
+          - `input pointer`, `input move`, `input drag`, `input scroll`, `input key`, `input undo`, and `input type` provide a global input layer outside AX and browser targets, with policy/audit/verification for mutating input.
           - `state` emits structured JSON from macOS Accessibility APIs.
           - `state menu` inspects the target app menu bar as a bounded Accessibility tree.
           - `state find` searches Accessibility elements by semantic attributes and returns bounded candidate IDs.

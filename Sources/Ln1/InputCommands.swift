@@ -16,6 +16,8 @@ extension Ln1CLI {
             try writeJSON(inputScrollWheel())
         case "key", "hotkey":
             try writeJSON(inputPressKey())
+        case "undo":
+            try writeJSON(inputUndo())
         case "type", "text":
             try writeJSON(inputTypeText())
         default:
@@ -428,6 +430,106 @@ extension Ln1CLI {
             verification = FileOperationVerification(ok: true, code: "key_posted", message: "keyboard input event was posted")
             let message = "Posted key input '\(key)'."
             try writeAudit(ok: true, code: "key_posted", message: message)
+            return InputKeyResult(
+                ok: true,
+                action: action,
+                risk: risk,
+                dryRun: false,
+                key: key,
+                keyCode: keyCode,
+                modifiers: modifierSet,
+                verification: verification!,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                try writeAudit(ok: false, code: "rejected", message: error.description)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    func inputUndo() throws -> InputKeyResult {
+        let action = "input.undo"
+        let risk = inputActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let key = "z"
+        guard let keyCode = inputKeyCode(for: key) else {
+            throw CommandError(description: "unsupported input undo key '\(key)'")
+        }
+        let modifierSet = ["meta"]
+        let dryRun = option("--dry-run").map(parseBool) ?? false
+        var verification: FileOperationVerification?
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "input.undo",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            if dryRun {
+                verification = FileOperationVerification(
+                    ok: true,
+                    code: "dry_run",
+                    message: "undo input was validated without posting input events"
+                )
+                let message = "Validated undo input without posting input events."
+                try writeAudit(ok: true, code: "dry_run", message: message)
+                return InputKeyResult(
+                    ok: true,
+                    action: action,
+                    risk: risk,
+                    dryRun: true,
+                    key: key,
+                    keyCode: keyCode,
+                    modifiers: modifierSet,
+                    verification: verification!,
+                    auditID: auditID,
+                    auditLogPath: auditURL.path,
+                    message: message
+                )
+            }
+
+            guard postKeyInput(keyCode: keyCode, modifiers: modifierSet) else {
+                let message = "failed to create undo input event"
+                verification = FileOperationVerification(ok: false, code: "undo_failed", message: message)
+                try writeAudit(ok: false, code: "undo_failed", message: message)
+                throw CommandError(description: message)
+            }
+
+            verification = FileOperationVerification(ok: true, code: "undo_posted", message: "undo input event was posted")
+            let message = "Posted undo input."
+            try writeAudit(ok: true, code: "undo_posted", message: message)
             return InputKeyResult(
                 ok: true,
                 action: action,
