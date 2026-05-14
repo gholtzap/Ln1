@@ -686,6 +686,7 @@ extension Ln1CLI {
                     { "name": "browser.setChecked", "risk": "medium", "mutates": true },
                     { "name": "browser.focusElement", "risk": "medium", "mutates": true },
                     { "name": "browser.pressKey", "risk": "medium", "mutates": true },
+                    { "name": "browser.undo", "risk": "medium", "mutates": true },
                     { "name": "browser.clickElement", "risk": "medium", "mutates": true },
                     { "name": "browser.navigate", "risk": "medium", "mutates": true },
                     { "name": "browser.waitURL", "risk": "low", "mutates": false },
@@ -860,6 +861,31 @@ extension Ln1CLI {
                 "ok": true,
                 "code": "key_pressed",
                 "message": "browser key press dispatched through Chrome DevTools",
+                "keyDownDispatched": true,
+                "keyUpDispatched": true
+              },
+              "auditID": "UUID",
+              "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
+            }
+          },
+          "browserUndo": {
+            "command": "Ln1 browser undo --endpoint http://127.0.0.1:9222 --id devtools-target-id --selector 'input[name=q]' --allow-risk medium",
+            "result": {
+              "action": "browser.undo",
+              "risk": "medium",
+              "selector": "input[name=q]",
+              "focusVerification": {
+                "ok": true,
+                "code": "element_focused",
+                "message": "browser active element matches the requested selector"
+              },
+              "verification": {
+                "ok": true,
+                "code": "key_pressed",
+                "message": "browser key press dispatched through Chrome DevTools",
+                "key": "z",
+                "modifiers": ["meta"],
+                "modifierMask": 4,
                 "keyDownDispatched": true,
                 "keyUpDispatched": true
               },

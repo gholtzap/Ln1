@@ -429,6 +429,8 @@ final class Ln1CLI {
             return workflowPreflightBrowserAction(kind: "focus")
         case "press-browser-key":
             return workflowPreflightBrowserAction(kind: "press-key")
+        case "undo-browser":
+            return workflowPreflightBrowserAction(kind: "undo")
         case "click-browser":
             return workflowPreflightBrowserAction(kind: "click")
         case "navigate-browser":
@@ -3418,6 +3420,20 @@ final class Ln1CLI {
             }
             if let modifiers {
                 arguments += ["--modifiers", modifiers]
+            }
+            if let auditLog = option("--audit-log") {
+                arguments += ["--audit-log", auditLog]
+            }
+            arguments += ["--allow-risk", "medium", "--reason", "Describe intent"]
+            nextArguments = arguments
+        } else if blockers.isEmpty, kind == "undo", let id {
+            var arguments = ["Ln1", "browser", "undo"]
+            if let endpoint {
+                arguments += ["--endpoint", endpoint.absoluteString]
+            }
+            arguments += ["--id", id]
+            if let selector {
+                arguments += ["--selector", selector]
             }
             if let auditLog = option("--audit-log") {
                 arguments += ["--audit-log", auditLog]
@@ -9930,7 +9946,7 @@ final class Ln1CLI {
         switch action {
         case "browser.listTabs", "browser.inspectTab", "browser.waitURL", "browser.waitSelector", "browser.waitCount", "browser.waitText", "browser.waitElementText", "browser.waitValue", "browser.waitReady", "browser.waitTitle", "browser.waitChecked", "browser.waitEnabled", "browser.waitFocus", "browser.waitAttribute":
             return "low"
-        case "browser.launch", "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readDialogs", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.uploadFiles", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.clickElement", "browser.navigate", "browser.rollbackNavigation":
+        case "browser.launch", "browser.readText", "browser.captureScreenshot", "browser.readConsole", "browser.readDialogs", "browser.readNetwork", "browser.readDOM", "browser.fillFormField", "browser.selectOption", "browser.uploadFiles", "browser.setChecked", "browser.focusElement", "browser.pressKey", "browser.undo", "browser.clickElement", "browser.navigate", "browser.rollbackNavigation":
             return "medium"
         default:
             return "unknown"
@@ -10118,6 +10134,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "browser.setChecked", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.focusElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.pressKey", domain: "browser", risk: "medium", mutates: true),
+            PolicyActionRecord(name: "browser.undo", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.clickElement", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.navigate", domain: "browser", risk: "medium", mutates: true),
             PolicyActionRecord(name: "browser.rollbackNavigation", domain: "browser", risk: "medium", mutates: true),
@@ -10298,6 +10315,7 @@ final class Ln1CLI {
           Ln1 browser check --id TARGET_ID --selector CSS_SELECTOR [--checked true|false] --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser focus --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser press-key --id TARGET_ID --key KEY --allow-risk medium [--selector CSS_SELECTOR] [--modifiers shift,control,alt,meta] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
+          Ln1 browser undo --id TARGET_ID --allow-risk medium [--selector CSS_SELECTOR] [--endpoint URL_OR_PATH] [--timeout-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser click --id TARGET_ID --selector CSS_SELECTOR --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser navigate --id TARGET_ID --url URL --allow-risk medium [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
           Ln1 browser back --id TARGET_ID --allow-risk medium [--steps N] [--endpoint URL_OR_PATH] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--timeout-ms N] [--interval-ms N] [--reason TEXT] [--audit-log PATH]
@@ -10393,6 +10411,7 @@ final class Ln1CLI {
           - `browser check` sets one checkbox or radio input through Chrome DevTools only after medium-risk policy approval and audits selector plus requested checked state.
           - `browser focus` focuses one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval and audits selector/target metadata.
           - `browser press-key` dispatches one key press through Chrome DevTools only after medium-risk policy approval and audits key/modifier metadata.
+          - `browser undo` dispatches a browser-scoped Meta+Z through Chrome DevTools after medium-risk policy approval, optionally focusing one selector first, and audits only selector/key metadata.
           - `browser click` clicks one DOM element by CSS selector through Chrome DevTools only after medium-risk policy approval, optionally waits for an expected resulting URL, and audits selector/target metadata plus URL verification when requested.
           - `browser navigate` navigates one tab through Chrome DevTools only after medium-risk policy approval, verifies the resulting URL from structured tab metadata, and audits the requested/current URLs.
           - `browser back` rolls a tab back through DevTools navigation history only after medium-risk policy approval, verifies the resulting URL, and audits target entry metadata.

@@ -79,6 +79,9 @@ extension Ln1CLI {
             let id = try requiredOption("--id")
             let key = try requiredOption("--key")
             try writeJSON(browserPressKey(id: id, key: key))
+        case "undo":
+            let id = try requiredOption("--id")
+            try writeJSON(browserUndo(id: id))
         case "click":
             let id = try requiredOption("--id")
             let selector = try requiredOption("--selector")
@@ -486,6 +489,11 @@ extension Ln1CLI {
                 BrowserAction(
                     name: "browser.pressKey",
                     risk: browserActionRisk(for: "browser.pressKey"),
+                    mutates: true
+                ),
+                BrowserAction(
+                    name: "browser.undo",
+                    risk: browserActionRisk(for: "browser.undo"),
                     mutates: true
                 ),
                 BrowserAction(
@@ -2169,6 +2177,162 @@ extension Ln1CLI {
                 key: key.key,
                 modifiers: modifierSet,
                 modifierMask: modifierMask,
+                selector: selector,
+                focusVerification: focusVerification,
+                verification: verification,
+                auditID: auditID,
+                auditLogPath: auditURL.path,
+                message: message
+            )
+        } catch let error as CommandError {
+            if !auditWritten {
+                let message = error.description
+                try writeAudit(ok: false, code: "rejected", message: message)
+            }
+            throw error
+        } catch {
+            let message = error.localizedDescription
+            if !auditWritten {
+                try writeAudit(ok: false, code: "failed", message: message)
+            }
+            throw CommandError(description: message)
+        }
+    }
+
+    func browserUndo(id: String) throws -> BrowserUndoResult {
+        let action = "browser.undo"
+        let risk = browserActionRisk(for: action)
+        let policy = policyDecision(actionRisk: risk)
+        let auditID = UUID().uuidString
+        let auditURL = try auditLogURL()
+        let endpoint = try browserEndpoint()
+        let selector = option("--selector")
+        let key = try browserKeyDefinition(for: "z")
+        let modifierSet = ["meta"]
+        let modifierMask = browserModifierMask(for: modifierSet)
+        var focusVerification: FileOperationVerification?
+        var tabSummary: BrowserAuditSummary? = BrowserAuditSummary(
+            id: id,
+            type: "unknown",
+            title: nil,
+            url: nil,
+            textLength: nil,
+            textDigest: nil,
+            domNodeCount: nil,
+            domDigest: nil,
+            focusSelector: selector,
+            keyName: key.key,
+            keyModifiers: modifierSet,
+            keyModifierMask: modifierMask
+        )
+        var auditWritten = false
+
+        func writeAudit(ok: Bool, code: String, message: String, verification: FileOperationVerification? = nil) throws {
+            try appendAuditRecord(ActionAuditRecord(
+                id: auditID,
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                command: "browser.undo",
+                risk: risk,
+                reason: option("--reason"),
+                app: nil,
+                elementID: nil,
+                element: nil,
+                action: action,
+                policy: policy,
+                verification: verification,
+                browserTab: tabSummary,
+                outcome: AuditOutcome(ok: ok, code: code, message: message)
+            ), to: auditURL)
+            auditWritten = true
+        }
+
+        do {
+            guard policy.allowed else {
+                let message = policy.message
+                try writeAudit(ok: false, code: "policy_denied", message: message)
+                throw CommandError(description: message)
+            }
+
+            let tabs = try fetchBrowserTabs(from: endpoint, includeNonPageTargets: false)
+            guard let tab = tabs.first(where: { $0.id == id }) else {
+                let message = "no browser page tab found with id \(id)"
+                try writeAudit(ok: false, code: "tab_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            tabSummary = BrowserAuditSummary(
+                id: tab.id,
+                type: tab.type,
+                title: tab.title,
+                url: tab.url,
+                textLength: nil,
+                textDigest: nil,
+                domNodeCount: nil,
+                domDigest: nil,
+                focusSelector: selector,
+                keyName: key.key,
+                keyModifiers: modifierSet,
+                keyModifierMask: modifierMask
+            )
+
+            guard let webSocketDebuggerURL = tab.webSocketDebuggerURL,
+                  let webSocketURL = URL(string: webSocketDebuggerURL) else {
+                let message = "browser tab \(id) does not expose a valid webSocketDebuggerURL"
+                try writeAudit(ok: false, code: "debugger_url_missing", message: message)
+                throw CommandError(description: message)
+            }
+
+            if let selector {
+                let focusPayload = try focusBrowserElement(selector: selector, at: webSocketURL)
+                focusVerification = FileOperationVerification(
+                    ok: focusPayload.ok && focusPayload.matched,
+                    code: focusPayload.ok && focusPayload.matched ? "element_focused" : focusPayload.code,
+                    message: focusPayload.ok && focusPayload.matched
+                        ? "browser active element matches the requested selector"
+                        : focusPayload.message
+                )
+                tabSummary?.focusTagName = focusPayload.tagName
+
+                guard focusVerification?.ok == true else {
+                    let message = focusVerification?.message ?? focusPayload.message
+                    try writeAudit(ok: false, code: focusPayload.code, message: message, verification: focusVerification)
+                    throw CommandError(description: message)
+                }
+            }
+
+            let verification = try dispatchBrowserKey(
+                key,
+                modifiers: modifierSet,
+                modifierMask: modifierMask,
+                selector: selector,
+                at: webSocketURL
+            )
+
+            guard verification.ok else {
+                try writeAudit(
+                    ok: false,
+                    code: verification.code,
+                    message: verification.message,
+                    verification: FileOperationVerification(ok: verification.ok, code: verification.code, message: verification.message)
+                )
+                throw CommandError(description: verification.message)
+            }
+
+            let message = "Dispatched browser undo in tab \(id)."
+            try writeAudit(
+                ok: true,
+                code: "undo_dispatched",
+                message: message,
+                verification: FileOperationVerification(ok: true, code: verification.code, message: verification.message)
+            )
+
+            return BrowserUndoResult(
+                generatedAt: ISO8601DateFormatter().string(from: Date()),
+                platform: "macOS",
+                endpoint: endpoint.absoluteString,
+                tab: tab,
+                action: action,
+                risk: risk,
                 selector: selector,
                 focusVerification: focusVerification,
                 verification: verification,

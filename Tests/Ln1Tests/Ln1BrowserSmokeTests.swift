@@ -182,6 +182,11 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
                 && $0["mutates"] as? Bool == true
         })
         XCTAssertTrue(firstPageActions.contains {
+            $0["name"] as? String == "browser.undo"
+                && $0["risk"] as? String == "medium"
+                && $0["mutates"] as? Bool == true
+        })
+        XCTAssertTrue(firstPageActions.contains {
             $0["name"] as? String == "browser.clickElement"
                 && $0["risk"] as? String == "medium"
                 && $0["mutates"] as? Bool == true
@@ -2149,6 +2154,136 @@ final class Ln1BrowserSmokeTests: Ln1TestCase {
         XCTAssertEqual(auditVerification["code"] as? String, "key_pressed")
         XCTAssertEqual(outcome["ok"] as? Bool, true)
         XCTAssertEqual(outcome["code"] as? String, "key_pressed")
+    }
+
+    func testBrowserUndoRequiresPolicyDispatchesMetaZAndAuditsMetadataOnly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-browser-undo-\(UUID().uuidString)")
+        let jsonDirectory = directory.appendingPathComponent("json")
+        let targetList = jsonDirectory.appendingPathComponent("list")
+        let cdpResponse = directory.appendingPathComponent("undo-response.json")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
+
+        let undoPayload: [String: Any] = [
+            "ok": true,
+            "code": "key_pressed",
+            "message": "browser key press dispatched through Chrome DevTools",
+            "key": "z",
+            "modifiers": ["meta"],
+            "modifierMask": 4,
+            "selector": NSNull(),
+            "keyDownDispatched": true,
+            "keyUpDispatched": true
+        ]
+        let undoData = try JSONSerialization.data(withJSONObject: undoPayload, options: [.prettyPrinted, .sortedKeys])
+        try undoData.write(to: cdpResponse)
+        try """
+        [
+          {
+            "id": "page-1",
+            "type": "page",
+            "title": "Undo Page",
+            "url": "https://example.com/undo",
+            "webSocketDebuggerUrl": "\(cdpResponse.absoluteString)"
+          }
+        ]
+        """.write(to: targetList, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let rejected = try runLn1([
+            "browser",
+            "undo",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--audit-log", auditLog.path,
+            "--reason", "policy test"
+        ])
+
+        XCTAssertNotEqual(rejected.status, 0)
+
+        let result = try runLn1([
+            "browser",
+            "undo",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "revert browser edit"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let tab = try XCTUnwrap(object["tab"] as? [String: Any])
+        let verification = try XCTUnwrap(object["verification"] as? [String: Any])
+
+        XCTAssertEqual(object["action"] as? String, "browser.undo")
+        XCTAssertEqual(object["risk"] as? String, "medium")
+        XCTAssertNil(object["selector"])
+        XCTAssertNil(object["text"])
+        XCTAssertEqual(tab["id"] as? String, "page-1")
+        XCTAssertEqual(verification["ok"] as? Bool, true)
+        XCTAssertEqual(verification["code"] as? String, "key_pressed")
+        XCTAssertEqual(verification["key"] as? String, "z")
+        XCTAssertEqual(verification["modifiers"] as? [String], ["meta"])
+        XCTAssertEqual(verification["modifierMask"] as? Int, 4)
+        XCTAssertEqual(verification["keyDownDispatched"] as? Bool, true)
+        XCTAssertEqual(verification["keyUpDispatched"] as? Bool, true)
+
+        let deniedAudit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.undo",
+            "--code", "policy_denied",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(deniedAudit.status, 0, deniedAudit.stderr)
+        let deniedAuditObject = try decodeJSONObject(deniedAudit.stdout)
+        let deniedEntries = try XCTUnwrap(deniedAuditObject["entries"] as? [[String: Any]])
+        let deniedEntry = try XCTUnwrap(deniedEntries.first)
+        let deniedBrowserTab = try XCTUnwrap(deniedEntry["browserTab"] as? [String: Any])
+        let deniedPolicy = try XCTUnwrap(deniedEntry["policy"] as? [String: Any])
+
+        XCTAssertEqual(deniedEntry["action"] as? String, "browser.undo")
+        XCTAssertEqual(deniedBrowserTab["keyName"] as? String, "z")
+        XCTAssertEqual(deniedBrowserTab["keyModifiers"] as? [String], ["meta"])
+        XCTAssertEqual(deniedBrowserTab["keyModifierMask"] as? Int, 4)
+        XCTAssertNil(deniedBrowserTab["text"])
+        XCTAssertEqual(deniedPolicy["allowed"] as? Bool, false)
+
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--command", "browser.undo",
+            "--code", "undo_dispatched",
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let auditObject = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(auditObject["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let browserTab = try XCTUnwrap(entry["browserTab"] as? [String: Any])
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let auditVerification = try XCTUnwrap(entry["verification"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "browser.undo")
+        XCTAssertEqual(entry["action"] as? String, "browser.undo")
+        XCTAssertEqual(entry["reason"] as? String, "revert browser edit")
+        XCTAssertEqual(browserTab["id"] as? String, "page-1")
+        XCTAssertEqual(browserTab["title"] as? String, "Undo Page")
+        XCTAssertEqual(browserTab["url"] as? String, "https://example.com/undo")
+        XCTAssertEqual(browserTab["keyName"] as? String, "z")
+        XCTAssertEqual(browserTab["keyModifiers"] as? [String], ["meta"])
+        XCTAssertEqual(browserTab["keyModifierMask"] as? Int, 4)
+        XCTAssertNil(browserTab["text"])
+        XCTAssertEqual(policy["allowed"] as? Bool, true)
+        XCTAssertEqual(auditVerification["ok"] as? Bool, true)
+        XCTAssertEqual(auditVerification["code"] as? String, "key_pressed")
+        XCTAssertEqual(outcome["ok"] as? Bool, true)
+        XCTAssertEqual(outcome["code"] as? String, "undo_dispatched")
     }
 
     func testBrowserClickRequiresPolicyVerifiesAndAuditsSelectorOnly() throws {

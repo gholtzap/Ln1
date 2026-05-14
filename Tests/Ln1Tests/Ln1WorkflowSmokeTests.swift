@@ -1150,6 +1150,33 @@ final class Ln1WorkflowSmokeTests: Ln1TestCase {
             "--reason", "Describe intent"
         ])
 
+        let undo = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "undo-browser",
+            "--endpoint", directory.path,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(undo.status, 0, undo.stderr)
+        let undoObject = try decodeJSONObject(undo.stdout)
+        let undoBlockers = try XCTUnwrap(undoObject["blockers"] as? [String])
+        XCTAssertEqual(undoObject["operation"] as? String, "undo-browser")
+        XCTAssertEqual(undoObject["risk"] as? String, "medium")
+        XCTAssertEqual(undoObject["mutates"] as? Bool, true)
+        XCTAssertTrue(undoBlockers.isEmpty)
+        XCTAssertEqual(undoObject["nextArguments"] as? [String], [
+            "Ln1", "browser", "undo",
+            "--endpoint", directory.standardizedFileURL.absoluteString,
+            "--id", "page-1",
+            "--selector", "input[name=\"q\"]",
+            "--audit-log", auditLog.path,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+
         let click = try runLn1([
             "workflow",
             "next",

@@ -610,6 +610,21 @@ struct BrowserKeyPressResult: Codable {
     let message: String
 }
 
+struct BrowserUndoResult: Codable {
+    let generatedAt: String
+    let platform: String
+    let endpoint: String
+    let tab: BrowserTab
+    let action: String
+    let risk: String
+    let selector: String?
+    let focusVerification: FileOperationVerification?
+    let verification: BrowserKeyPressVerification
+    let auditID: String
+    let auditLogPath: String
+    let message: String
+}
+
 struct BrowserClickPayload: Codable {
     let ok: Bool
     let code: String
