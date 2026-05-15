@@ -7511,6 +7511,19 @@ final class Ln1CLI {
             return nil
         }
 
+        if outputJSON["rollbackSnapshotPath"] as? String != nil,
+           let auditID = outputJSON["auditID"] as? String {
+            return (
+                arguments: [
+                    "Ln1", "files", "rollback-text",
+                    "--audit-id", auditID,
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest file text write has a rollback snapshot; review rollback-text before relying on the changed file."
+            )
+        }
+
         return (
             arguments: [
                 "Ln1", "files", "stat",

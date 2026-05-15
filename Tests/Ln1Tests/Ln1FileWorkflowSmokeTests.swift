@@ -920,6 +920,71 @@ final class Ln1FileWorkflowSmokeTests: Ln1TestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("file text write completed") == true)
     }
 
+    func testWorkflowResumeSuggestsRollbackTextAfterWriteFileWithSnapshot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-write-file-rollback-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let fileURL = directory.appendingPathComponent("hello.txt")
+        let snapshotURL = directory.appendingPathComponent("rollback.json")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let auditID = UUID().uuidString
+        let transcript: [String: Any] = [
+            "transcriptID": "write-file-rollback-transcript",
+            "operation": "write-file",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "files", "write-text",
+                    "--path", fileURL.path,
+                    "--text", "hello",
+                    "--rollback-snapshot", snapshotURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "write test"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "ok": true,
+                    "auditID": auditID,
+                    "rollbackSnapshotPath": snapshotURL.path,
+                    "current": [
+                        "path": fileURL.path,
+                        "kind": "regularFile"
+                    ],
+                    "verification": [
+                        "ok": true,
+                        "code": "text_matched"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "write-file",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "write-file")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "files", "rollback-text",
+            "--audit-id", auditID,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("rollback snapshot") == true)
+    }
+
     func testWorkflowResumeSuggestsStatAfterAppendFile() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-append-file-resume-\(UUID().uuidString)")
