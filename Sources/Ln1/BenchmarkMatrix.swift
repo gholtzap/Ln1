@@ -8,6 +8,7 @@ struct BenchmarkScenario: Codable {
     let surfaces: [String]
     let requiredCapabilities: [String]
     let successCriteria: [String]
+    let verificationCommands: [String]
     let knownRisks: [String]
     let priority: String
 }
@@ -36,6 +37,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Open, rename, duplicate, move, and restore a test file with audit evidence.",
                 "Recover when a file picker sheet is frontmost."
             ],
+            verificationCommands: [
+                "Ln1 apps list --name Finder",
+                "Ln1 desktop windows --bundle-id com.apple.finder",
+                "Ln1 workflow preflight --operation inspect-windows --bundle-id com.apple.finder",
+                "Ln1 files stat --path PATH"
+            ],
             knownRisks: ["Finder labels and sidebar items may expose weak titles.", "File picker sheets can shift element paths."],
             priority: "critical"
         ),
@@ -50,6 +57,13 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Complete a multi-step form without fixed sleeps.",
                 "Handle a file upload control and verify the downloaded artifact.",
                 "Capture enough console or network evidence to debug a failed interaction."
+            ],
+            verificationCommands: [
+                "Ln1 browser tabs --endpoint ENDPOINT",
+                "Ln1 browser dom --endpoint ENDPOINT --id TARGET_ID --selector SELECTOR",
+                "Ln1 browser console --endpoint ENDPOINT --id TARGET_ID",
+                "Ln1 browser network --endpoint ENDPOINT --id TARGET_ID",
+                "Ln1 files wait --path DOWNLOAD_PATH --exists true"
             ],
             knownRisks: ["DevTools coverage varies by browser.", "Native file chooser handoff leaves the DOM control plane."],
             priority: "critical"
@@ -66,6 +80,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Read visible status after an action.",
                 "Fall back cleanly when Accessibility exposes generic groups only."
             ],
+            verificationCommands: [
+                "Ln1 state --pid PID --depth 4 --max-children 80",
+                "Ln1 state element --pid PID --element ELEMENT_ID --expect-identity STABLE_ID",
+                "Ln1 desktop screenshot --include-ocr true --max-ocr-characters 512",
+                "Ln1 input key --key p --modifiers meta,shift"
+            ],
             knownRisks: ["Electron trees often contain low-signal nested groups.", "Canvas-like widgets may require screenshots."],
             priority: "high"
         ),
@@ -80,6 +100,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Open a document, edit bounded content, save, and verify file metadata.",
                 "Dismiss or satisfy a save prompt without losing work.",
                 "Recognize document canvas state when structured text is unavailable."
+            ],
+            verificationCommands: [
+                "Ln1 apps list --name Word",
+                "Ln1 state --pid PID --depth 4 --max-children 80",
+                "Ln1 desktop screenshot --include-ocr true --max-ocr-characters 512",
+                "Ln1 files checksum --path DOCUMENT_PATH"
             ],
             knownRisks: ["Document canvas content may not be fully accessible.", "Ribbon controls can change by mode."],
             priority: "high"
@@ -96,6 +122,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Detect build completion or failure from structured UI or file/process signals.",
                 "Navigate to an issue without relying on screenshots first."
             ],
+            verificationCommands: [
+                "Ln1 apps list --bundle-id com.apple.dt.Xcode",
+                "Ln1 state --pid PID --depth 4 --max-children 80",
+                "Ln1 processes wait --pid BUILD_PID --exists false",
+                "Ln1 files watch --path DERIVED_DATA_OR_LOG_PATH"
+            ],
             knownRisks: ["Build state can appear in transient panes.", "Editor content may require file-system correlation."],
             priority: "high"
         ),
@@ -110,6 +142,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Run a harmless command and verify output.",
                 "Detect command completion without corrupting interactive input.",
                 "Refuse to echo or persist sensitive prompt text."
+            ],
+            verificationCommands: [
+                "Ln1 apps active",
+                "Ln1 desktop active-window",
+                "Ln1 input text --text TEXT",
+                "Ln1 processes inspect --pid PID"
             ],
             knownRisks: ["Terminal buffer text can be large or unavailable through Accessibility.", "Password prompts require explicit safety policy."],
             priority: "critical"
@@ -126,6 +164,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Report the exact blocker when automation cannot proceed.",
                 "Avoid changing sensitive settings without explicit high-confidence approval."
             ],
+            verificationCommands: [
+                "Ln1 apps list --bundle-id com.apple.systempreferences",
+                "Ln1 desktop wait-window --bundle-id com.apple.systempreferences --title Privacy",
+                "Ln1 state --pid PID --depth 4 --max-children 80",
+                "Ln1 workflow preflight --operation inspect-active-window"
+            ],
             knownRisks: ["macOS privacy panes change across OS versions.", "Some authorization sheets intentionally resist automation."],
             priority: "critical"
         ),
@@ -140,6 +184,12 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
                 "Detect when a modal blocks the intended app.",
                 "Classify whether the modal is safe to accept, cancel, or needs handoff.",
                 "Resume the original workflow after the modal is resolved."
+            ],
+            verificationCommands: [
+                "Ln1 desktop active-window",
+                "Ln1 desktop windows --include-desktop",
+                "Ln1 state wait-element --pid PID --element ELEMENT_ID --exists true",
+                "Ln1 workflow next --operation wait-active-window"
             ],
             knownRisks: ["Modal ownership can differ from the app that triggered it.", "Buttons may expose generic labels."],
             priority: "critical"

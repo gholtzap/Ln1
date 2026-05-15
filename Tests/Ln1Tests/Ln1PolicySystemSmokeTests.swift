@@ -39,10 +39,19 @@ final class Ln1PolicySystemSmokeTests: Ln1TestCase {
         let allCapabilities = scenarios
             .compactMap { $0["requiredCapabilities"] as? [String] }
             .flatMap { $0 }
+        let allVerificationCommands = scenarios
+            .compactMap { $0["verificationCommands"] as? [String] }
+            .flatMap { $0 }
 
         XCTAssertEqual(object["platform"] as? String, "macOS")
         XCTAssertEqual(object["status"] as? String, "planned")
         XCTAssertEqual(object["scenarioCount"] as? Int, scenarios.count)
+        XCTAssertTrue(scenarios.allSatisfy { scenario in
+            guard let commands = scenario["verificationCommands"] as? [String] else {
+                return false
+            }
+            return !commands.isEmpty && commands.allSatisfy { $0.hasPrefix("Ln1 ") }
+        })
         XCTAssertTrue(apps.contains("Finder"))
         XCTAssertTrue(apps.contains("Browser"))
         XCTAssertTrue(apps.contains("Electron apps"))
@@ -57,5 +66,11 @@ final class Ln1PolicySystemSmokeTests: Ln1TestCase {
         XCTAssertTrue(allSurfaces.contains("modals"))
         XCTAssertTrue(allCapabilities.contains("visual fallback"))
         XCTAssertTrue(allCapabilities.contains("keyboard input"))
+        XCTAssertTrue(allVerificationCommands.contains { $0.contains("browser console") })
+        XCTAssertTrue(allVerificationCommands.contains { $0.contains("browser network") })
+        XCTAssertTrue(allVerificationCommands.contains { $0.contains("desktop screenshot") })
+        XCTAssertTrue(allVerificationCommands.contains { $0.contains("processes wait") })
+        XCTAssertTrue(allVerificationCommands.contains { $0.contains("state wait-element") })
+        XCTAssertTrue(allVerificationCommands.contains { $0.contains("files checksum") })
     }
 }
