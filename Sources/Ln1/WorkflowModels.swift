@@ -176,3 +176,38 @@ struct WorkflowResumePlan: Encodable {
     let latest: JSONValue?
     let message: String
 }
+
+struct WorkflowScenarioCatalog: Encodable {
+    let generatedAt: String
+    let platform: String
+    let productPromise: String
+    let controlLoop: [String]
+    let defaultSafetyGates: [String]
+    let scenarioCount: Int
+    let scenarios: [WorkflowScenario]
+    let message: String
+}
+
+struct WorkflowScenario: Encodable {
+    let id: String
+    let title: String
+    let purpose: String
+    let highestRisk: String
+    let idealFor: [String]
+    let phases: [WorkflowScenarioPhase]
+    let verificationSignals: [String]
+    let auditArtifacts: [String]
+}
+
+struct WorkflowScenarioPhase: Encodable {
+    let name: String
+    let intent: String
+    let commands: [WorkflowScenarioCommand]
+}
+
+struct WorkflowScenarioCommand: Encodable {
+    let name: String
+    let command: String
+    let risk: String
+    let mutates: Bool
+}

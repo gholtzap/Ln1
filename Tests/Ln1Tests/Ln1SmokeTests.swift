@@ -110,6 +110,9 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertEqual(actionByName["desktop.raiseWindow"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.raiseWindow"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["desktop.raiseWindow"]?["mutates"] as? Bool, true)
+        XCTAssertEqual(actionByName["desktop.closeWindow"]?["domain"] as? String, "desktop")
+        XCTAssertEqual(actionByName["desktop.closeWindow"]?["risk"] as? String, "high")
+        XCTAssertEqual(actionByName["desktop.closeWindow"]?["mutates"] as? Bool, true)
         XCTAssertEqual(actionByName["desktop.setWindowFrame"]?["domain"] as? String, "desktop")
         XCTAssertEqual(actionByName["desktop.setWindowFrame"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["desktop.setWindowFrame"]?["mutates"] as? Bool, true)
@@ -274,9 +277,61 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertEqual(actionByName["task.memoryShow"]?["domain"] as? String, "task")
         XCTAssertEqual(actionByName["task.memoryShow"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["task.memoryShow"]?["mutates"] as? Bool, false)
+        XCTAssertEqual(actionByName["workflow.scenarios"]?["domain"] as? String, "workflow")
+        XCTAssertEqual(actionByName["workflow.scenarios"]?["risk"] as? String, "low")
+        XCTAssertEqual(actionByName["workflow.scenarios"]?["mutates"] as? Bool, false)
         XCTAssertEqual(actionByName["workflow.logRead"]?["domain"] as? String, "workflow")
         XCTAssertEqual(actionByName["workflow.logRead"]?["risk"] as? String, "medium")
         XCTAssertEqual(actionByName["workflow.logRead"]?["mutates"] as? Bool, false)
+    }
+
+    func testWorkflowScenariosReturnsProductControlLoopAndRecipes() throws {
+        let result = try runLn1([
+            "workflow",
+            "scenarios"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let controlLoop = try XCTUnwrap(object["controlLoop"] as? [String])
+        let safetyGates = try XCTUnwrap(object["defaultSafetyGates"] as? [String])
+        let scenarios = try XCTUnwrap(object["scenarios"] as? [[String: Any]])
+        let scenarioByID = Dictionary(uniqueKeysWithValues: scenarios.compactMap { scenario -> (String, [String: Any])? in
+            guard let id = scenario["id"] as? String else {
+                return nil
+            }
+            return (id, scenario)
+        })
+
+        XCTAssertEqual(object["productPromise"] as? String, "Structured state first, guarded actions second, screenshots last.")
+        XCTAssertEqual(controlLoop, ["observe", "inspect", "preflight", "act", "verify", "audit"])
+        XCTAssertTrue(safetyGates.contains { $0.contains("dry-run") })
+        XCTAssertEqual(object["scenarioCount"] as? Int, 4)
+        XCTAssertNotNil(scenarioByID["desktop-app-qa"])
+        XCTAssertNotNil(scenarioByID["browser-regression"])
+        XCTAssertNotNil(scenarioByID["file-export-verification"])
+        XCTAssertNotNil(scenarioByID["permission-dialog-triage"])
+        XCTAssertEqual(scenarioByID["desktop-app-qa"]?["highestRisk"] as? String, "high")
+        XCTAssertEqual(scenarioByID["browser-regression"]?["highestRisk"] as? String, "medium")
+    }
+
+    func testWorkflowScenariosCanSelectOneRecipe() throws {
+        let result = try runLn1([
+            "workflow",
+            "scenarios",
+            "--id", "browser-regression"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let scenarios = try XCTUnwrap(object["scenarios"] as? [[String: Any]])
+        let scenario = try XCTUnwrap(scenarios.first)
+
+        XCTAssertEqual(object["scenarioCount"] as? Int, 1)
+        XCTAssertEqual(scenarios.count, 1)
+        XCTAssertEqual(scenario["id"] as? String, "browser-regression")
+        XCTAssertEqual(scenario["title"] as? String, "Browser Regression")
+        XCTAssertTrue((object["message"] as? String)?.contains("selected") == true)
     }
 
     func testWorkflowPreflightInspectSystemBuildsSystemContextCommand() throws {
@@ -1173,6 +1228,43 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertEqual(entry["risk"] as? String, "medium")
         XCTAssertEqual(policy["allowedRisk"] as? String, "low")
         XCTAssertEqual(policy["actionRisk"] as? String, "medium")
+        XCTAssertEqual(policy["allowed"] as? Bool, false)
+        XCTAssertEqual(outcome["ok"] as? Bool, false)
+        XCTAssertEqual(outcome["code"] as? String, "policy_denied")
+    }
+
+    func testDesktopCloseWindowPolicyDenialIsAuditedWithoutClosing() throws {
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-desktop-close-denied-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "desktop",
+            "close-window",
+            "--element", "w0",
+            "--reason", "policy test",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertNotEqual(result.status, 0)
+        let audit = try runLn1([
+            "audit",
+            "--audit-log", auditLog.path,
+            "--limit", "1"
+        ])
+
+        XCTAssertEqual(audit.status, 0, audit.stderr)
+        let object = try decodeJSONObject(audit.stdout)
+        let entries = try XCTUnwrap(object["entries"] as? [[String: Any]])
+        let entry = try XCTUnwrap(entries.first)
+        let policy = try XCTUnwrap(entry["policy"] as? [String: Any])
+        let outcome = try XCTUnwrap(entry["outcome"] as? [String: Any])
+
+        XCTAssertEqual(entry["command"] as? String, "desktop.close-window")
+        XCTAssertEqual(entry["action"] as? String, "desktop.closeWindow")
+        XCTAssertEqual(entry["risk"] as? String, "high")
+        XCTAssertEqual(policy["allowedRisk"] as? String, "low")
+        XCTAssertEqual(policy["actionRisk"] as? String, "high")
         XCTAssertEqual(policy["allowed"] as? Bool, false)
         XCTAssertEqual(outcome["ok"] as? Bool, false)
         XCTAssertEqual(outcome["code"] as? String, "policy_denied")
@@ -2126,6 +2218,70 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
     }
 
+    func testWorkflowPreflightCloseWindowBuildsAuditedDesktopCommand() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility permission is required to preflight window closing.")
+        }
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        guard let firstWindow = windows.first,
+              let elementID = firstWindow["id"] as? String else {
+            throw XCTSkip("No Accessibility window was available for close preflight.")
+        }
+        let actions = firstWindow["actions"] as? [String] ?? []
+        guard actions.contains("AXClose") else {
+            throw XCTSkip("The current Accessibility window does not expose AXClose.")
+        }
+
+        let auditLog = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-desktop-close-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: auditLog) }
+
+        let result = try runLn1([
+            "workflow",
+            "preflight",
+            "--operation", "close-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--wait-timeout-ms", "1500",
+            "--interval-ms", "75",
+            "--allow-risk", "high",
+            "--audit-log", auditLog.path
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let prerequisites = try XCTUnwrap(object["prerequisites"] as? [[String: Any]])
+
+        XCTAssertEqual(object["operation"] as? String, "close-window")
+        XCTAssertEqual(object["risk"] as? String, "high")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(object["canProceed"] as? Bool, true)
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "desktop", "close-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--timeout-ms", "1500",
+            "--interval-ms", "75",
+            "--allow-risk", "high",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "accessibility" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowElement" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowRole" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.windowCloseAction" && $0["status"] as? String == "pass" })
+        XCTAssertTrue(prerequisites.contains { $0["name"] as? String == "workflow.policy" && $0["status"] as? String == "pass" })
+    }
+
     func testWorkflowPreflightQuitAppBuildsAuditedQuitCommand() throws {
         let apps = try runLn1(["apps"])
 
@@ -2567,6 +2723,73 @@ final class Ln1SmokeTests: Ln1TestCase {
             "--timeout-ms", "2000",
             "--interval-ms", "100",
             "--allow-risk", "medium",
+            "--audit-log", auditLog.path,
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowLog.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: auditLog.path))
+    }
+
+    func testWorkflowRunDryRunCloseWindowReturnsStructuredCommandWithoutClosing() throws {
+        guard AXIsProcessTrusted() else {
+            throw XCTSkip("Accessibility permission is required to preflight window closing.")
+        }
+        let stateResult = try runLn1([
+            "state",
+            "--depth", "0",
+            "--max-children", "0"
+        ])
+        XCTAssertEqual(stateResult.status, 0, stateResult.stderr)
+        let state = try decodeJSONObject(stateResult.stdout)
+        let app = try XCTUnwrap(state["app"] as? [String: Any])
+        let pid = try XCTUnwrap(app["pid"] as? Int)
+        let windows = try XCTUnwrap(state["windows"] as? [[String: Any]])
+        guard let firstWindow = windows.first,
+              let elementID = firstWindow["id"] as? String else {
+            throw XCTSkip("No Accessibility window was available for close dry-run.")
+        }
+        let actions = firstWindow["actions"] as? [String] ?? []
+        guard actions.contains("AXClose") else {
+            throw XCTSkip("The current Accessibility window does not expose AXClose.")
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-desktop-close-dry-run-\(UUID().uuidString)")
+        let auditLog = directory.appendingPathComponent("audit.jsonl")
+        let workflowLog = directory.appendingPathComponent("workflow.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let result = try runLn1([
+            "workflow",
+            "run",
+            "--operation", "close-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--allow-risk", "high",
+            "--audit-log", auditLog.path,
+            "--workflow-log", workflowLog.path,
+            "--dry-run", "true"
+        ])
+
+        XCTAssertEqual(result.status, 0, result.stderr)
+        let object = try decodeJSONObject(result.stdout)
+        let command = try XCTUnwrap(object["command"] as? [String: Any])
+
+        XCTAssertEqual(object["operation"] as? String, "close-window")
+        XCTAssertEqual(object["mode"] as? String, "dry-run")
+        XCTAssertEqual(object["dryRun"] as? Bool, true)
+        XCTAssertEqual(object["executed"] as? Bool, false)
+        XCTAssertEqual(object["risk"] as? String, "high")
+        XCTAssertEqual(object["mutates"] as? Bool, true)
+        XCTAssertEqual(command["requiresReason"] as? Bool, true)
+        XCTAssertEqual(command["argv"] as? [String], [
+            "Ln1", "desktop", "close-window",
+            "--pid", "\(pid)",
+            "--element", elementID,
+            "--timeout-ms", "2000",
+            "--interval-ms", "100",
+            "--allow-risk", "high",
             "--audit-log", auditLog.path,
             "--reason", "Describe intent"
         ])
