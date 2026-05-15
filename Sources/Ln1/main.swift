@@ -6811,6 +6811,13 @@ final class Ln1CLI {
                 workflowURL: workflowURL
             )
         }
+        if latestOperation == "navigate-browser" {
+            return workflowBrowserNavigationRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint
+            )
+        }
         if latestOperation == "review-audit" {
             return workflowAuditReviewRecommendation(outputJSON: outputJSON)
         }
@@ -7958,6 +7965,35 @@ final class Ln1CLI {
                 "--workflow-log", workflowURL.path
             ],
             message: "Latest browser URL wait completed; dry-run DOM inspection for the arrived page."
+        )
+    }
+
+    private func workflowBrowserNavigationRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String
+    ) -> (arguments: [String], message: String)? {
+        let verification = outputJSON["verification"] as? [String: Any]
+        guard verification?["ok"] as? Bool == true else {
+            return nil
+        }
+
+        let tab = outputJSON["tab"] as? [String: Any]
+        guard let tabID = tab?["id"] as? String
+            ?? outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        return (
+            arguments: [
+                "Ln1", "browser", "back",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--allow-risk", "medium",
+                "--reason", "Describe intent"
+            ],
+            message: "Latest browser navigation completed and verified; review browser back before relying on the changed page."
         )
     }
 
