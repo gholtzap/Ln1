@@ -90,6 +90,27 @@ func realAppBenchmarkMatrix(generatedAt: String = ISO8601DateFormatter().string(
             priority: "high"
         ),
         BenchmarkScenario(
+            id: "visual-fallback-stress",
+            app: "Visual fallback stress apps",
+            category: "visual-only",
+            bundleIdentifiers: [],
+            surfaces: ["canvas apps", "custom controls", "video players", "maps", "games", "broken Accessibility trees"],
+            requiredCapabilities: ["desktop screenshot", "browser screenshot", "OCR", "image metadata", "safe fallback when Accessibility trees fail"],
+            successCriteria: [
+                "Capture bounded screenshot metadata when structured UI trees are missing or misleading.",
+                "Use OCR evidence to locate visible text without exposing full screen contents by default.",
+                "Fail closed when visual evidence is insufficient to identify a safe target."
+            ],
+            verificationCommands: [
+                "Ln1 desktop screenshot --allow-risk medium --include-ocr true --max-ocr-characters 512",
+                "Ln1 browser screenshot --id TARGET_ID --allow-risk medium --endpoint ENDPOINT",
+                "Ln1 state --pid PID --depth 2 --max-children 40",
+                "Ln1 workflow preflight --operation inspect-active-window"
+            ],
+            knownRisks: ["Screenshots can include private visible content.", "Canvas, video, map, and game state may not expose semantic targets."],
+            priority: "critical"
+        ),
+        BenchmarkScenario(
             id: "office-document-edit",
             app: "Microsoft Office",
             category: "productivity",
