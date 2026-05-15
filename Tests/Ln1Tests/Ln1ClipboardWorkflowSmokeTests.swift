@@ -232,6 +232,71 @@ final class Ln1ClipboardWorkflowSmokeTests: Ln1TestCase {
         ])
         XCTAssertTrue((object["message"] as? String)?.contains("clipboard write completed") == true)
     }
+
+    func testWorkflowResumeSuggestsClipboardRollbackAfterWriteWithSnapshot() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-clipboard-write-rollback-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        let pasteboardName = "Ln1-test-pasteboard-write-rollback"
+        let snapshotURL = directory.appendingPathComponent("rollback.json")
+        let auditID = "clipboard-write-audit-id"
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let transcript: [String: Any] = [
+            "transcriptID": "write-clipboard-rollback-transcript",
+            "operation": "write-clipboard",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "clipboard", "write-text",
+                    "--text", "prepared",
+                    "--rollback-snapshot", snapshotURL.path,
+                    "--allow-risk", "medium",
+                    "--reason", "prepare clipboard",
+                    "--pasteboard", pasteboardName
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "pasteboard": pasteboardName,
+                    "auditID": auditID,
+                    "rollbackSnapshotPath": snapshotURL.path,
+                    "writtenLength": 8,
+                    "writtenDigest": String(repeating: "d", count: 64),
+                    "verification": [
+                        "ok": true,
+                        "code": "clipboard_text_verified"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "write-clipboard",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "write-clipboard")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "clipboard", "rollback",
+            "--audit-id", auditID,
+            "--allow-risk", "medium",
+            "--reason", "Describe intent",
+            "--pasteboard", pasteboardName
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("rollback snapshot") == true)
+    }
+
     func testWorkflowPreflightInspectClipboardReturnsMetadataCommand() throws {
         let pasteboardName = "Ln1-workflow-inspect-clipboard-preflight-\(UUID().uuidString)"
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(rawValue: pasteboardName))

@@ -7904,6 +7904,24 @@ final class Ln1CLI {
     ) -> (arguments: [String], message: String)? {
         let pasteboard = outputJSON["pasteboard"] as? String
             ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--pasteboard")
+
+        if outputJSON["rollbackSnapshotPath"] as? String != nil,
+           let auditID = outputJSON["auditID"] as? String {
+            var arguments = [
+                "Ln1", "clipboard", "rollback",
+                "--audit-id", auditID,
+                "--allow-risk", "medium",
+                "--reason", "Describe intent"
+            ]
+            if let pasteboard, pasteboard != "general" {
+                arguments += ["--pasteboard", pasteboard]
+            }
+            return (
+                arguments: arguments,
+                message: "Latest clipboard write has a rollback snapshot; review clipboard rollback before relying on the changed pasteboard."
+            )
+        }
+
         var arguments = ["Ln1", "clipboard", "state"]
         if let pasteboard, pasteboard != "general" {
             arguments += ["--pasteboard", pasteboard]
