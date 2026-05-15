@@ -7161,6 +7161,22 @@ final class Ln1CLI {
             )
         }
         if latestOperation == "hide-app" {
+            if let target = outputJSON["target"] as? [String: Any],
+               let pid = target["pid"] as? Int,
+               outputJSON["hiddenAfter"] as? Bool == true {
+                let arguments = [
+                    "Ln1", "workflow", "run",
+                    "--operation", "unhide-app",
+                    "--pid", String(pid),
+                    "--allow-risk", "medium",
+                    "--dry-run", "true",
+                    "--workflow-log", workflowURL.path
+                ]
+                return (
+                    arguments,
+                    "Latest app hide completed and verified; dry-run the compensating unhide action before choosing whether to restore the app."
+                )
+            }
             let arguments = [
                 "Ln1", "workflow", "run",
                 "--operation", "inspect-apps",

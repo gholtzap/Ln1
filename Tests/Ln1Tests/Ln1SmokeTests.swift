@@ -2793,7 +2793,7 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("app launch completed") == true)
     }
 
-    func testWorkflowResumeSuggestsRunningAppsInspectionAfterHideApp() throws {
+    func testWorkflowResumeSuggestsCompensatingUnhideAfterHideApp() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-app-hide-resume-\(UUID().uuidString)")
         let workflowLog = directory.appendingPathComponent("workflow.jsonl")
@@ -2869,11 +2869,13 @@ final class Ln1SmokeTests: Ln1TestCase {
         XCTAssertEqual(object["latestOperation"] as? String, "hide-app")
         XCTAssertEqual(object["nextArguments"] as? [String], [
             "Ln1", "workflow", "run",
-            "--operation", "inspect-apps",
+            "--operation", "unhide-app",
+            "--pid", "123",
+            "--allow-risk", "medium",
             "--dry-run", "true",
             "--workflow-log", workflowLog.path
         ])
-        XCTAssertTrue((object["message"] as? String)?.contains("app hide completed") == true)
+        XCTAssertTrue((object["message"] as? String)?.contains("compensating unhide") == true)
     }
 
     func testWorkflowResumeSuggestsRunningAppsInspectionAfterUnhideApp() throws {
