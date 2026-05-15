@@ -195,6 +195,78 @@ final class Ln1BrowserWorkflowSmokeTests: Ln1TestCase {
         XCTAssertTrue((object["message"] as? String)?.contains("browser undo") == true)
     }
 
+    func testWorkflowResumeSuggestsBrowserBackAfterClickNavigation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Ln1-workflow-browser-click-resume-\(UUID().uuidString)")
+        let workflowLog = directory.appendingPathComponent("workflow-runs.jsonl")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let endpoint = "file://\(directory.path)/"
+        let transcript: [String: Any] = [
+            "transcriptID": "click-browser-transcript",
+            "operation": "click-browser",
+            "blockers": [],
+            "executed": true,
+            "wouldExecute": true,
+            "execution": [
+                "argv": [
+                    "Ln1", "browser", "click",
+                    "--endpoint", endpoint,
+                    "--id", "page-1",
+                    "--selector", "a.next",
+                    "--expect-url", "https://example.com/next",
+                    "--allow-risk", "medium",
+                    "--reason", "click test"
+                ],
+                "exitCode": 0,
+                "timedOut": false,
+                "outputJSON": [
+                    "endpoint": endpoint,
+                    "tab": [
+                        "id": "page-1",
+                        "type": "page",
+                        "title": "Start",
+                        "url": "https://example.com/start"
+                    ],
+                    "selector": "a.next",
+                    "verification": [
+                        "ok": true,
+                        "code": "clicked",
+                        "message": "element clicked"
+                    ],
+                    "urlVerification": [
+                        "ok": true,
+                        "code": "url_matched",
+                        "currentURL": "https://example.com/next"
+                    ]
+                ]
+            ]
+        ]
+        try writeJSONObjectLine(transcript, to: workflowLog)
+
+        let resume = try runLn1([
+            "workflow",
+            "resume",
+            "--workflow-log", workflowLog.path,
+            "--operation", "click-browser",
+            "--allow-risk", "medium"
+        ])
+
+        XCTAssertEqual(resume.status, 0, resume.stderr)
+        let object = try decodeJSONObject(resume.stdout)
+        XCTAssertEqual(object["status"] as? String, "completed")
+        XCTAssertEqual(object["latestOperation"] as? String, "click-browser")
+        XCTAssertEqual(object["nextArguments"] as? [String], [
+            "Ln1", "browser", "back",
+            "--endpoint", endpoint,
+            "--id", "page-1",
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ])
+        XCTAssertTrue((object["message"] as? String)?.contains("browser back") == true)
+    }
+
     func testWorkflowResumeSuggestsBrowserActionsAfterDOMInspection() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("Ln1-workflow-dom-resume-\(UUID().uuidString)")

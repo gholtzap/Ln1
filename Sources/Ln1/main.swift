@@ -6818,6 +6818,14 @@ final class Ln1CLI {
                 endpoint: endpoint
             )
         }
+        if latestOperation == "click-browser" {
+            return workflowBrowserClickRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                workflowURL: workflowURL
+            )
+        }
         if ["fill-browser", "select-browser", "check-browser", "press-browser-key"].contains(latestOperation ?? "") {
             return workflowBrowserUndoRecommendation(
                 outputJSON: outputJSON,
@@ -8042,6 +8050,51 @@ final class Ln1CLI {
         return (
             arguments: arguments,
             message: "Latest \(operation) completed and verified; review browser undo before relying on the changed page state."
+        )
+    }
+
+    private func workflowBrowserClickRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        workflowURL: URL
+    ) -> (arguments: [String], message: String)? {
+        let verification = outputJSON["verification"] as? [String: Any]
+        guard verification?["ok"] as? Bool == true else {
+            return nil
+        }
+
+        let tab = outputJSON["tab"] as? [String: Any]
+        guard let tabID = tab?["id"] as? String
+            ?? outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        if let urlVerification = outputJSON["urlVerification"] as? [String: Any],
+           urlVerification["ok"] as? Bool == true {
+            return (
+                arguments: [
+                    "Ln1", "browser", "back",
+                    "--endpoint", endpoint,
+                    "--id", tabID,
+                    "--allow-risk", "medium",
+                    "--reason", "Describe intent"
+                ],
+                message: "Latest browser click changed the verified URL; review browser back before relying on the changed page."
+            )
+        }
+
+        return (
+            arguments: [
+                "Ln1", "workflow", "run",
+                "--operation", "read-browser",
+                "--endpoint", endpoint,
+                "--id", tabID,
+                "--dry-run", "true",
+                "--workflow-log", workflowURL.path
+            ],
+            message: "Latest browser click completed and verified; dry-run DOM inspection before choosing the next action."
         )
     }
 
