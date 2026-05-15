@@ -7520,7 +7520,7 @@ final class Ln1CLI {
                     "--allow-risk", "medium",
                     "--reason", "Describe intent"
                 ],
-                message: "Latest file text write has a rollback snapshot; review rollback-text before relying on the changed file."
+                message: "Latest file text change has a rollback snapshot; review rollback-text before relying on the changed file."
             )
         }
 
