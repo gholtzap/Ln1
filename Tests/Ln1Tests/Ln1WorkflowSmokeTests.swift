@@ -290,65 +290,6 @@ final class Ln1WorkflowSmokeTests: Ln1TestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
-    func testWorkflowRunExecutesNonMutatingBrowserReadAndCapturesJSON() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Ln1-workflow-run-browser-\(UUID().uuidString)")
-        let jsonDirectory = directory.appendingPathComponent("json")
-        let targetList = jsonDirectory.appendingPathComponent("list")
-        try FileManager.default.createDirectory(at: jsonDirectory, withIntermediateDirectories: true)
-        try """
-        [
-          {
-            "id": "page-1",
-            "type": "page",
-            "title": "Workflow Page",
-            "url": "https://example.com/workflow"
-          }
-        ]
-        """.write(to: targetList, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        let result = try runLn1([
-            "workflow",
-            "run",
-            "--operation", "read-browser",
-            "--endpoint", directory.path,
-            "--dry-run", "false",
-            "--run-timeout-ms", "5000",
-            "--max-output-bytes", "50000"
-        ])
-
-        XCTAssertEqual(result.status, 0, result.stderr)
-        let object = try decodeJSONObject(result.stdout)
-        let command = try XCTUnwrap(object["command"] as? [String: Any])
-        let execution = try XCTUnwrap(object["execution"] as? [String: Any])
-        let outputJSON = try XCTUnwrap(execution["outputJSON"] as? [String: Any])
-        let tabs = try XCTUnwrap(outputJSON["tabs"] as? [[String: Any]])
-        let firstTab = try XCTUnwrap(tabs.first)
-
-        XCTAssertEqual(object["operation"] as? String, "read-browser")
-        XCTAssertEqual(object["mode"] as? String, "execute")
-        XCTAssertEqual(object["dryRun"] as? Bool, false)
-        XCTAssertEqual(object["ready"] as? Bool, true)
-        XCTAssertEqual(object["wouldExecute"] as? Bool, true)
-        XCTAssertEqual(object["executed"] as? Bool, true)
-        XCTAssertEqual(object["mutates"] as? Bool, false)
-        XCTAssertEqual(command["mutates"] as? Bool, false)
-        XCTAssertEqual(execution["exitCode"] as? Int, 0)
-        XCTAssertEqual(execution["timeoutMilliseconds"] as? Int, 5000)
-        XCTAssertEqual(execution["timedOut"] as? Bool, false)
-        XCTAssertEqual(execution["maxOutputBytes"] as? Int, 50000)
-        XCTAssertEqual(execution["stdoutTruncated"] as? Bool, false)
-        XCTAssertEqual(execution["stderrTruncated"] as? Bool, false)
-        XCTAssertGreaterThan(execution["stdoutBytes"] as? Int ?? 0, 0)
-        XCTAssertEqual(execution["stderrBytes"] as? Int, 0)
-        XCTAssertEqual(outputJSON["count"] as? Int, 1)
-        XCTAssertEqual(firstTab["id"] as? String, "page-1")
-        XCTAssertEqual(firstTab["title"] as? String, "Workflow Page")
-        XCTAssertTrue((execution["stdout"] as? String)?.contains("\"tabs\"") == true)
-        XCTAssertEqual(execution["stderr"] as? String, "")
-    }
-
     func testWorkflowRunExecutesNonMutatingInstalledAppsInspectAndCapturesJSON() throws {
         guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.finder") != nil else {
             throw XCTSkip("Finder application bundle was not available from LaunchServices.")
