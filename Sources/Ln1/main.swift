@@ -6818,6 +6818,14 @@ final class Ln1CLI {
                 endpoint: endpoint
             )
         }
+        if ["fill-browser", "select-browser", "check-browser", "press-browser-key"].contains(latestOperation ?? "") {
+            return workflowBrowserUndoRecommendation(
+                outputJSON: outputJSON,
+                execution: execution,
+                endpoint: endpoint,
+                operation: latestOperation ?? "browser action"
+            )
+        }
         if latestOperation == "review-audit" {
             return workflowAuditReviewRecommendation(outputJSON: outputJSON)
         }
@@ -7994,6 +8002,46 @@ final class Ln1CLI {
                 "--reason", "Describe intent"
             ],
             message: "Latest browser navigation completed and verified; review browser back before relying on the changed page."
+        )
+    }
+
+    private func workflowBrowserUndoRecommendation(
+        outputJSON: [String: Any],
+        execution: [String: Any],
+        endpoint: String,
+        operation: String
+    ) -> (arguments: [String], message: String)? {
+        let verification = outputJSON["verification"] as? [String: Any]
+        guard verification?["ok"] as? Bool == true else {
+            return nil
+        }
+
+        let tab = outputJSON["tab"] as? [String: Any]
+        guard let tabID = tab?["id"] as? String
+            ?? outputJSON["tabID"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--id") else {
+            return nil
+        }
+
+        var arguments = [
+            "Ln1", "browser", "undo",
+            "--endpoint", endpoint,
+            "--id", tabID
+        ]
+        let selector = outputJSON["selector"] as? String
+            ?? verification?["selector"] as? String
+            ?? workflowArgumentValue(in: execution["argv"] as? [String], for: "--selector")
+        if let selector {
+            arguments += ["--selector", selector]
+        }
+        arguments += [
+            "--allow-risk", "medium",
+            "--reason", "Describe intent"
+        ]
+
+        return (
+            arguments: arguments,
+            message: "Latest \(operation) completed and verified; review browser undo before relying on the changed page state."
         )
     }
 
