@@ -38,7 +38,7 @@ Use a custom audit path or DevTools endpoint when testing a specific setup:
 .build/debug/Ln1 policy
 ```
 
-The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `apps hide`, `apps unhide`, `apps quit`, `desktop minimize-active-window`, `desktop restore-window`, `desktop raise-window`, `desktop close-window`, `desktop set-window-frame`, `open`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `clipboard rollback`, `browser text`, `browser screenshot`, `browser console`, `browser dialogs`, `browser network`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, and task memory commands use these risk levels when evaluating `--allow-risk`; workflow scenario recipes, system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
+The policy output lists the default allowed risk level, ordered risk levels, and known typed actions with their domain, risk, and mutation classification. Commands such as `perform`, `set-value`, `apps activate`, `apps launch`, `apps hide`, `apps unhide`, `apps quit`, `desktop minimize-active-window`, `desktop restore-window`, `desktop raise-window`, `desktop close-window`, `desktop set-window-frame`, `open`, `files read-text`, `files tail-text`, `files read-lines`, `files read-json`, `files read-plist`, `files write-text`, `files append-text`, `files duplicate`, `files move`, `files mkdir`, `files rollback`, `clipboard read-text`, `clipboard write-text`, `clipboard rollback`, `browser text`, `browser screenshot`, `browser console`, `browser dialogs`, `browser network`, `browser dom`, `browser fill`, `browser select`, `browser check`, `browser focus`, `browser press-key`, `browser click`, `browser navigate`, workflow transcript status/log reads, and task memory commands use these risk levels when evaluating `--allow-risk`; workflow scenario recipes, system context, running and installed app listing/planning, process metadata reads, accessibility menu and element inspection/waits, desktop metadata reads/waits, browser tab metadata inspection, browser URL/selector/text/attribute waiting, and filesystem watch actions are listed as low-risk, non-mutating reads.
 
 ## Inspect System Context
 
@@ -69,9 +69,12 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 ```sh
 .build/debug/Ln1 workflow scenarios
 .build/debug/Ln1 workflow scenarios --id desktop-app-qa
+.build/debug/Ln1 workflow status --allow-risk medium
 ```
 
 `workflow scenarios` is a read-only product map for the intended control loop: observe, inspect, preflight, act, verify, and audit. It returns scenario recipes with concrete command sequences, highest expected risk, safety gates, verification signals, and audit artifacts. The built-in scenarios are `desktop-app-qa`, `browser-regression`, `file-export-verification`, and `permission-dialog-triage`.
+
+`workflow status` reads a bounded workflow transcript and reports phase counts, missing loop phases, blockers, the latest entry state, mutation evidence coverage, and the next command from `workflow resume`. Use it after several workflow runs to decide whether the task has enough inspect, preflight, act, verify, and audit evidence before continuing.
 
 ## Inspect App Menus
 

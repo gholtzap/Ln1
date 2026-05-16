@@ -177,6 +177,58 @@ struct WorkflowResumePlan: Encodable {
     let message: String
 }
 
+struct WorkflowStatusReport: Encodable {
+    let generatedAt: String
+    let platform: String
+    let path: String
+    let operation: String?
+    let limit: Int
+    let count: Int
+    let status: String
+    let controlLoop: [String]
+    let phaseCounts: [WorkflowPhaseCount]
+    let missingTranscriptPhases: [String]
+    let latest: WorkflowStatusLatest?
+    let blockers: [String]
+    let mutationSummary: WorkflowMutationSummary
+    let nextCommand: String?
+    let nextArguments: [String]?
+    let message: String
+}
+
+struct WorkflowPhaseCount: Encodable {
+    let phase: String
+    let count: Int
+}
+
+struct WorkflowStatusLatest: Encodable {
+    let transcriptID: String?
+    let operation: String?
+    let phase: String
+    let status: String
+    let risk: String?
+    let mutates: Bool
+    let dryRun: Bool
+    let executed: Bool
+    let exitCode: Int?
+    let timedOut: Bool
+}
+
+struct WorkflowMutationSummary: Encodable {
+    let planned: Int
+    let executed: Int
+    let withReason: Int
+    let withAuditEvidence: Int
+    let withVerificationEvidence: Int
+    let gaps: [WorkflowMutationGap]
+}
+
+struct WorkflowMutationGap: Encodable {
+    let transcriptID: String?
+    let operation: String?
+    let missing: [String]
+}
+
 struct WorkflowScenarioCatalog: Encodable {
     let generatedAt: String
     let platform: String

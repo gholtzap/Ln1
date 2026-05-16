@@ -213,6 +213,8 @@ final class Ln1CLI {
             try workflowResume()
         case "scenarios":
             try workflowScenarios()
+        case "status":
+            try workflowStatus()
         default:
             throw CommandError(description: "unknown workflow mode '\(mode)'")
         }
@@ -6845,7 +6847,7 @@ final class Ln1CLI {
         prerequisites.first { $0.required && $0.status != "pass" }?.remediation
     }
 
-    private func workflowResumePlan(
+    func workflowResumePlan(
         latest: [String: Any]?,
         workflowURL: URL,
         operation: String?
@@ -9693,7 +9695,7 @@ final class Ln1CLI {
             || verification["href"] as? String != nil
     }
 
-    private func workflowArgumentValue(in arguments: [String]?, for option: String) -> String? {
+    func workflowArgumentValue(in arguments: [String]?, for option: String) -> String? {
         guard let arguments,
               let index = arguments.firstIndex(of: option) else {
             return nil
@@ -10498,6 +10500,8 @@ final class Ln1CLI {
         switch action {
         case "workflow.scenarios":
             return "low"
+        case "workflow.status":
+            return "medium"
         case "workflow.logRead":
             return "medium"
         default:
@@ -10626,6 +10630,7 @@ final class Ln1CLI {
             PolicyActionRecord(name: "task.memoryFinish", domain: "task", risk: "medium", mutates: true),
             PolicyActionRecord(name: "task.memoryShow", domain: "task", risk: "medium", mutates: false),
             PolicyActionRecord(name: "workflow.scenarios", domain: "workflow", risk: workflowActionRisk(for: "workflow.scenarios"), mutates: false),
+            PolicyActionRecord(name: "workflow.status", domain: "workflow", risk: workflowActionRisk(for: "workflow.status"), mutates: false),
             PolicyActionRecord(name: "workflow.logRead", domain: "workflow", risk: "medium", mutates: false)
         ]
     }
@@ -10702,6 +10707,7 @@ final class Ln1CLI {
           Ln1 workflow run --operation review-audit|inspect-active-app|inspect-frontmost-app|inspect-apps|inspect-installed-apps|inspect-menu|inspect-system|inspect-displays|inspect-active-window|inspect-windows|inspect-processes|inspect-process|find-element|inspect-element|wait-process|wait-active-window|wait-window|wait-element|wait-active-app|minimize-active-window|restore-window|raise-window|close-window|set-window-frame|activate-app|launch-app|hide-app|unhide-app|quit-app|open-file|open-url|control-active-app|set-element-value|read-browser|fill-browser|select-browser|check-browser|focus-browser|press-browser-key|click-browser|navigate-browser|wait-browser-url|wait-browser-selector|wait-browser-count|wait-browser-text|wait-browser-element-text|wait-browser-value|wait-browser-ready|wait-browser-title|wait-browser-checked|wait-browser-enabled|wait-browser-focus|wait-browser-attribute|wait-clipboard|inspect-clipboard|read-clipboard|write-clipboard|inspect-file|read-file|tail-file|read-file-lines|read-file-json|read-file-plist|write-file|append-file|list-files|search-files|create-directory|duplicate-file|move-file|rollback-file-move|checksum-file|compare-files|watch-file|wait-file --dry-run true [--pid PID] [--owner-pid PID] [--bundle-id BUNDLE_ID] [--name TEXT] [--current] [--path PATH] [--to PATH] [--audit-id AUDIT_ID] [--element ID] [--expect-identity ID] [--min-identity-confidence low|medium|high] [--id TARGET_ID_OR_AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--selector CSS_SELECTOR] [--key KEY] [--modifiers shift,control,alt,meta] [--count N] [--count-match exact|at-least|at-most] [--text TEXT] [--query TEXT] [--value VALUE] [--label LABEL] [--checked true|false] [--enabled true|false] [--focused true|false] [--attribute NAME] [--changed-from N] [--has-string true|false] [--string-digest HEX] [--pasteboard NAME] [--size-bytes N] [--digest SHA256] [--algorithm sha256] [--max-file-bytes N] [--max-characters N] [--start-line N] [--line-count N] [--max-line-characters N] [--pointer JSON_POINTER] [--max-depth N] [--max-items N] [--max-string-characters N] [--max-snippet-characters N] [--max-matches-per-file N] [--depth N] [--max-children N] [--limit N] [--include-hidden] [--overwrite] [--create] [--case-sensitive] [--x N] [--y N] [--width N] [--height N] [--title TITLE] [--url URL] [--expect-url URL_OR_TEXT] [--match exact|prefix|contains] [--state attached|visible|hidden|detached|loading|interactive|complete] [--run-timeout-ms N] [--max-output-bytes N]
           Ln1 workflow log --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 workflow resume --allow-risk medium [--workflow-log PATH] [--operation NAME]
+          Ln1 workflow status --allow-risk medium [--workflow-log PATH] [--operation NAME] [--limit N]
           Ln1 apps [--all]
           Ln1 apps active
           Ln1 apps list [--all] [--limit N]
@@ -10903,6 +10909,7 @@ final class Ln1CLI {
           - `browser wait-focus` waits for one element focused or unfocused state without mutating the page.
           - `browser wait-attribute` waits for one element attribute to match without returning attribute contents.
           - `workflow scenarios` prints read-only recipes for the observe -> inspect -> preflight -> act -> verify -> audit loop.
+          - `workflow status` summarizes a workflow transcript by loop phase, blocker state, mutation evidence, and next safe command.
           - Workflow review-audit reads bounded audit records into the workflow transcript and can lead to rollback preflight for successful file moves.
           - Workflow inspect-frontmost-app captures the current frontmost app before choosing process or UI inspection.
           - Workflow inspect-apps captures bounded running app inventory before choosing an active-app or process inspection.
