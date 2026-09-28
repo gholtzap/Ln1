@@ -523,6 +523,18 @@ extension Ln1CLI {
               "auditLogPath": "~/Library/Application Support/Ln1/audit-log.jsonl"
             }
           },
+          "verifiedAction": {
+            "command": "Ln1 act --bundle-id com.apple.finder --menu Go --title Applications --expect-window-title Applications",
+            "result": {
+              "ok": true,
+              "action": "AXPress",
+              "expectedWindowTitle": "Applications",
+              "previousWindowTitle": "Downloads",
+              "observedWindowTitle": "Applications",
+              "verification": { "ok": true, "code": "verified" },
+              "auditID": "UUID"
+            }
+          },
           "audit": {
             "command": "Ln1 audit --id UUID --command files.move --code moved --limit 20",
             "entry": {

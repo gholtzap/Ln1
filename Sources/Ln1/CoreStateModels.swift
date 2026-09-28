@@ -20,6 +20,8 @@ struct ElementNode: Codable {
     let role: String?
     let subrole: String?
     let title: String?
+    let description: String?
+    let identifier: String?
     let value: String?
     let help: String?
     let enabled: Bool?
@@ -53,6 +55,8 @@ struct AccessibilityElementFindQuery: Codable {
     let role: String?
     let subrole: String?
     let title: String?
+    let description: String?
+    let identifier: String?
     let value: String?
     let help: String?
     let action: String?

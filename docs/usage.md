@@ -78,6 +78,16 @@ The policy output lists the default allowed risk level, ordered risk levels, and
 
 ## Inspect App Menus
 
+For a single verified action, use `act`. It finds one named control, checks its identity and action policy, performs the action, then waits for the focused window title, a value in that window, or the target control's value. It returns JSON and a nonzero exit status if the result is not verified. Use `--menu` to search one named menu. Use `--within-role AXToolbar` to search the first toolbar in each window without scanning large content lists.
+
+```sh
+.build/debug/Ln1 act --bundle-id com.apple.finder --menu Go --title Applications --expect-window-title Applications
+.build/debug/Ln1 act --bundle-id com.apple.calculator --description 7 --expect-value 7
+.build/debug/Ln1 act --bundle-id com.apple.Notes --description 'Gallery View' --within-role AXToolbar --expect-target-value 1
+```
+
+Use `--description` or `--identifier` when a control has no title. Use `--role`, `--action`, `--match`, `--expect-match`, or `--timeout-ms` when the control or result needs a more specific check. The command writes one audit record with the selected target and verification result. State search includes the focused or main window when the app does not list its windows.
+
 ```sh
 .build/debug/Ln1 state menu --depth 2 --max-children 80
 .build/debug/Ln1 state find --title "Save" --action AXPress --include-menu --limit 20
