@@ -71,3 +71,9 @@ Review recent audit records:
 ```sh
 .build/debug/Ln1 audit --allow-risk medium --limit 20
 ```
+
+Find, act, and verify one native app action:
+
+```sh
+.build/debug/Ln1 act --bundle-id com.apple.finder --menu Go --title Applications --expect-window-title Applications
+```

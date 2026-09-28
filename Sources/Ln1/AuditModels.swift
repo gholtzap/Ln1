@@ -55,6 +55,8 @@ struct AuditElementSummary: Codable {
     let role: String?
     let subrole: String?
     let title: String?
+    var description: String? = nil
+    var identifier: String? = nil
     let help: String?
     let enabled: Bool?
     let actions: [String]

@@ -88,13 +88,21 @@ extension Ln1CLI {
         )
     }
 
-    private func stateElementFindState() throws -> AccessibilityElementFindResult {
-        let query = try accessibilityElementFindQuery()
-        let depth = max(0, option("--depth").flatMap(Int.init) ?? 4)
-        let maxChildren = max(0, option("--max-children").flatMap(Int.init) ?? 80)
+    func stateElementFindState(
+        depthDefault: Int = 4,
+        maxChildrenDefault: Int = 80,
+        limitDefault: Int = 20,
+        matchDefault: String = "contains",
+        includeMenuDefault: Bool = false,
+        menuOnly: Bool = false
+    ) throws -> AccessibilityElementFindResult {
+        let query = try accessibilityElementFindQuery(defaultMatch: matchDefault, includeMenuDefault: includeMenuDefault)
+        let depth = max(0, option("--depth").flatMap(Int.init) ?? depthDefault)
+        let maxChildren = max(0, option("--max-children").flatMap(Int.init) ?? maxChildrenDefault)
         let resultDepth = max(0, option("--result-depth").flatMap(Int.init) ?? 0)
         let resultMaxChildren = max(0, option("--result-max-children").flatMap(Int.init) ?? 20)
-        let limit = max(0, option("--limit").flatMap(Int.init) ?? 20)
+        let limit = max(0, option("--limit").flatMap(Int.init) ?? limitDefault)
+        let withinRole = option("--within-role")
 
         try requireTrusted()
         let app = try targetApp()
@@ -109,23 +117,42 @@ extension Ln1CLI {
         var visitedCount = 0
         var truncated = false
 
-        let windows = accessibilityArray(axApp, kAXWindowsAttribute)
-        for (index, window) in windows.prefix(maxChildren).enumerated() {
+        let windows = menuOnly ? [] : appWindows(axApp)
+        if windows.count > maxChildren { truncated = true }
+        func searchWindow(_ element: AXUIElement, id: String, scopeDepth: Int) -> Bool {
+            if let withinRole {
+                if stringAttribute(element, kAXRoleAttribute) == withinRole {
+                    collectAccessibilityElementMatches(
+                        element, id: id, ownerName: app.localizedName,
+                        ownerBundleIdentifier: app.bundleIdentifier, query: query,
+                        remainingDepth: depth, maxChildren: maxChildren,
+                        resultDepth: resultDepth, resultMaxChildren: resultMaxChildren,
+                        limit: limit, matches: &matches, visitedCount: &visitedCount,
+                        truncated: &truncated
+                    )
+                    return true
+                }
+                guard scopeDepth > 0 else { return false }
+                let children = accessibilityArray(element, kAXChildrenAttribute)
+                for (index, child) in children.prefix(maxChildren).enumerated() {
+                    if searchWindow(child, id: "\(id).\(index)", scopeDepth: scopeDepth - 1) {
+                        return true
+                    }
+                }
+                return false
+            }
             collectAccessibilityElementMatches(
-                window,
-                id: "w\(index)",
-                ownerName: app.localizedName,
-                ownerBundleIdentifier: app.bundleIdentifier,
-                query: query,
-                remainingDepth: depth,
-                maxChildren: maxChildren,
-                resultDepth: resultDepth,
-                resultMaxChildren: resultMaxChildren,
-                limit: limit,
-                matches: &matches,
-                visitedCount: &visitedCount,
+                element, id: id, ownerName: app.localizedName,
+                ownerBundleIdentifier: app.bundleIdentifier, query: query,
+                remainingDepth: depth, maxChildren: maxChildren,
+                resultDepth: resultDepth, resultMaxChildren: resultMaxChildren,
+                limit: limit, matches: &matches, visitedCount: &visitedCount,
                 truncated: &truncated
             )
+            return true
+        }
+        for (index, window) in windows.prefix(maxChildren).enumerated() {
+            _ = searchWindow(window, id: "w\(index)", scopeDepth: 4)
             if limit > 0, matches.count >= limit {
                 break
             }
@@ -207,8 +234,8 @@ extension Ln1CLI {
         )
     }
 
-    private func accessibilityElementFindQuery() throws -> AccessibilityElementFindQuery {
-        let match = option("--match") ?? "contains"
+    private func accessibilityElementFindQuery(defaultMatch: String, includeMenuDefault: Bool) throws -> AccessibilityElementFindQuery {
+        let match = option("--match") ?? defaultMatch
         guard ["exact", "contains"].contains(match) else {
             throw CommandError(description: "state find --match must be exact or contains")
         }
@@ -220,12 +247,14 @@ extension Ln1CLI {
             role: option("--role"),
             subrole: option("--subrole"),
             title: option("--title"),
+            description: option("--description"),
+            identifier: option("--identifier"),
             value: option("--value"),
             help: option("--help-text"),
             action: option("--action"),
             enabled: enabled,
             match: match,
-            includeMenu: flag("--include-menu")
+            includeMenu: flag("--include-menu") || includeMenuDefault
         )
     }
 
@@ -270,6 +299,7 @@ extension Ln1CLI {
         }
 
         let children = accessibilityArray(element, kAXChildrenAttribute)
+        if children.count > maxChildren { truncated = true }
         for (index, child) in children.prefix(maxChildren).enumerated() {
             collectAccessibilityElementMatches(
                 child,
@@ -306,6 +336,14 @@ extension Ln1CLI {
         }
         if let title = query.title,
            !stringValue(stringAttribute(element, kAXTitleAttribute), matches: title, mode: query.match) {
+            return false
+        }
+        if let description = query.description,
+           !stringValue(stringAttribute(element, kAXDescriptionAttribute), matches: description, mode: query.match) {
+            return false
+        }
+        if let identifier = query.identifier,
+           !stringValue(stringAttribute(element, kAXIdentifierAttribute), matches: identifier, mode: query.match) {
             return false
         }
         if let value = query.value,

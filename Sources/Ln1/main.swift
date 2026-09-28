@@ -79,6 +79,8 @@ final class Ln1CLI {
             try state()
         case "perform":
             try perform()
+        case "act":
+            try verifiedAction()
         case "set-value":
             try setAccessibilityValue()
         case "audit":
@@ -10308,6 +10310,8 @@ final class Ln1CLI {
         let role = stringAttribute(element, kAXRoleAttribute)
         let subrole = stringAttribute(element, kAXSubroleAttribute)
         let title = stringAttribute(element, kAXTitleAttribute)
+        let description = stringAttribute(element, kAXDescriptionAttribute)
+        let identifier = stringAttribute(element, kAXIdentifierAttribute)
         let help = stringAttribute(element, kAXHelpAttribute)
         let elementFrame = frame(element)
         let actions = actionNames(element)
@@ -10321,6 +10325,8 @@ final class Ln1CLI {
                 role: role,
                 subrole: subrole,
                 title: title,
+                description: description,
+                identifier: identifier,
                 help: help,
                 frame: elementFrame,
                 actions: actions
@@ -10328,6 +10334,8 @@ final class Ln1CLI {
             role: role,
             subrole: subrole,
             title: title,
+            description: description,
+            identifier: identifier,
             help: help,
             enabled: boolAttribute(element, kAXEnabledAttribute),
             actions: actions,
@@ -10743,10 +10751,11 @@ final class Ln1CLI {
           Ln1 input type --text TEXT --allow-risk medium [--dry-run true|false] [--reason TEXT] [--audit-log PATH]
           Ln1 state [--pid PID] [--all] [--include-background] [--depth N] [--max-children N]
           Ln1 state menu [--pid PID] [--depth N] [--max-children N]
-          Ln1 state find [--pid PID] [--role ROLE] [--subrole SUBROLE] [--title TEXT] [--value TEXT] [--help-text TEXT] [--action ACTION] [--enabled true|false] [--match exact|contains] [--include-menu] [--depth N] [--max-children N] [--result-depth N] [--result-max-children N] [--limit N]
+          Ln1 state find [--pid PID|--bundle-id BUNDLE_ID] [--role ROLE] [--subrole SUBROLE] [--title TEXT] [--description TEXT] [--identifier TEXT] [--value TEXT] [--help-text TEXT] [--action ACTION] [--enabled true|false] [--match exact|contains] [--within-role ROLE] [--include-menu] [--depth N] [--max-children N] [--result-depth N] [--result-max-children N] [--limit N]
           Ln1 state element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--depth N] [--max-children N]
           Ln1 state wait-element [--pid PID] --element ID [--expect-identity ID] [--min-identity-confidence low|medium|high] [--title TEXT] [--value TEXT] [--match exact|contains] [--enabled true|false] [--exists true|false] [--timeout-ms N] [--interval-ms N] [--depth N] [--max-children N]
           Ln1 perform [--pid PID] --element w0.1.2|m0.1|a0.w0.1.2|a0.m0.1 [--action AXPress] [--allow-risk low|medium|high|unknown] [--reason TEXT] [--audit-log PATH]
+          Ln1 act [--pid PID|--bundle-id BUNDLE_ID] (--title TEXT|--description TEXT|--identifier TEXT|--value TEXT|--help-text TEXT) [--menu MENU|--within-role ROLE] [--role ROLE] [--action AXPress] (--expect-window-title TEXT|--expect-value TEXT|--expect-target-value TEXT) [--expect-match exact|contains] [--timeout-ms N] [--allow-risk low|medium|high|unknown] [--audit-log PATH]
           Ln1 set-value [--pid PID] --element w0.1.2|a0.w0.1.2 --value TEXT --allow-risk medium [--expect-identity ID] [--min-identity-confidence low|medium|high] [--reason TEXT] [--audit-log PATH]
           Ln1 audit [--limit N] [--id AUDIT_ID] [--command NAME] [--code OUTCOME_CODE] [--audit-log PATH]
           Ln1 task start --title TEXT [--summary TEXT] --allow-risk medium [--sensitivity public|private|sensitive] [--task-id ID] [--memory-log PATH]
@@ -12575,7 +12584,7 @@ final class Ln1CLI {
 
     func appState(for app: NSRunningApplication, idPrefix: String, depth: Int, maxChildren: Int) -> AppState {
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        let windows = accessibilityArray(axApp, kAXWindowsAttribute)
+        let windows = appWindows(axApp)
         let nodes = windows.enumerated().map { index, window in
             buildNode(
                 window,
@@ -12604,6 +12613,14 @@ final class Ln1CLI {
                 return app
             }
             throw CommandError(description: "no running app with pid \(pid)")
+        }
+
+        if let bundleID = option("--bundle-id") {
+            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            guard apps.count == 1, let app = apps.first else {
+                throw CommandError(description: "expected one running app with bundle id \(bundleID); found \(apps.count). Use --pid when several instances run.")
+            }
+            return app
         }
 
         guard let app = NSWorkspace.shared.frontmostApplication else {
@@ -12741,7 +12758,7 @@ final class Ln1CLI {
             }
         }
 
-        for (index, window) in accessibilityArray(axApp, kAXWindowsAttribute).prefix(maxChildren).enumerated() {
+        for (index, window) in appWindows(axApp).prefix(maxChildren).enumerated() {
             try visit(window, id: "w\(index)", remainingDepth: maxDepth)
             if matches.count >= maxMatches {
                 return matches
@@ -12789,7 +12806,7 @@ final class Ln1CLI {
             throw CommandError(description: "invalid window path in element id \(id)")
         }
 
-        let windows = accessibilityArray(axApp, kAXWindowsAttribute)
+        let windows = appWindows(axApp)
         guard windows.indices.contains(windowIndex) else {
             throw CommandError(description: "window index \(windowIndex) is out of range")
         }
@@ -12859,6 +12876,8 @@ final class Ln1CLI {
         let role = stringAttribute(element, kAXRoleAttribute)
         let subrole = stringAttribute(element, kAXSubroleAttribute)
         let title = stringAttribute(element, kAXTitleAttribute)
+        let description = stringAttribute(element, kAXDescriptionAttribute)
+        let identifier = stringAttribute(element, kAXIdentifierAttribute)
         let value = stringLikeAttribute(element, kAXValueAttribute)
         let help = stringAttribute(element, kAXHelpAttribute)
         let enabled = boolAttribute(element, kAXEnabledAttribute)
@@ -12894,6 +12913,8 @@ final class Ln1CLI {
                 role: role,
                 subrole: subrole,
                 title: title,
+                description: description,
+                identifier: identifier,
                 help: help,
                 frame: elementFrame,
                 actions: actions
@@ -12901,6 +12922,8 @@ final class Ln1CLI {
             role: role,
             subrole: subrole,
             title: title,
+            description: description,
+            identifier: identifier,
             value: value,
             help: help,
             enabled: enabled,
@@ -12920,6 +12943,8 @@ final class Ln1CLI {
         role: String?,
         subrole: String?,
         title: String?,
+        description: String? = nil,
+        identifier: String? = nil,
         help: String?,
         frame: Rect?,
         actions: [String]
@@ -12950,10 +12975,19 @@ final class Ln1CLI {
             reasons.append("subrole")
             fingerprintParts.append("subrole:\(subrole)")
         }
+        if let normalizedIdentifier = normalizedIdentityText(identifier) {
+            components["identifier"] = normalizedIdentifier
+            reasons.append("identifier")
+            fingerprintParts.append("identifier:\(normalizedIdentifier)")
+        }
         if let normalizedTitle = normalizedIdentityText(title) {
             components["title"] = normalizedTitle
             reasons.append("title")
             fingerprintParts.append("title:\(normalizedTitle)")
+        } else if let normalizedDescription = normalizedIdentityText(description) {
+            components["description"] = normalizedDescription
+            reasons.append("description")
+            fingerprintParts.append("description:\(normalizedDescription)")
         } else if let normalizedHelp = normalizedIdentityText(help) {
             components["help"] = normalizedHelp
             reasons.append("help")
@@ -12972,7 +13006,8 @@ final class Ln1CLI {
             components["coarseFrame"] = coarseFrame
             reasons.append("coarse frame")
             fingerprintParts.append("frame:\(coarseFrame)")
-        } else if components["title"] == nil, components["help"] == nil {
+        } else if components["title"] == nil, components["description"] == nil,
+                  components["identifier"] == nil, components["help"] == nil {
             components["pathFallback"] = pathID
             reasons.append("path fallback")
             fingerprintParts.append("path:\(pathID)")
@@ -12980,7 +13015,8 @@ final class Ln1CLI {
 
         let hasOwner = owner != "unknown-owner"
         let hasRole = role != nil
-        let hasSemanticLabel = components["title"] != nil || components["help"] != nil
+        let hasSemanticLabel = components["title"] != nil || components["description"] != nil
+            || components["identifier"] != nil || components["help"] != nil
         let confidence: String
         if hasOwner, hasRole, hasSemanticLabel, frame != nil {
             confidence = "high"
@@ -12993,6 +13029,8 @@ final class Ln1CLI {
         let label: String
         if let title = cleanIdentityText(title) {
             label = "\(title) \(role ?? "element") in \(readableOwner)"
+        } else if let description = cleanIdentityText(description) {
+            label = "\(description) \(role ?? "element") in \(readableOwner)"
         } else if let help = cleanIdentityText(help) {
             label = "\(help) \(role ?? "element") in \(readableOwner)"
         } else if let frame {
@@ -13019,6 +13057,17 @@ final class Ln1CLI {
             return []
         }
         return array
+    }
+
+    func appWindows(_ axApp: AXUIElement) -> [AXUIElement] {
+        var windows = accessibilityArray(axApp, kAXWindowsAttribute)
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            if let window = accessibilityElement(axApp, attribute),
+               !windows.contains(where: { CFEqual($0, window) }) {
+                windows.append(window)
+            }
+        }
+        return windows
     }
 
     func accessibilityElement(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
